@@ -1,0 +1,30 @@
+# --- Git and OS specific files ---
+.git
+.gitignore
+.github
+.DS_Store
+
+# --- IDEs and Tools ---
+.idea/
+.vscode/
+.husky/
+.editorconfig
+commitlint.config.js
+
+# --- Build & Dependencies ---
+**/node_modules/
+**/dist/
+.turbo/
+**/tsconfig.tsbuildinfo
+
+# --- Logs & Docs ---
+*.log
+**/README.md
+
+# --- Environment Files ---
+.env
+.env.*
+
+# --- Docker Specifics ---
+docker-compose.yml
+Dockerfile*

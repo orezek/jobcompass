@@ -1,0 +1,28 @@
+{
+  "id": 6936757,
+  "name": "Enforce GitFlow Naming",
+  "target": "branch",
+  "source_type": "Repository",
+  "source": "orezek/monorepo_template",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/*"],
+      "exclude": [
+        "refs/heads/main",
+        "refs/heads/develop",
+        "refs/heads/feat/*",
+        "refs/heads/hotfix/*",
+        "refs/heads/bugfix/*",
+        "refs/heads/chore/*",
+        "refs/heads/release/v*"
+      ]
+    }
+  },
+  "rules": [
+    {
+      "type": "creation"
+    }
+  ],
+  "bypass_actors": []
+}

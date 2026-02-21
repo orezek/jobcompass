@@ -1,0 +1,14 @@
+packages:
+  - apps/*
+  - packages/*
+
+catalogs:
+  default:
+    '@types/node': ^25.0.0
+    dotenv: ^17.2.3
+    eslint: ^9.0.0
+    prettier: ^3.7.4
+    tsx: ^4.0.0
+    turbo: ^2.7.3
+    typescript: ^5.9.3
+    zod: ^4.0.0

@@ -1,0 +1,32 @@
+{
+  "name": "monorepo-template",
+  "version": "1.0.4",
+  "description": "A repository template for building Node.js and typescript projects.",
+  "license": "MIT",
+  "author": "Oldrich Rezek oldrich.rezek@oldrichrezek.com",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "prepare": "git config core.hooksPath .husky/_",
+    "scaffold": "node scripts/scaffold-app.mjs",
+    "build": "turbo run build",
+    "start": "turbo run start",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,md,js,json,css,yaml,yml}\"",
+    "check-types": "turbo run check-types"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1",
+    "husky": "^9.1.7",
+    "prettier": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:"
+  },
+  "packageManager": "pnpm@10.13.1",
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -1,0 +1,13 @@
+# .prettierignore
+# Ignore artifacts:
+dist
+build
+coverage
+.next
+.turbo
+node_modules
+
+# Ignore package managers:
+pnpm-lock.yaml
+package-lock.json
+yarn.lock

@@ -1,0 +1,23 @@
+{
+  "name": "@repo/typescript-config",
+  "version": "1.0.0",
+  "description": "Shared TypeScript configurations for Node.js, Next.js, and React apps.",
+  "license": "MIT",
+  "author": "Oldrich Rezek oldrich.rezek@oldrichrezek.com",
+  "private": true,
+  "files": [
+    "base.json",
+    "nextjs.json",
+    "node-lib.json",
+    "react-library.json"
+  ],
+  "exports": {
+    "./base.json": "./base.json",
+    "./nextjs.json": "./nextjs.json",
+    "./node-lib.json": "./node-lib.json",
+    "./react-library.json": "./react-library.json"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
+  }
+}
