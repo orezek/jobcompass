@@ -3,11 +3,17 @@ import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
 import type { AppLogger } from './logger.js';
 import { loadDetailPage, type LoadedDetailPage } from './html-detail-loader.js';
 import type { LocalInputRecord } from './input-provider.js';
-import { type ExtractionTelemetry, GeminiJobDetailExtractor } from './extraction.js';
+import {
+  type ExtractionTelemetry,
+  GeminiJobDetailExtractor,
+  LangSmithJobDescriptionExtractor,
+  mergeExtractionTelemetry,
+} from './extraction.js';
 import { type ExtractedJobDetail, type UnifiedJobAd, unifiedJobAdSchema } from './schema.js';
 
 type JobParsingGraphConfig = {
   extractor: GeminiJobDetailExtractor;
+  jobDescriptionExtractor: LangSmithJobDescriptionExtractor;
   maxDetailChars: number;
   minRelevantTextChars: number;
   parserVersion: string;
@@ -17,6 +23,8 @@ type JobParsingGraphConfig = {
 const JobParsingGraphState = Annotation.Root({
   inputRecord: Annotation<LocalInputRecord>(),
   loadedDetailPage: Annotation<LoadedDetailPage>(),
+  extractedJobDescription: Annotation<string | null>(),
+  jobDescriptionExtractionTelemetry: Annotation<ExtractionTelemetry>(),
   extractedDetail: Annotation<ExtractedJobDetail>(),
   extractionTelemetry: Annotation<ExtractionTelemetry>(),
   unifiedJobAd: Annotation<UnifiedJobAd>(),
@@ -101,20 +109,57 @@ export class JobParsingGraph {
       return { loadedDetailPage };
     };
 
+    const extractJobDescriptionNode = async (
+      state: JobParsingGraphStateType,
+    ): Promise<
+      Pick<
+        JobParsingGraphStateType,
+        'extractedJobDescription' | 'jobDescriptionExtractionTelemetry'
+      >
+    > => {
+      const jobDescriptionResult = await config.jobDescriptionExtractor.extractFromRawAdText(
+        state.loadedDetailPage.textContent,
+      );
+      const extractedJobDescription =
+        jobDescriptionResult.jobDescription ?? state.loadedDetailPage.jobDescriptionSourceText;
+
+      this.logger.debug(
+        {
+          sourceId: state.inputRecord.listingRecord.sourceId,
+          extractedJobDescriptionChars: extractedJobDescription?.length ?? 0,
+          llmCallDurationSeconds: jobDescriptionResult.telemetry.llmCallDurationSeconds,
+          llmTotalTokens: jobDescriptionResult.telemetry.llmTotalTokens,
+          llmTotalCostUsd: jobDescriptionResult.telemetry.llmTotalCostUsd,
+          fallbackToDeterministic: jobDescriptionResult.jobDescription === null,
+        },
+        'Extracted detail.jobDescription using LangSmith Hub prompt',
+      );
+
+      return {
+        extractedJobDescription,
+        jobDescriptionExtractionTelemetry: jobDescriptionResult.telemetry,
+      };
+    };
+
     const extractDetailNode = async (
       state: JobParsingGraphStateType,
     ): Promise<Pick<JobParsingGraphStateType, 'extractedDetail' | 'extractionTelemetry'>> => {
       const extractionResult = await config.extractor.extractFromDetailPage(
         state.inputRecord.listingRecord,
         state.loadedDetailPage.textContent,
-        state.loadedDetailPage.jobDescriptionSourceText,
+        state.extractedJobDescription,
       );
+      const extractionTelemetry = mergeExtractionTelemetry(
+        state.jobDescriptionExtractionTelemetry,
+        extractionResult.telemetry,
+      );
+
       this.logger.debug(
         {
           sourceId: state.inputRecord.listingRecord.sourceId,
-          llmCallDurationSeconds: extractionResult.telemetry.llmCallDurationSeconds,
-          llmTotalTokens: extractionResult.telemetry.llmTotalTokens,
-          llmTotalCostUsd: extractionResult.telemetry.llmTotalCostUsd,
+          llmCallDurationSeconds: extractionTelemetry.llmCallDurationSeconds,
+          llmTotalTokens: extractionTelemetry.llmTotalTokens,
+          llmTotalCostUsd: extractionTelemetry.llmTotalCostUsd,
           summaryChars: extractionResult.detail.summary?.length ?? 0,
           jobDescriptionChars: extractionResult.detail.jobDescription?.length ?? 0,
         },
@@ -123,7 +168,7 @@ export class JobParsingGraph {
 
       return {
         extractedDetail: extractionResult.detail,
-        extractionTelemetry: extractionResult.telemetry,
+        extractionTelemetry,
       };
     };
 
@@ -149,10 +194,12 @@ export class JobParsingGraph {
 
     this.graphApp = new StateGraph(JobParsingGraphState)
       .addNode('loadDetailPage', loadDetailPageNode)
+      .addNode('extractJobDescription', extractJobDescriptionNode)
       .addNode('extractDetail', extractDetailNode)
       .addNode('merge', mergeNode)
       .addEdge(START, 'loadDetailPage')
-      .addEdge('loadDetailPage', 'extractDetail')
+      .addEdge('loadDetailPage', 'extractJobDescription')
+      .addEdge('extractJobDescription', 'extractDetail')
       .addEdge('extractDetail', 'merge')
       .addEdge('merge', END)
       .compile();

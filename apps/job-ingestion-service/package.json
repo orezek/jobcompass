@@ -22,6 +22,7 @@
     "@langchain/langgraph": "catalog:",
     "@repo/env-config": "workspace:*",
     "cheerio": "catalog:",
+    "langchain": "catalog:",
     "mongodb": "catalog:",
     "pino": "catalog:",
     "zod": "catalog:"

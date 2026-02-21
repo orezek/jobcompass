@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { loadEnv } from '@repo/env-config';
 import { z } from 'zod';
 
-import { GeminiJobDetailExtractor } from './extraction.js';
+import { GeminiJobDetailExtractor, LangSmithJobDescriptionExtractor } from './extraction.js';
 import { IncompleteDetailPageError } from './html-detail-loader.js';
 import { LocalScrapedJobsInputProvider } from './input-provider.js';
 import { JobParsingGraph } from './job-parsing-graph.js';
@@ -62,6 +62,8 @@ export const envSchema = z.object({
   INGESTION_SAMPLE_SIZE: toOptionalPositiveInt.default(null),
   INGESTION_CONCURRENCY: z.coerce.number().int().positive().max(32).default(1),
   GEMINI_API_KEY: z.string().optional(),
+  LANGSMITH_API_KEY: z.string().optional(),
+  LANGSMITH_PROMPT_NAME: z.string().default('job-description-extractor'),
   GEMINI_MODEL: z.string().default('gemini-3-flash-preview'),
   GEMINI_TEMPERATURE: z.coerce.number().min(0).max(1).default(0),
   GEMINI_THINKING_LEVEL: thinkingLevelSchema.default('LOW'),
@@ -74,7 +76,7 @@ export const envSchema = z.object({
   MONGODB_URI: z.string().optional(),
   MONGODB_DB_NAME: z.string().default('jobcompass'),
   MONGODB_JOBS_COLLECTION: z.string().default('ingestionCollection'),
-  PARSER_VERSION: z.string().default('job-ingestion-service-v0.3.0'),
+  PARSER_VERSION: z.string().default('job-ingestion-service-v0.4.0'),
 });
 
 export type EnvSchema = z.infer<typeof envSchema>;
@@ -155,6 +157,11 @@ const parseRecords = async (): Promise<{
   if (!envs.GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY is required to run detail-page extraction.');
   }
+  if (!envs.LANGSMITH_API_KEY) {
+    throw new Error(
+      'LANGSMITH_API_KEY is required to pull the jobDescription prompt from LangSmith Hub.',
+    );
+  }
 
   const inputProvider = new LocalScrapedJobsInputProvider(
     logger.child({ component: 'InputProvider' }),
@@ -174,9 +181,21 @@ const parseRecords = async (): Promise<{
     outputPriceUsdPerMillionTokens: envs.GEMINI_OUTPUT_PRICE_USD_PER_1M_TOKENS,
     logger,
   });
+  const jobDescriptionExtractor = new LangSmithJobDescriptionExtractor({
+    langsmithApiKey: envs.LANGSMITH_API_KEY,
+    promptName: envs.LANGSMITH_PROMPT_NAME,
+    apiKey: envs.GEMINI_API_KEY,
+    model: envs.GEMINI_MODEL,
+    temperature: envs.GEMINI_TEMPERATURE,
+    thinkingLevel: envs.GEMINI_THINKING_LEVEL,
+    inputPriceUsdPerMillionTokens: envs.GEMINI_INPUT_PRICE_USD_PER_1M_TOKENS,
+    outputPriceUsdPerMillionTokens: envs.GEMINI_OUTPUT_PRICE_USD_PER_1M_TOKENS,
+    logger,
+  });
 
   const parserGraph = new JobParsingGraph({
     extractor,
+    jobDescriptionExtractor,
     maxDetailChars: envs.GEMINI_MAX_DETAIL_CHARS,
     minRelevantTextChars: envs.DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS,
     parserVersion: envs.PARSER_VERSION,
@@ -194,6 +213,7 @@ const parseRecords = async (): Promise<{
       inputRecords: inputRecords.length,
       sampleSize: envs.INGESTION_SAMPLE_SIZE ?? 'all',
       model: envs.GEMINI_MODEL,
+      langsmithPromptName: envs.LANGSMITH_PROMPT_NAME,
       concurrency: workerCount,
       maxDetailChars: envs.GEMINI_MAX_DETAIL_CHARS,
       minRelevantTextChars: envs.DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS,
@@ -265,6 +285,7 @@ async function main(): Promise<void> {
       mongoDbName: envs.MONGODB_DB_NAME,
       mongoCollectionStructured: envs.MONGODB_JOBS_COLLECTION,
       model: envs.GEMINI_MODEL,
+      langsmithPromptName: envs.LANGSMITH_PROMPT_NAME,
       minRelevantTextChars: envs.DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS,
       logLevel: envs.LOG_LEVEL,
     },
