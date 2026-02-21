@@ -1,5 +1,6 @@
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import * as hub from 'langchain/hub/node';
+import { z } from 'zod';
 
 import type { AppLogger } from './logger.js';
 import {
@@ -17,6 +18,19 @@ Rules:
 - Keep Czech content in Czech. Keep English content in English.
 - detail.jobDescription is extracted in a dedicated node and provided in the prompt.
 - Preserve detail.jobDescription as provided when it is present.
+- For detail.seniorityLevel:
+  - detail.seniorityLevel must be standardized to one of: medior, senior, junior, absolvent.
+  - Use signals from the whole ad context (listing JSON, pre-extracted jobDescription, and full detail text).
+  - If the level is explicit, extract it directly.
+  - If it is not explicit, infer the most likely level from required experience, responsibility scope, ownership, and title signals.
+  - Use "absolvent" for graduate/entry-level ads aimed at fresh graduates with little or no prior experience.
+  - Use "medior" for mid-level roles.
+  - Do not output synonyms like "mid", "lead", "principal", or "manager" in this field.
+  - Keep null only when there is truly no seniority signal.
+- Put recruiter contact information into detail.recruiterContacts object:
+  - recruiterContacts.contactName
+  - recruiterContacts.contactEmail
+  - recruiterContacts.contactPhone
 - For detail.summary:
   - Write a rich analytical summary in the same language as the ad.
   - Target 4-8 sentences and at least ~450 characters when enough evidence is available.
@@ -49,6 +63,10 @@ ${descriptionSource}
 Detail page text (full cleaned body):
 ${detailText}`;
 };
+
+const modelOutputJobDetailSchema = extractedJobDetailSchema.extend({
+  seniorityLevel: z.string().nullable().default(null),
+});
 
 type ThinkingLevel = 'THINKING_LEVEL_UNSPECIFIED' | 'LOW' | 'MEDIUM' | 'HIGH';
 
@@ -161,6 +179,122 @@ const normalizeJobDescription = (value: string | null): string | null => {
     .trim();
 
   return normalized.length >= minimumJobDescriptionChars ? normalized : null;
+};
+
+type StandardSeniorityLevel = 'medior' | 'senior' | 'junior' | 'absolvent';
+
+const seniorityPatternRules: Array<{ value: StandardSeniorityLevel; patterns: RegExp[] }> = [
+  {
+    value: 'absolvent',
+    patterns: [
+      /\babsolvent/i,
+      /\bgraduate\b/i,
+      /\bentry[\s-]?level\b/i,
+      /\bbez\s+praxe\b/i,
+      /\bfor\s+graduates\b/i,
+      /\bpro\s+absolventy\b/i,
+      /\bvhodn[eé]\s+i\s+pro\s+absolventy\b/i,
+    ],
+  },
+  {
+    value: 'junior',
+    patterns: [
+      /\bjunior\b/i,
+      /\bjr\.?\b/i,
+      /\bza[cč][aá]te[cč]n[ií]k/i,
+      /\b1-2\s+roky/i,
+      /\bdo\s+2\s+let\b/i,
+    ],
+  },
+  {
+    value: 'medior',
+    patterns: [
+      /\bmedior\b/i,
+      /\bmid(?:dle)?\b/i,
+      /\bintermediate\b/i,
+      /\b2-4\s+roky/i,
+      /\b3\s+roky/i,
+    ],
+  },
+  {
+    value: 'senior',
+    patterns: [
+      /\bsenior\b/i,
+      /\bsr\.?\b/i,
+      /\blead\b/i,
+      /\bprincipal\b/i,
+      /\bstaff\b/i,
+      /\bexpert\b/i,
+      /\b5\+\s*(?:years?|let)\b/i,
+      /\b6\+\s*(?:years?|let)\b/i,
+      /\barchitekt\b/i,
+      /\bvedouc[ií]\b/i,
+    ],
+  },
+];
+
+const normalizeSeniorityLevel = (value: string | null): StandardSeniorityLevel | null => {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = compactWhitespace(value).toLowerCase();
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  for (const rule of seniorityPatternRules) {
+    if (rule.patterns.some((pattern) => pattern.test(normalized))) {
+      return rule.value;
+    }
+  }
+
+  return null;
+};
+
+const inferSeniorityLevelFromContext = (
+  listingRecord: SourceListingRecord,
+  detailPageText: string,
+  jobDescription: string | null,
+): StandardSeniorityLevel | null => {
+  const context = [
+    listingRecord.jobTitle,
+    listingRecord.publishedInfoText,
+    listingRecord.salary,
+    listingRecord.location,
+    listingRecord.companyName,
+    jobDescription,
+    detailPageText,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .join('\n');
+
+  if (context.length === 0) {
+    return null;
+  }
+
+  const scores: Record<StandardSeniorityLevel, number> = {
+    absolvent: 0,
+    junior: 0,
+    medior: 0,
+    senior: 0,
+  };
+
+  for (const rule of seniorityPatternRules) {
+    for (const pattern of rule.patterns) {
+      if (pattern.test(context)) {
+        scores[rule.value] += 1;
+      }
+    }
+  }
+
+  const ranked = Object.entries(scores).sort((left, right) => right[1] - left[1]);
+  const [topLevel, topScore] = ranked[0] ?? [];
+  if (!topLevel || typeof topScore !== 'number' || topScore <= 0) {
+    return null;
+  }
+
+  return topLevel as StandardSeniorityLevel;
 };
 
 const buildFallbackSummary = (
@@ -449,7 +583,7 @@ export class GeminiJobDetailExtractor {
       thinkingConfig: config.thinkingLevel ? { thinkingLevel: config.thinkingLevel } : undefined,
     });
 
-    this.structuredModel = model.withStructuredOutput(extractedJobDetailSchema, {
+    this.structuredModel = model.withStructuredOutput(modelOutputJobDetailSchema, {
       name: 'extracted_job_detail',
       includeRaw: true,
     });
@@ -480,9 +614,12 @@ export class GeminiJobDetailExtractor {
     const response = await this.structuredModel.invoke(prompt);
     const llmCallDurationSeconds = (performance.now() - startedAt) / 1_000;
 
-    const parsedDetail = extractedJobDetailSchema.parse(response.parsed);
+    const parsedDetail = modelOutputJobDetailSchema.parse(response.parsed);
     const resolvedJobDescription =
       normalizeJobDescription(extractedJobDescription) ?? parsedDetail.jobDescription;
+    const resolvedSeniorityLevel =
+      normalizeSeniorityLevel(parsedDetail.seniorityLevel) ??
+      inferSeniorityLevelFromContext(listingRecord, detailPageText, resolvedJobDescription);
     const resolvedSummary = buildFallbackSummary(
       listingRecord,
       parsedDetail.summary,
@@ -492,6 +629,7 @@ export class GeminiJobDetailExtractor {
       ...parsedDetail,
       summary: resolvedSummary,
       jobDescription: resolvedJobDescription,
+      seniorityLevel: resolvedSeniorityLevel,
     });
     const usage = resolveTokenUsage(response.raw);
 
@@ -506,6 +644,7 @@ export class GeminiJobDetailExtractor {
         llmTotalTokens: usage.totalTokens,
         summaryChars: detail.summary?.length ?? 0,
         jobDescriptionChars: detail.jobDescription?.length ?? 0,
+        seniorityLevel: detail.seniorityLevel,
         llmTotalCostUsd: llmInputCostUsd + llmOutputCostUsd,
       },
       'Completed LLM detail extraction',

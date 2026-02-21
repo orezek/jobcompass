@@ -24,6 +24,7 @@ const employmentTypeSchema = z.enum([
 ]);
 
 const workModeSchema = z.enum(['onsite', 'hybrid', 'remote', 'unknown']);
+const seniorityLevelSchema = z.enum(['medior', 'senior', 'junior', 'absolvent']);
 
 const compensationPeriodSchema = z.enum(['hour', 'day', 'month', 'year', 'project', 'unknown']);
 
@@ -63,6 +64,12 @@ export const languageRequirementSchema = z.object({
   level: z.string().nullable().default(null),
 });
 
+export const recruiterContactsSchema = z.object({
+  contactName: z.string().nullable().default(null),
+  contactEmail: z.string().nullable().default(null),
+  contactPhone: z.string().nullable().default(null),
+});
+
 export const extractedJobDetailSchema = z.object({
   canonicalTitle: z.string().nullable().default(null),
   summary: z.string().nullable().default(null),
@@ -72,7 +79,7 @@ export const extractedJobDetailSchema = z.object({
   niceToHave: z.array(z.string()).default([]),
   benefits: z.array(z.string()).default([]),
   techStack: z.array(z.string()).default([]),
-  seniorityLevel: z.string().nullable().default(null),
+  seniorityLevel: seniorityLevelSchema.nullable().default(null),
   employmentTypes: z.array(employmentTypeSchema).default([]),
   workModes: z.array(workModeSchema).default([]),
   locations: z.array(extractedLocationSchema).default([]),
@@ -83,9 +90,11 @@ export const extractedJobDetailSchema = z.object({
   startDateText: z.string().nullable().default(null),
   applicationDeadlineText: z.string().nullable().default(null),
   applyUrl: z.string().nullable().default(null),
-  contactName: z.string().nullable().default(null),
-  contactEmail: z.string().nullable().default(null),
-  contactPhone: z.string().nullable().default(null),
+  recruiterContacts: recruiterContactsSchema.default({
+    contactName: null,
+    contactEmail: null,
+    contactPhone: null,
+  }),
   companyDescription: z.string().nullable().default(null),
 });
 

@@ -20,6 +20,7 @@ The parser is implemented with `@langchain/langgraph` and runs these nodes per r
    - If the page matches jobs.cz template, it prioritizes the section headed `Pracovní nabídka`.
 2. `extractJobDescription`: pulls `job-description-extractor` from LangSmith Hub (`langchain/hub/node`) and runs it on raw ad text.
 3. `extractDetail`: calls Gemini with listing context + detail text and extracts structured fields.
+   - `seniorityLevel` is inferred from whole ad context when not explicitly stated.
 4. `merge`: merges listing + detail into one Zod-validated structured document.
 
 `loadDetailPage` now includes a completeness gate. If the details page does not contain enough relevant ad content, the ad is skipped entirely.
@@ -57,7 +58,7 @@ High-level shape:
     niceToHave: string[];
     benefits: string[];
     techStack: string[];
-    seniorityLevel: string | null;
+    seniorityLevel: "medior" | "senior" | "junior" | "absolvent" | null;
     employmentTypes: ("full-time" | "part-time" | "contract" | "freelance" | "internship" | "temporary" | "other")[];
     workModes: ("onsite" | "hybrid" | "remote" | "unknown")[];
     locations: { city: string | null; region: string | null; country: string | null; addressText: string | null }[];
@@ -75,9 +76,11 @@ High-level shape:
     startDateText: string | null;
     applicationDeadlineText: string | null;
     applyUrl: string | null;
-    contactName: string | null;
-    contactEmail: string | null;
-    contactPhone: string | null;
+    recruiterContacts: {
+      contactName: string | null;
+      contactEmail: string | null;
+      contactPhone: string | null;
+    };
     companyDescription: string | null;
   };
   ingestion: {
