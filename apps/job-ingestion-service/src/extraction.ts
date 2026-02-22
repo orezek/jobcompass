@@ -40,6 +40,8 @@ Rules:
 - Normalize workModes to one or more of:
   onsite, hybrid, remote, unknown.
 - For detail.salary:
+  - Use evidence from both the listing JSON context and the detail page text.
+  - The list-page salary text may be present in listing JSON field "salary" even when the detail page hides salary.
   - Fill salary.min and salary.max as numeric values only (no units, no separators text).
   - Convert shorthand amounts like "30k" to 30000.
   - If salary is fixed, set both salary.min and salary.max to the same value.
@@ -63,6 +65,9 @@ const buildPrompt = (
 
 Listing JSON context:
 ${listingContext}
+
+Listing salary hint (list page salary text):
+${listingRecord.salary ?? '[not available]'}
 
 Pre-extracted detail.jobDescription text:
 ${descriptionSource}
