@@ -47,6 +47,13 @@ function normalizeWhitespace(input: string): string {
 const JOB_CARD_SELECTOR = 'article.SearchResultCard, article[data-jobad-id]';
 const SALARY_SELECTOR = 'span.Tag--success, [data-test="serp-salary"]';
 const NEXT_PAGE_SELECTOR = '.Pagination__button--next, [data-test="pagination-next"]';
+const DETAIL_WIDGET_CONTAINER_SELECTOR = '#widget_container';
+const DETAIL_VACANCY_CONTAINER_SELECTOR = '#vacancy-detail';
+const DETAIL_VACANCY_LOADER_SELECTOR = '#vacancy-detail .cp-loader';
+const DETAIL_WIDGET_RENDER_TIMEOUT_MS = 15_000;
+const DETAIL_WIDGET_MIN_TEXT_CHARS = 200;
+const DETAIL_VACANCY_RENDER_TIMEOUT_MS = 15_000;
+const DETAIL_VACANCY_MIN_TEXT_CHARS = 200;
 
 // ------------------ 2. Router & Handler Logic ------------------ //
 
@@ -54,11 +61,194 @@ const router = createPlaywrightRouter();
 let enqueuedDetailRequests = 0;
 let storedDetailPages = 0;
 
+const isCareerWidgetHostedDetailPage = async (page: { evaluate<T>(fn: () => T): Promise<T> }) =>
+  page.evaluate(() => {
+    const widgetContainer = document.querySelector('#widget_container');
+    if (!widgetContainer) {
+      return false;
+    }
+
+    return Array.from(document.scripts).some((script) =>
+      (script.textContent ?? '').includes('__LMC_CAREER_WIDGET__'),
+    );
+  });
+
+const getWidgetContainerTextChars = async (page: {
+  evaluate<T>(fn: () => T): Promise<T>;
+}): Promise<number> =>
+  page.evaluate(() => {
+    const widgetContainer = document.querySelector('#widget_container');
+    if (!widgetContainer) {
+      return 0;
+    }
+
+    return (widgetContainer.textContent ?? '').replace(/\s+/g, ' ').trim().length;
+  });
+
+const isVacancyDetailLoaderPage = async (page: { evaluate<T>(fn: () => T): Promise<T> }) =>
+  page.evaluate(() => {
+    const vacancyDetail = document.querySelector('#vacancy-detail');
+    if (!vacancyDetail) {
+      return false;
+    }
+
+    const hasLoader = vacancyDetail.querySelector('.cp-loader') !== null;
+    const hasDataAssets = vacancyDetail.hasAttribute('data-assets');
+    return hasLoader || hasDataAssets;
+  });
+
+const getVacancyDetailTextChars = async (page: {
+  evaluate<T>(fn: () => T): Promise<T>;
+}): Promise<number> =>
+  page.evaluate(() => {
+    const vacancyDetail = document.querySelector('#vacancy-detail');
+    if (!vacancyDetail) {
+      return 0;
+    }
+
+    return (vacancyDetail.textContent ?? '').replace(/\s+/g, ' ').trim().length;
+  });
+
 router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
   const routerDetailsLog = log.child({ prefix: 'DETAILS' });
-  routerDetailsLog.debug(`Processing DETAILS page: ${request.url}`);
+  const requestedDetailUrl = request.url;
+  routerDetailsLog.debug(`Processing DETAILS page request: ${requestedDetailUrl}`);
 
   await page.waitForLoadState('load');
+  const finalDetailUrl = page.url();
+  const redirectedToDifferentHost = finalDetailUrl !== requestedDetailUrl;
+
+  if (redirectedToDifferentHost) {
+    routerDetailsLog.info('DETAILS page redirected before HTML snapshot', {
+      sourceId: request.userData.jobId,
+      requestedDetailUrl,
+      finalDetailUrl,
+    });
+  }
+
+  const isWidgetHostedPage = await isCareerWidgetHostedDetailPage(page);
+  const isVacancyLoaderPage = !isWidgetHostedPage && (await isVacancyDetailLoaderPage(page));
+  if (isWidgetHostedPage) {
+    routerDetailsLog.debug(
+      'Detected client-hosted jobs.cz widget detail page; waiting for widget content render',
+      {
+        sourceId: request.userData.jobId,
+        requestedDetailUrl,
+        finalDetailUrl,
+      },
+    );
+
+    try {
+      await page.waitForFunction(
+        ({ selector, minTextChars }) => {
+          const widgetContainer = document.querySelector(selector);
+          if (!widgetContainer) {
+            return false;
+          }
+
+          const text = (widgetContainer.textContent ?? '').replace(/\s+/g, ' ').trim();
+          return text.length >= minTextChars;
+        },
+        {
+          selector: DETAIL_WIDGET_CONTAINER_SELECTOR,
+          minTextChars: DETAIL_WIDGET_MIN_TEXT_CHARS,
+        },
+        { timeout: DETAIL_WIDGET_RENDER_TIMEOUT_MS },
+      );
+    } catch (error) {
+      const widgetTextChars = await getWidgetContainerTextChars(page);
+      routerDetailsLog.warning(
+        'Widget detail page content did not render in time; throwing to let Crawlee retry',
+        {
+          err: error,
+          sourceId: request.userData.jobId,
+          requestedDetailUrl,
+          finalDetailUrl,
+          widgetTextChars,
+          timeoutMs: DETAIL_WIDGET_RENDER_TIMEOUT_MS,
+        },
+      );
+      throw error;
+    }
+  }
+
+  if (isVacancyLoaderPage) {
+    routerDetailsLog.debug(
+      'Detected dynamic vacancy-detail page; waiting for client-rendered content',
+      {
+        sourceId: request.userData.jobId,
+        requestedDetailUrl,
+        finalDetailUrl,
+      },
+    );
+
+    try {
+      await page.waitForFunction(
+        ({ containerSelector, loaderSelector, minTextChars }) => {
+          const vacancyContainer = document.querySelector(containerSelector);
+          if (!vacancyContainer) {
+            return false;
+          }
+
+          const loaderStillPresent = document.querySelector(loaderSelector) !== null;
+          const text = (vacancyContainer.textContent ?? '').replace(/\s+/g, ' ').trim();
+          return !loaderStillPresent && text.length >= minTextChars;
+        },
+        {
+          containerSelector: DETAIL_VACANCY_CONTAINER_SELECTOR,
+          loaderSelector: DETAIL_VACANCY_LOADER_SELECTOR,
+          minTextChars: DETAIL_VACANCY_MIN_TEXT_CHARS,
+        },
+        { timeout: DETAIL_VACANCY_RENDER_TIMEOUT_MS },
+      );
+    } catch (error) {
+      const vacancyTextChars = await getVacancyDetailTextChars(page);
+      routerDetailsLog.warning(
+        'Dynamic vacancy-detail page content did not render in time; throwing to let Crawlee retry',
+        {
+          err: error,
+          sourceId: request.userData.jobId,
+          requestedDetailUrl,
+          finalDetailUrl,
+          vacancyTextChars,
+          timeoutMs: DETAIL_VACANCY_RENDER_TIMEOUT_MS,
+        },
+      );
+      throw error;
+    }
+  }
+
+  const widgetContainerTextChars = isWidgetHostedPage ? await getWidgetContainerTextChars(page) : 0;
+  const vacancyDetailTextChars = isVacancyLoaderPage ? await getVacancyDetailTextChars(page) : 0;
+  if (isWidgetHostedPage && widgetContainerTextChars < DETAIL_WIDGET_MIN_TEXT_CHARS) {
+    routerDetailsLog.warning(
+      'Widget detail page appears incomplete after render wait; throwing to let Crawlee retry',
+      {
+        sourceId: request.userData.jobId,
+        requestedDetailUrl,
+        finalDetailUrl,
+        widgetContainerTextChars,
+      },
+    );
+    throw new Error(
+      `Widget detail page not fully rendered for job ${String(request.userData.jobId)} (widget text chars: ${widgetContainerTextChars})`,
+    );
+  }
+
+  if (isVacancyLoaderPage && vacancyDetailTextChars < DETAIL_VACANCY_MIN_TEXT_CHARS) {
+    routerDetailsLog.warning(
+      'Dynamic vacancy-detail page appears incomplete after render wait; throwing to let Crawlee retry',
+      {
+        sourceId: request.userData.jobId,
+        requestedDetailUrl,
+        finalDetailUrl,
+        vacancyDetailTextChars,
+      },
+    );
+    throw new Error(
+      `Dynamic vacancy-detail page not fully rendered for job ${String(request.userData.jobId)} (vacancy detail text chars: ${vacancyDetailTextChars})`,
+    );
+  }
 
   const jobDetailHtml = await page.content();
   const htmlDetailPageKey = `job-html-${request.userData.jobId}.html`;
@@ -82,11 +272,27 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
   });
 
   if (safeResult.success) {
-    routerDetailsLog.info(`✅ Saved job: ${result.sourceId} | ${result.jobTitle}`);
+    routerDetailsLog.info(`✅ Saved job: ${result.sourceId} | ${result.jobTitle}`, {
+      sourceId: result.sourceId,
+      requestedDetailUrl,
+      finalDetailUrl,
+      redirectedToDifferentHost,
+      isWidgetHostedPage,
+      widgetContainerTextChars,
+      isVacancyLoaderPage,
+      vacancyDetailTextChars,
+    });
     await Dataset.pushData(safeResult.data);
   } else {
     routerDetailsLog.error(`⚠️ Validation failed for ${result.sourceId}`, {
       errors: safeResult.error,
+      requestedDetailUrl,
+      finalDetailUrl,
+      redirectedToDifferentHost,
+      isWidgetHostedPage,
+      widgetContainerTextChars,
+      isVacancyLoaderPage,
+      vacancyDetailTextChars,
     });
     await Dataset.pushData({ ...result, _validationErrors: safeResult.error });
   }
