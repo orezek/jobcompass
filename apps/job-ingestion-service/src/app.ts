@@ -18,6 +18,10 @@ const toOptionalPositiveInt = z.preprocess((value) => {
     return null;
   }
 
+  if (typeof value === 'string' && value.trim().toLowerCase() === 'all') {
+    return null;
+  }
+
   return value;
 }, z.coerce.number().int().positive().nullable());
 

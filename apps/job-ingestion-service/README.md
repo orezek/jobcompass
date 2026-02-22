@@ -119,7 +119,7 @@ Copy `.env.example` to `.env` and configure:
 - `DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS` minimum required relevant text length for processing a detail page
 - `GEMINI_INPUT_PRICE_USD_PER_1M_TOKENS` and `GEMINI_OUTPUT_PRICE_USD_PER_1M_TOKENS` for cost estimation
 - `INGESTION_CONCURRENCY` to process multiple ads in parallel
-- `INGESTION_SAMPLE_SIZE` for cost-controlled test runs
+- `INGESTION_SAMPLE_SIZE` for cost-controlled test runs (positive integer, `all`, or empty/unset to process all records)
 - `ENABLE_MONGO_WRITE=true` + `MONGODB_URI` for Atlas persistence
 - `OUTPUT_JSON_PATH` for structured output file
 - `MONGODB_JOBS_COLLECTION` for structured document output
