@@ -336,6 +336,17 @@ async function main(): Promise<void> {
     },
     'Parse run stats',
   );
+  logger.info(
+    {
+      jobsProcessed: structuredParsed.length,
+      jobsSkippedIncomplete: skippedIncomplete,
+      jobsFailed: failed,
+      totalTokensUsed: stats.totalTokens,
+      totalEstimatedCostUsd: stats.totalEstimatedCostUsd,
+      runDurationSeconds,
+    },
+    'Parse run summary',
+  );
 }
 
 void main().catch((error) => {
