@@ -19,6 +19,7 @@ Rules:
 - Keep Czech content in Czech. Keep English content in English.
 - detail.jobDescription is extracted in a dedicated node and provided in the prompt.
 - Preserve detail.jobDescription as provided when it is present.
+- Fill short fields first; fill long text fields last.
 - Put recruiter contact information into detail.recruiterContacts object:
   - recruiterContacts.contactName
   - recruiterContacts.contactEmail

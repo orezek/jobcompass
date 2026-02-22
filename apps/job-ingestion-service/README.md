@@ -49,13 +49,6 @@ High-level shape:
   };
   detail: {
     canonicalTitle: string | null;
-    summary: string | null;
-    jobDescription: string | null;
-    responsibilities: string[];
-    requirements: string[];
-    niceToHave: string[];
-    benefits: string[];
-    techStack: string[];
     seniorityLevel: "medior" | "senior" | "junior" | "absolvent" | null;
     employmentTypes: ("full-time" | "part-time" | "contract" | "freelance" | "internship" | "temporary" | "other")[];
     workModes: ("onsite" | "hybrid" | "remote" | "unknown")[];
@@ -68,7 +61,7 @@ High-level shape:
       inferred: boolean;
     };
     languageRequirements: { language: string; level: string | null }[];
-    hiringProcess: string[];
+    techStack: string[];
     travelRequirements: string | null;
     startDateText: string | null;
     applicationDeadlineText: string | null;
@@ -78,6 +71,13 @@ High-level shape:
       contactEmail: string | null;
       contactPhone: string | null;
     };
+    responsibilities: string[];
+    requirements: string[];
+    niceToHave: string[];
+    benefits: string[];
+    hiringProcess: string[];
+    summary: string | null;
+    jobDescription: string | null;
     companyDescription: string | null;
   };
   rawDetailPage: {

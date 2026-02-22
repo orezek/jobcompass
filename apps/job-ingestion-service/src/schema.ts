@@ -184,39 +184,6 @@ export const extractedJobDetailSchema = z.object({
     .describe(
       'Normalized job role title based on ad evidence. Remove obvious company/location noise when possible. Keep null if unclear.',
     ),
-  summary: z
-    .string()
-    .nullable()
-    .default(null)
-    .describe(
-      'Write a rich analytical summary in the same language as the ad. Target 4-8 sentences and at least ~450 characters when enough evidence is available. Cover role scope, key responsibilities, required skills, seniority, location/work mode, and compensation when present.',
-    ),
-  jobDescription: z
-    .string()
-    .nullable()
-    .default(null)
-    .describe(
-      'Role description content only (responsibilities, expectations, scope, context). Exclude unrelated site chrome or marketing text when possible. Use null if unavailable.',
-    ),
-  responsibilities: z
-    .array(z.string())
-    .default([])
-    .describe('List of specific day-to-day duties. Split compound sentences.'),
-  requirements: z
-    .array(z.string())
-    .default([])
-    .describe('Hard skills, education, and experience requirements.'),
-  niceToHave: z.array(z.string()).default([]).describe("Optional or 'advantage' skills."),
-  benefits: z
-    .array(z.string())
-    .default([])
-    .describe('Perks, hardware, holidays, or monetary bonuses.'),
-  techStack: z
-    .array(z.string())
-    .default([])
-    .describe(
-      'Specific technologies, languages, frameworks (e.g. Java, SQL, React). Exclude generic tools like Word/Excel/Outlook unless critical.',
-    ),
   seniorityLevel: seniorityLevelSchema
     .nullable()
     .default(null)
@@ -233,7 +200,12 @@ export const extractedJobDetailSchema = z.object({
   locations: z.array(extractedLocationSchema).default([]),
   salary: extractedSalarySchema,
   languageRequirements: z.array(languageRequirementSchema).default([]),
-  hiringProcess: z.array(z.string()).default([]),
+  techStack: z
+    .array(z.string())
+    .default([])
+    .describe(
+      'Specific technologies, languages, frameworks (e.g. Java, SQL, React). Exclude generic tools like Word/Excel/Outlook unless critical.',
+    ),
   travelRequirements: z
     .string()
     .nullable()
@@ -263,6 +235,34 @@ export const extractedJobDetailSchema = z.object({
     contactEmail: null,
     contactPhone: null,
   }),
+  responsibilities: z
+    .array(z.string())
+    .default([])
+    .describe('List of specific day-to-day duties. Split compound sentences.'),
+  requirements: z
+    .array(z.string())
+    .default([])
+    .describe('Hard skills, education, and experience requirements.'),
+  niceToHave: z.array(z.string()).default([]).describe("Optional or 'advantage' skills."),
+  benefits: z
+    .array(z.string())
+    .default([])
+    .describe('Perks, hardware, holidays, or monetary bonuses.'),
+  hiringProcess: z.array(z.string()).default([]),
+  summary: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Write a rich analytical summary in the same language as the ad. Target 4-8 sentences and at least ~450 characters when enough evidence is available. Cover role scope, key responsibilities, required skills, seniority, location/work mode, and compensation when present.',
+    ),
+  jobDescription: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Role description content only (responsibilities, expectations, scope, context). Exclude unrelated site chrome or marketing text when possible. Use null if unavailable.',
+    ),
   companyDescription: z
     .string()
     .nullable()
