@@ -19,6 +19,7 @@ Rules:
 - Keep Czech content in Czech. Keep English content in English.
 - detail.jobDescription is extracted in a dedicated node and provided in the prompt.
 - Preserve detail.jobDescription as provided when it is present.
+- detail.summary may be null. Final detail.summary is derived deterministically in post-processing from structured fields and listing context.
 - Fill short fields first; fill long text fields last.
 - Put recruiter contact information into detail.recruiterContacts object:
   - recruiterContacts.contactName
@@ -156,9 +157,8 @@ const resolveTokenUsage = (raw: RawLlmMessage | undefined) => {
 const tokensToUsd = (tokens: number, usdPerMillionTokens: number): number =>
   (tokens / 1_000_000) * usdPerMillionTokens;
 
-const minimumSummaryChars = 260;
 const minimumJobDescriptionChars = 120;
-const fallbackSummaryMaxChars = 1_400;
+const derivedSummaryMaxChars = 1_000;
 
 const compactWhitespace = (value: string): string => value.replace(/\s+/g, ' ').trim();
 
@@ -307,35 +307,134 @@ const inferSeniorityLevelFromContext = (
   return topLevel as StandardSeniorityLevel;
 };
 
-const buildFallbackSummary = (
+const formatListPreview = (items: string[], limit: number): string | null => {
+  if (items.length === 0) {
+    return null;
+  }
+
+  const selected = items.slice(0, limit).join(', ');
+  const remaining = items.length - limit;
+  return remaining > 0 ? `${selected} (+${remaining} more)` : selected;
+};
+
+const formatSalarySummary = (
   listingRecord: SourceListingRecord,
-  summary: string | null,
-  jobDescription: string | null,
+  detail: ExtractedJobDetail,
 ): string | null => {
-  const normalizedSummary = summary ? compactWhitespace(summary) : null;
-  if (normalizedSummary && normalizedSummary.length >= minimumSummaryChars) {
-    return normalizedSummary;
+  const { salary } = detail;
+  const formattedMin = salary.min !== null ? salary.min.toLocaleString('en-US') : null;
+  const formattedMax = salary.max !== null ? salary.max.toLocaleString('en-US') : null;
+  const currency = salary.currency ?? null;
+  const periodSuffix = salary.period !== 'unknown' ? `/${salary.period}` : '';
+
+  if (formattedMin !== null || formattedMax !== null) {
+    const amountText =
+      formattedMin !== null && formattedMax !== null
+        ? formattedMin === formattedMax
+          ? formattedMin
+          : `${formattedMin}-${formattedMax}`
+        : (formattedMin ?? formattedMax);
+
+    if (!amountText) {
+      return null;
+    }
+
+    const currencySuffix = currency ? ` ${currency}` : '';
+    return `${amountText}${currencySuffix}${periodSuffix}`.trim();
   }
 
-  if (!jobDescription) {
-    return normalizedSummary;
+  if (listingRecord.salary && listingRecord.salary.trim().length > 0) {
+    return compactWhitespace(listingRecord.salary);
   }
 
-  const normalizedDescription = compactWhitespace(jobDescription.replace(/\n+/g, ' '));
-  if (normalizedDescription.length === 0) {
-    return normalizedSummary;
+  return null;
+};
+
+const formatLocationsSummary = (
+  listingRecord: SourceListingRecord,
+  detail: ExtractedJobDetail,
+): string | null => {
+  const locations = detail.locations
+    .map((location) =>
+      [location.city, location.region, location.country]
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .join(', '),
+    )
+    .filter((value) => value.length > 0);
+
+  if (locations.length > 0) {
+    return formatListPreview(locations, 2);
   }
 
-  const heading = [listingRecord.jobTitle, listingRecord.companyName, listingRecord.location]
-    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-    .join(' | ');
-  const descriptionSnippet = trimToWholeWord(normalizedDescription, fallbackSummaryMaxChars);
-
-  if (heading.length === 0) {
-    return descriptionSnippet;
+  if (listingRecord.location && listingRecord.location.trim().length > 0) {
+    return compactWhitespace(listingRecord.location);
   }
 
-  return `${heading}. ${descriptionSnippet}`.trim();
+  return null;
+};
+
+const formatEnumListSummary = (items: string[]): string | null => {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return items.join(', ');
+};
+
+const buildDerivedSummary = (
+  listingRecord: SourceListingRecord,
+  detail: ExtractedJobDetail,
+): string | null => {
+  const title = detail.canonicalTitle ?? listingRecord.jobTitle;
+  const company = listingRecord.companyName ?? null;
+  const seniority = detail.seniorityLevel ?? null;
+  const employment = formatEnumListSummary(detail.employmentTypes);
+  const workModes = formatEnumListSummary(detail.workModes);
+  const locations = formatLocationsSummary(listingRecord, detail);
+  const salary = formatSalarySummary(listingRecord, detail);
+  const languages = formatListPreview(
+    detail.languageRequirements.map((item) =>
+      item.level ? `${item.language} (${item.level})` : item.language,
+    ),
+    3,
+  );
+  const tech = formatListPreview(detail.techStack, 6);
+  const responsibilities = formatListPreview(detail.responsibilities, 3);
+  const requirements = formatListPreview(detail.requirements, 4);
+  const niceToHave = formatListPreview(detail.niceToHave, 3);
+  const benefits = formatListPreview(detail.benefits, 4);
+  const hiringProcess = formatListPreview(detail.hiringProcess, 3);
+
+  const leadSegments = [
+    title,
+    seniority ? `Seniority: ${seniority}` : null,
+    company ? `Company: ${company}` : null,
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+  const detailSegments = [
+    employment ? `Employment: ${employment}` : null,
+    workModes ? `Work mode: ${workModes}` : null,
+    locations ? `Location: ${locations}` : null,
+    salary ? `Salary: ${salary}` : null,
+    languages ? `Languages: ${languages}` : null,
+    tech ? `Tech: ${tech}` : null,
+    responsibilities ? `Responsibilities: ${responsibilities}` : null,
+    requirements ? `Requirements: ${requirements}` : null,
+    niceToHave ? `Nice to have: ${niceToHave}` : null,
+    benefits ? `Benefits: ${benefits}` : null,
+    hiringProcess ? `Hiring process: ${hiringProcess}` : null,
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+  const summaryParts = [
+    leadSegments.length > 0 ? leadSegments.join(' | ') : null,
+    ...detailSegments,
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+  if (summaryParts.length === 0) {
+    return null;
+  }
+
+  return trimToWholeWord(summaryParts.join('. '), derivedSummaryMaxChars);
 };
 
 const toRawLlmMessage = (value: unknown): RawLlmMessage => {
@@ -630,16 +729,16 @@ export class GeminiJobDetailExtractor {
     const resolvedSeniorityLevel =
       normalizeSeniorityLevel(parsedDetail.seniorityLevel) ??
       inferSeniorityLevelFromContext(listingRecord, detailPageText, resolvedJobDescription);
-    const resolvedSummary = buildFallbackSummary(
-      listingRecord,
-      parsedDetail.summary,
-      resolvedJobDescription,
-    );
-    const detail = normalizedExtractedJobDetailSchema.parse({
+    const normalizedDetail = normalizedExtractedJobDetailSchema.parse({
       ...parsedDetail,
-      summary: resolvedSummary,
+      summary: parsedDetail.summary,
       jobDescription: resolvedJobDescription,
       seniorityLevel: resolvedSeniorityLevel,
+    });
+    const resolvedSummary = buildDerivedSummary(listingRecord, normalizedDetail);
+    const detail = extractedJobDetailSchema.parse({
+      ...normalizedDetail,
+      summary: resolvedSummary,
     });
     const usage = resolveTokenUsage(response.raw);
 

@@ -361,7 +361,7 @@ export const extractedJobDetailSchema = z.object({
     .nullable()
     .default(null)
     .describe(
-      'Write a rich analytical summary in the same language as the ad. Target 4-8 sentences and at least ~450 characters when enough evidence is available. Cover role scope, key responsibilities, required skills, seniority, location/work mode, and compensation when present.',
+      'Optional for the LLM. It may return null. Final summary is derived deterministically in post-processing from extracted structured fields and listing context; do not invent narrative details.',
     ),
   jobDescription: z
     .string()

@@ -76,7 +76,7 @@ High-level shape:
     niceToHave: string[];
     benefits: string[];
     hiringProcess: string[];
-    summary: string | null;
+    summary: string | null; // derived deterministically from extracted fields + listing context
     jobDescription: string | null;
     companyDescription: string | null;
   };
