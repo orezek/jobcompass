@@ -87,13 +87,35 @@ export const languageRequirementSchema = z.object({
 });
 
 export const recruiterContactsSchema = z.object({
-  contactName: z.string().nullable().default(null),
-  contactEmail: z.string().nullable().default(null),
-  contactPhone: z.string().nullable().default(null),
+  contactName: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Recruiter or contact person name if explicitly present. Use null if missing or unclear. Do not invent a person from generic HR text.',
+    ),
+  contactEmail: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe('Recruiter contact email if explicitly present. Use null if missing. Do not invent.'),
+  contactPhone: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Recruiter contact phone number if explicitly present. Use null if missing. Do not invent.',
+    ),
 });
 
 export const extractedJobDetailSchema = z.object({
-  canonicalTitle: z.string().nullable().default(null),
+  canonicalTitle: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Normalized job role title based on ad evidence. Remove obvious company/location noise when possible. Keep null if unclear.',
+    ),
   summary: z
     .string()
     .nullable()
@@ -101,12 +123,23 @@ export const extractedJobDetailSchema = z.object({
     .describe(
       'Write a rich analytical summary in the same language as the ad. Target 4-8 sentences and at least ~450 characters when enough evidence is available. Cover role scope, key responsibilities, required skills, seniority, location/work mode, and compensation when present.',
     ),
-  jobDescription: z.string().nullable().default(null),
+  jobDescription: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Role description content only (responsibilities, expectations, scope, context). Exclude unrelated site chrome or marketing text when possible. Use null if unavailable.',
+    ),
   responsibilities: z.array(z.string()).default([]),
   requirements: z.array(z.string()).default([]),
   niceToHave: z.array(z.string()).default([]),
   benefits: z.array(z.string()).default([]),
-  techStack: z.array(z.string()).default([]),
+  techStack: z
+    .array(z.string())
+    .default([])
+    .describe(
+      'List only directly relevant technologies/tools/platforms for the role (languages, frameworks, databases, cloud, infrastructure, developer tools). Exclude generic office software (e.g. Word, Excel, PowerPoint) and broad non-technical business tools unless the role explicitly centers on them. Deduplicate.',
+    ),
   seniorityLevel: seniorityLevelSchema
     .nullable()
     .default(null)
@@ -124,16 +157,42 @@ export const extractedJobDetailSchema = z.object({
   salary: extractedSalarySchema,
   languageRequirements: z.array(languageRequirementSchema).default([]),
   hiringProcess: z.array(z.string()).default([]),
-  travelRequirements: z.string().nullable().default(null),
-  startDateText: z.string().nullable().default(null),
-  applicationDeadlineText: z.string().nullable().default(null),
-  applyUrl: z.string().nullable().default(null),
+  travelRequirements: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe('Travel requirement text if explicitly mentioned; otherwise null.'),
+  startDateText: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Start date or candidate availability text exactly as stated in the ad; otherwise null.',
+    ),
+  applicationDeadlineText: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe('Application deadline text exactly as stated in the ad; otherwise null.'),
+  applyUrl: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Apply URL if explicitly provided in the ad; otherwise null. Prefer absolute URL when available.',
+    ),
   recruiterContacts: recruiterContactsSchema.default({
     contactName: null,
     contactEmail: null,
     contactPhone: null,
   }),
-  companyDescription: z.string().nullable().default(null),
+  companyDescription: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Employer/company description text that is relevant to understanding the company. Use null if not present.',
+    ),
 });
 
 export type ExtractedJobDetail = z.infer<typeof extractedJobDetailSchema>;
