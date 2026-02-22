@@ -94,15 +94,31 @@ export const recruiterContactsSchema = z.object({
 
 export const extractedJobDetailSchema = z.object({
   canonicalTitle: z.string().nullable().default(null),
-  summary: z.string().nullable().default(null),
+  summary: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Write a rich analytical summary in the same language as the ad. Target 4-8 sentences and at least ~450 characters when enough evidence is available. Cover role scope, key responsibilities, required skills, seniority, location/work mode, and compensation when present.',
+    ),
   jobDescription: z.string().nullable().default(null),
   responsibilities: z.array(z.string()).default([]),
   requirements: z.array(z.string()).default([]),
   niceToHave: z.array(z.string()).default([]),
   benefits: z.array(z.string()).default([]),
   techStack: z.array(z.string()).default([]),
-  seniorityLevel: seniorityLevelSchema.nullable().default(null),
-  employmentTypes: z.array(employmentTypeSchema).default([]),
+  seniorityLevel: seniorityLevelSchema
+    .nullable()
+    .default(null)
+    .describe(
+      'Standardize to one of: medior, senior, junior, absolvent. Use signals from the whole ad context (listing JSON, pre-extracted jobDescription, and full detail text). If explicit, extract directly. Otherwise infer from required experience, responsibility scope, ownership, and title signals. Use "absolvent" for graduate/entry-level ads aimed at fresh graduates, "medior" for mid-level roles. Do not output synonyms like mid, lead, principal, or manager. Keep null only when there is truly no seniority signal.',
+    ),
+  employmentTypes: z
+    .array(employmentTypeSchema)
+    .default([])
+    .describe(
+      'Normalize to one or more of: full-time, part-time, contract, freelance, internship, temporary, other.',
+    ),
   workModes: z.array(workModeSchema).default([]),
   locations: z.array(extractedLocationSchema).default([]),
   salary: extractedSalarySchema,

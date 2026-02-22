@@ -18,25 +18,10 @@ Rules:
 - Keep Czech content in Czech. Keep English content in English.
 - detail.jobDescription is extracted in a dedicated node and provided in the prompt.
 - Preserve detail.jobDescription as provided when it is present.
-- For detail.seniorityLevel:
-  - detail.seniorityLevel must be standardized to one of: medior, senior, junior, absolvent.
-  - Use signals from the whole ad context (listing JSON, pre-extracted jobDescription, and full detail text).
-  - If the level is explicit, extract it directly.
-  - If it is not explicit, infer the most likely level from required experience, responsibility scope, ownership, and title signals.
-  - Use "absolvent" for graduate/entry-level ads aimed at fresh graduates with little or no prior experience.
-  - Use "medior" for mid-level roles.
-  - Do not output synonyms like "mid", "lead", "principal", or "manager" in this field.
-  - Keep null only when there is truly no seniority signal.
 - Put recruiter contact information into detail.recruiterContacts object:
   - recruiterContacts.contactName
   - recruiterContacts.contactEmail
   - recruiterContacts.contactPhone
-- For detail.summary:
-  - Write a rich analytical summary in the same language as the ad.
-  - Target 4-8 sentences and at least ~450 characters when enough evidence is available.
-  - Cover role scope, key responsibilities, required skills, seniority, location/work mode, and compensation when present.
-- Normalize employmentTypes to one or more of:
-  full-time, part-time, contract, freelance, internship, temporary, other.
 - Normalize workModes to one or more of:
   onsite, hybrid, remote, unknown.
 - For detail.salary:
@@ -77,7 +62,13 @@ ${detailText}`;
 };
 
 const modelOutputJobDetailSchema = extractedJobDetailSchema.extend({
-  seniorityLevel: z.string().nullable().default(null),
+  seniorityLevel: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Standardize to one of: medior, senior, junior, absolvent. Use signals from the whole ad context (listing JSON, pre-extracted jobDescription, and full detail text). If explicit, extract directly. Otherwise infer from required experience, responsibility scope, ownership, and title signals. Use "absolvent" for graduate/entry-level ads aimed at fresh graduates, "medior" for mid-level roles. Do not output synonyms like mid, lead, principal, or manager. Keep null only when there is truly no seniority signal.',
+    ),
 });
 
 type ThinkingLevel = 'THINKING_LEVEL_UNSPECIFIED' | 'LOW' | 'MEDIUM' | 'HIGH';
