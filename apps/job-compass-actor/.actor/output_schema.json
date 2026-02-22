@@ -11,6 +11,51 @@
       "title": "Ad URL",
       "description": "Url for the details page of the ad."
     },
+    "requestedDetailUrl": {
+      "type": "string",
+      "title": "Requested Detail URL",
+      "description": "Canonical jobs.cz details URL requested by the crawler before redirects."
+    },
+    "finalDetailUrl": {
+      "type": "string",
+      "title": "Final Detail URL",
+      "description": "Final page URL after redirects where the HTML snapshot was captured."
+    },
+    "finalDetailHost": {
+      "type": "string",
+      "title": "Final Detail Host",
+      "description": "Hostname derived from finalDetailUrl for grouping/debugging custom-hosted pages."
+    },
+    "detailRedirected": {
+      "type": "boolean",
+      "title": "Detail Redirected",
+      "description": "Whether the final detail URL differs from the requested jobs.cz detail URL."
+    },
+    "detailRenderType": {
+      "type": "string",
+      "title": "Detail Render Type",
+      "description": "Heuristic rendering pattern detected for the detail page before HTML snapshot."
+    },
+    "detailRenderSignal": {
+      "type": "string",
+      "title": "Detail Render Signal",
+      "description": "Render completeness signal that was used before snapshotting HTML."
+    },
+    "detailRenderTextChars": {
+      "type": "integer",
+      "title": "Detail Render Text Chars",
+      "description": "Character count measured in the render target element used for completeness checks."
+    },
+    "detailRenderWaitMs": {
+      "type": "integer",
+      "title": "Detail Render Wait Ms",
+      "description": "Milliseconds spent waiting for dynamic detail page content to render before snapshot."
+    },
+    "detailRenderComplete": {
+      "type": "boolean",
+      "title": "Detail Render Complete",
+      "description": "Whether the selected render completeness condition was satisfied before snapshot."
+    },
     "jobTitle": {
       "type": "string",
       "title": "Job Title",
@@ -51,6 +96,16 @@
       "type": "string",
       "title": "HTML Key",
       "description": "Key that identifies the html blob from the details page."
+    },
+    "detailHtmlByteSize": {
+      "type": "integer",
+      "title": "Detail HTML Byte Size",
+      "description": "UTF-8 byte size of the rendered HTML snapshot saved to the key-value store."
+    },
+    "detailHtmlSha256": {
+      "type": "string",
+      "title": "Detail HTML SHA-256",
+      "description": "SHA-256 hash of the rendered HTML snapshot saved to the key-value store."
     }
   }
 }

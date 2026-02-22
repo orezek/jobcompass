@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { PlaywrightCrawler, Dataset, createPlaywrightRouter, log, type LogLevel } from 'crawlee';
 import type { Locator } from 'playwright';
@@ -23,6 +24,41 @@ const actorInputSchema = z.object({
 const internalJobAdSchema = z.object({
   sourceId: z.string().describe('The ID of the job ad as encoded on the website.'),
   adUrl: z.string().describe('Url for the details page of the ad.'),
+  requestedDetailUrl: z
+    .string()
+    .describe('Canonical jobs.cz details URL requested by the crawler before redirects.'),
+  finalDetailUrl: z
+    .string()
+    .describe('Final page URL after redirects where the HTML snapshot was captured.'),
+  finalDetailHost: z
+    .string()
+    .describe('Hostname derived from finalDetailUrl for grouping/debugging custom-hosted pages.'),
+  detailRedirected: z
+    .boolean()
+    .describe('Whether the final detail URL differs from the requested jobs.cz detail URL.'),
+  detailRenderType: z
+    .enum(['jobscz-template', 'widget', 'vacancy-detail', 'unknown'])
+    .describe('Heuristic rendering pattern detected for the detail page before HTML snapshot.'),
+  detailRenderSignal: z
+    .enum(['none', 'widget_container_text', 'vacancy_detail_text'])
+    .describe('Render completeness signal that was used before snapshotting HTML.'),
+  detailRenderTextChars: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe(
+      'Character count measured in the render target element used for completeness checks.',
+    ),
+  detailRenderWaitMs: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe(
+      'Milliseconds spent waiting for dynamic detail page content to render before snapshot.',
+    ),
+  detailRenderComplete: z
+    .boolean()
+    .describe('Whether the selected render completeness condition was satisfied before snapshot.'),
   jobTitle: z.string().describe('The title name of the job position.'),
   companyName: z.string().describe('The name of the company.'),
   location: z.string().describe('The location of the company as extracted from the list page.'),
@@ -33,6 +69,15 @@ const internalJobAdSchema = z.object({
   htmlDetailPageKey: z
     .string()
     .describe('Key that identifies the html blob from the details page.'),
+  detailHtmlByteSize: z
+    .number()
+    .int()
+    .positive()
+    .describe('UTF-8 byte size of the rendered HTML snapshot saved to the key-value store.'),
+  detailHtmlSha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .describe('SHA-256 hash of the rendered HTML snapshot saved to the key-value store.'),
 });
 
 // Helper for cleaning text
@@ -42,6 +87,14 @@ function normalizeWhitespace(input: string): string {
     .replace(/\u200D/g, '') // zero-width joiner → gone
     .replace(/\s+/g, ' ') // collapse whitespace
     .trim();
+}
+
+function getHostnameFromUrl(value: string): string {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return 'unknown';
+  }
 }
 
 const JOB_CARD_SELECTOR = 'article.SearchResultCard, article[data-jobad-id]';
@@ -116,7 +169,10 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
 
   await page.waitForLoadState('load');
   const finalDetailUrl = page.url();
+  const finalDetailHost = getHostnameFromUrl(finalDetailUrl);
   const redirectedToDifferentHost = finalDetailUrl !== requestedDetailUrl;
+  let detailRenderWaitMs = 0;
+  let detailRenderSignal: z.infer<typeof internalJobAdSchema>['detailRenderSignal'] = 'none';
 
   if (redirectedToDifferentHost) {
     routerDetailsLog.info('DETAILS page redirected before HTML snapshot', {
@@ -139,6 +195,7 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
     );
 
     try {
+      const renderWaitStartedAt = Date.now();
       await page.waitForFunction(
         ({ selector, minTextChars }) => {
           const widgetContainer = document.querySelector(selector);
@@ -155,6 +212,8 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
         },
         { timeout: DETAIL_WIDGET_RENDER_TIMEOUT_MS },
       );
+      detailRenderWaitMs = Date.now() - renderWaitStartedAt;
+      detailRenderSignal = 'widget_container_text';
     } catch (error) {
       const widgetTextChars = await getWidgetContainerTextChars(page);
       routerDetailsLog.warning(
@@ -183,6 +242,7 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
     );
 
     try {
+      const renderWaitStartedAt = Date.now();
       await page.waitForFunction(
         ({ containerSelector, loaderSelector, minTextChars }) => {
           const vacancyContainer = document.querySelector(containerSelector);
@@ -201,6 +261,8 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
         },
         { timeout: DETAIL_VACANCY_RENDER_TIMEOUT_MS },
       );
+      detailRenderWaitMs = Date.now() - renderWaitStartedAt;
+      detailRenderSignal = 'vacancy_detail_text';
     } catch (error) {
       const vacancyTextChars = await getVacancyDetailTextChars(page);
       routerDetailsLog.warning(
@@ -251,10 +313,37 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
   }
 
   const jobDetailHtml = await page.content();
+  const detailHtmlByteSize = Buffer.byteLength(jobDetailHtml, 'utf8');
+  const detailHtmlSha256 = createHash('sha256').update(jobDetailHtml, 'utf8').digest('hex');
   const htmlDetailPageKey = `job-html-${request.userData.jobId}.html`;
+  const detailRenderType: z.infer<typeof internalJobAdSchema>['detailRenderType'] =
+    isWidgetHostedPage
+      ? 'widget'
+      : isVacancyLoaderPage
+        ? 'vacancy-detail'
+        : finalDetailHost === 'www.jobs.cz' || finalDetailHost === 'jobs.cz'
+          ? 'jobscz-template'
+          : 'unknown';
+  const detailRenderTextChars = isWidgetHostedPage
+    ? widgetContainerTextChars
+    : vacancyDetailTextChars;
+  const detailRenderComplete = isWidgetHostedPage
+    ? widgetContainerTextChars >= DETAIL_WIDGET_MIN_TEXT_CHARS
+    : isVacancyLoaderPage
+      ? vacancyDetailTextChars >= DETAIL_VACANCY_MIN_TEXT_CHARS
+      : true;
   const result = {
     sourceId: request.userData.jobId,
     adUrl: request.url,
+    requestedDetailUrl,
+    finalDetailUrl,
+    finalDetailHost,
+    detailRedirected: redirectedToDifferentHost,
+    detailRenderType,
+    detailRenderSignal,
+    detailRenderTextChars,
+    detailRenderWaitMs,
+    detailRenderComplete,
     jobTitle: request.userData.jobTitle,
     companyName: request.userData.companyName,
     location: request.userData.location,
@@ -263,6 +352,8 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
     scrapedAt: new Date(), // Generates a Date object
     source: 'jobs.cz',
     htmlDetailPageKey,
+    detailHtmlByteSize,
+    detailHtmlSha256,
   };
 
   const safeResult = internalJobAdSchema.safeParse(result);
@@ -277,10 +368,14 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
       requestedDetailUrl,
       finalDetailUrl,
       redirectedToDifferentHost,
+      detailRenderType,
+      detailRenderSignal,
+      detailRenderWaitMs,
       isWidgetHostedPage,
       widgetContainerTextChars,
       isVacancyLoaderPage,
       vacancyDetailTextChars,
+      detailHtmlByteSize,
     });
     await Dataset.pushData(safeResult.data);
   } else {
@@ -289,10 +384,14 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
       requestedDetailUrl,
       finalDetailUrl,
       redirectedToDifferentHost,
+      detailRenderType,
+      detailRenderSignal,
+      detailRenderWaitMs,
       isWidgetHostedPage,
       widgetContainerTextChars,
       isVacancyLoaderPage,
       vacancyDetailTextChars,
+      detailHtmlByteSize,
     });
     await Dataset.pushData({ ...result, _validationErrors: safeResult.error });
   }

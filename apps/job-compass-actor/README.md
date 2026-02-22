@@ -51,6 +51,18 @@ From the repository root:
 pnpm -C apps/job-compass-actor dev
 ```
 
+## Output Metadata (Detail HTML Snapshot)
+
+Each dataset record also includes detail-page snapshot metadata to support downstream ingestion,
+debugging, and reprocessing:
+
+- `requestedDetailUrl` (canonical jobs.cz URL enqueued by the crawler)
+- `finalDetailUrl` and `finalDetailHost` (actual page URL/host after redirects)
+- `detailRedirected` (whether redirect occurred)
+- `detailRenderType` / `detailRenderSignal` (how the detail page was rendered and validated)
+- `detailRenderTextChars`, `detailRenderWaitMs`, `detailRenderComplete`
+- `detailHtmlByteSize`, `detailHtmlSha256` (rendered HTML snapshot size/hash)
+
 ## Validate
 
 From the repository root:
