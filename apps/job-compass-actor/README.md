@@ -63,6 +63,10 @@ debugging, and reprocessing:
 - `detailRenderTextChars`, `detailRenderWaitMs`, `detailRenderComplete`
 - `detailHtmlByteSize`, `detailHtmlSha256` (rendered HTML snapshot size/hash)
 
+The actor also writes a run-level summary JSON into the key-value store under `RUN_SUMMARY`,
+including parsed list-page totals (for example `Našli jsme 1 587 nabídek`), crawl counters,
+render-type breakdowns, and stop reason.
+
 ## Validate
 
 From the repository root:

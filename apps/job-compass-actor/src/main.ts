@@ -97,6 +97,43 @@ function getHostnameFromUrl(value: string): string {
   }
 }
 
+const CZECH_LISTING_RESULTS_COUNT_REGEX = /(Našli jsme\s+([\d\s]+)\s+nabídek)/i;
+
+function parseListingResultsCount(input: string): { rawText: string; count: number } | null {
+  const normalized = normalizeWhitespace(input);
+  const match = normalized.match(CZECH_LISTING_RESULTS_COUNT_REGEX);
+  if (!match) {
+    return null;
+  }
+
+  const rawText = match[1];
+  const countText = match[2];
+  if (!rawText || !countText) {
+    return null;
+  }
+
+  const count = Number.parseInt(countText.replace(/[^\d]/g, ''), 10);
+  if (!Number.isFinite(count)) {
+    return null;
+  }
+
+  return {
+    rawText,
+    count,
+  };
+}
+
+type DetailRenderType = z.infer<typeof internalJobAdSchema>['detailRenderType'];
+type DetailRenderSignal = z.infer<typeof internalJobAdSchema>['detailRenderSignal'];
+
+type SeedListSummary = {
+  startUrl: string;
+  firstObservedListUrl: string | null;
+  listPagesVisited: number;
+  parsedResultsCount: number | null;
+  parsedResultsText: string | null;
+};
+
 const JOB_CARD_SELECTOR = 'article.SearchResultCard, article[data-jobad-id]';
 const SALARY_SELECTOR = 'span.Tag--success, [data-test="serp-salary"]';
 const NEXT_PAGE_SELECTOR = '.Pagination__button--next, [data-test="pagination-next"]';
@@ -113,6 +150,35 @@ const DETAIL_VACANCY_MIN_TEXT_CHARS = 200;
 const router = createPlaywrightRouter();
 let enqueuedDetailRequests = 0;
 let storedDetailPages = 0;
+let listPagesVisited = 0;
+let detailPagesVisited = 0;
+let totalJobCardsSeen = 0;
+let cardsSkippedMissingHrefOrId = 0;
+let duplicateOrAlreadyHandledDetailRequests = 0;
+let paginationNextPagesEnqueued = 0;
+let detailsValidationSucceeded = 0;
+let detailsValidationFailed = 0;
+let htmlSnapshotsSaved = 0;
+let detailRedirects = 0;
+let totalDetailHtmlBytes = 0;
+let totalDetailRenderWaitMs = 0;
+let maxDetailRenderWaitMs = 0;
+let maxItemsAbortTriggered = false;
+let maxItemsEnqueueGuardTriggered = false;
+let failedRequests = 0;
+const failedRequestSamples: string[] = [];
+const detailRenderTypeCounts: Record<DetailRenderType, number> = {
+  'jobscz-template': 0,
+  widget: 0,
+  'vacancy-detail': 0,
+  unknown: 0,
+};
+const detailRenderSignalCounts: Record<DetailRenderSignal, number> = {
+  none: 0,
+  widget_container_text: 0,
+  vacancy_detail_text: 0,
+};
+const seedListSummaries = new Map<string, SeedListSummary>();
 
 const isCareerWidgetHostedDetailPage = async (page: { evaluate<T>(fn: () => T): Promise<T> }) =>
   page.evaluate(() => {
@@ -165,6 +231,7 @@ const getVacancyDetailTextChars = async (page: {
 router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
   const routerDetailsLog = log.child({ prefix: 'DETAILS' });
   const requestedDetailUrl = request.url;
+  detailPagesVisited += 1;
   routerDetailsLog.debug(`Processing DETAILS page request: ${requestedDetailUrl}`);
 
   await page.waitForLoadState('load');
@@ -175,6 +242,7 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
   let detailRenderSignal: z.infer<typeof internalJobAdSchema>['detailRenderSignal'] = 'none';
 
   if (redirectedToDifferentHost) {
+    detailRedirects += 1;
     routerDetailsLog.info('DETAILS page redirected before HTML snapshot', {
       sourceId: request.userData.jobId,
       requestedDetailUrl,
@@ -332,6 +400,11 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
     : isVacancyLoaderPage
       ? vacancyDetailTextChars >= DETAIL_VACANCY_MIN_TEXT_CHARS
       : true;
+  detailRenderTypeCounts[detailRenderType] += 1;
+  detailRenderSignalCounts[detailRenderSignal] += 1;
+  totalDetailHtmlBytes += detailHtmlByteSize;
+  totalDetailRenderWaitMs += detailRenderWaitMs;
+  maxDetailRenderWaitMs = Math.max(maxDetailRenderWaitMs, detailRenderWaitMs);
   const result = {
     sourceId: request.userData.jobId,
     adUrl: request.url,
@@ -361,8 +434,10 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
   await Actor.setValue(htmlDetailPageKey, jobDetailHtml, {
     contentType: 'text/html',
   });
+  htmlSnapshotsSaved += 1;
 
   if (safeResult.success) {
+    detailsValidationSucceeded += 1;
     routerDetailsLog.info(`✅ Saved job: ${result.sourceId} | ${result.jobTitle}`, {
       sourceId: result.sourceId,
       requestedDetailUrl,
@@ -379,6 +454,7 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
     });
     await Dataset.pushData(safeResult.data);
   } else {
+    detailsValidationFailed += 1;
     routerDetailsLog.error(`⚠️ Validation failed for ${result.sourceId}`, {
       errors: safeResult.error,
       requestedDetailUrl,
@@ -398,6 +474,7 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
 
   storedDetailPages += 1;
   if (storedDetailPages >= input.maxItems) {
+    maxItemsAbortTriggered = true;
     routerDetailsLog.info(
       `Reached maxItems (${input.maxItems}) after storing ${storedDetailPages} job detail pages. Stopping crawl.`,
     );
@@ -407,7 +484,26 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
 
 router.addHandler('LIST', async ({ request, enqueueLinks, page, log, crawler }) => {
   const routerListLog = log.child({ prefix: 'LIST' });
+  listPagesVisited += 1;
   routerListLog.info(`📂 Scanning List: ${request.url}`);
+
+  const startUrlSeed =
+    typeof request.userData?.startUrlSeed === 'string'
+      ? request.userData.startUrlSeed
+      : request.url;
+  const isSeedListRequest = request.userData?.isSeedList !== false;
+  const seedSummary = seedListSummaries.get(startUrlSeed) ?? {
+    startUrl: startUrlSeed,
+    firstObservedListUrl: null,
+    listPagesVisited: 0,
+    parsedResultsCount: null,
+    parsedResultsText: null,
+  };
+  seedSummary.listPagesVisited += 1;
+  if (!seedSummary.firstObservedListUrl) {
+    seedSummary.firstObservedListUrl = request.url;
+  }
+  seedListSummaries.set(startUrlSeed, seedSummary);
 
   try {
     await page.waitForSelector(JOB_CARD_SELECTOR, { timeout: 5000 });
@@ -419,7 +515,31 @@ router.addHandler('LIST', async ({ request, enqueueLinks, page, log, crawler }) 
   }
 
   const jobCards = await page.locator(JOB_CARD_SELECTOR).all();
+  totalJobCardsSeen += jobCards.length;
   routerListLog.info(`Found ${jobCards.length} job cards.`);
+
+  if (isSeedListRequest && seedSummary.parsedResultsCount === null) {
+    const bodyText = await page
+      .evaluate(() => document.body?.innerText ?? document.body?.textContent ?? '')
+      .catch(() => '');
+    const parsedResultsCount = parseListingResultsCount(bodyText);
+    if (parsedResultsCount) {
+      seedSummary.parsedResultsCount = parsedResultsCount.count;
+      seedSummary.parsedResultsText = parsedResultsCount.rawText;
+      seedListSummaries.set(startUrlSeed, seedSummary);
+      routerListLog.info('Parsed list-page total results count', {
+        startUrlSeed,
+        currentListUrl: request.url,
+        parsedResultsCount: parsedResultsCount.count,
+        parsedResultsText: parsedResultsCount.rawText,
+      });
+    } else {
+      routerListLog.debug('Could not parse list-page total results count text', {
+        startUrlSeed,
+        currentListUrl: request.url,
+      });
+    }
+  }
 
   for (const card of jobCards) {
     // Extract Data
@@ -449,9 +569,13 @@ router.addHandler('LIST', async ({ request, enqueueLinks, page, log, crawler }) 
     const linkLocator = card.locator('h2[data-test-ad-title] a');
     const href = await linkLocator.getAttribute('href');
 
-    if (!href || !jobId) continue;
+    if (!href || !jobId) {
+      cardsSkippedMissingHrefOrId += 1;
+      continue;
+    }
 
     if (enqueuedDetailRequests >= input.maxItems) {
+      maxItemsEnqueueGuardTriggered = true;
       routerListLog.info(
         `Reached maxItems (${input.maxItems}) while enqueuing detail pages. Stopping pagination enqueue.`,
       );
@@ -473,6 +597,8 @@ router.addHandler('LIST', async ({ request, enqueueLinks, page, log, crawler }) 
     });
     if (enqueueResult && !enqueueResult.wasAlreadyPresent && !enqueueResult.wasAlreadyHandled) {
       enqueuedDetailRequests += 1;
+    } else {
+      duplicateOrAlreadyHandledDetailRequests += 1;
     }
   }
 
@@ -483,9 +609,18 @@ router.addHandler('LIST', async ({ request, enqueueLinks, page, log, crawler }) 
     (await nextButton.count()) > 0 &&
     (await nextButton.isEnabled())
   ) {
+    paginationNextPagesEnqueued += 1;
     await enqueueLinks({
       label: 'LIST',
       selector: NEXT_PAGE_SELECTOR,
+      transformRequestFunction: (nextRequest) => {
+        nextRequest.userData = {
+          ...(nextRequest.userData ?? {}),
+          startUrlSeed,
+          isSeedList: false,
+        };
+        return nextRequest;
+      },
     });
   }
 });
@@ -499,6 +634,20 @@ if (!rawInput) throw new Error('⚠️ Input is missing!');
 const input = actorInputSchema.parse(rawInput);
 
 const startUrls = input.startUrls;
+const runStartedAt = new Date();
+const runStartedAtMs = Date.now();
+
+for (const startUrl of startUrls) {
+  if (!seedListSummaries.has(startUrl.url)) {
+    seedListSummaries.set(startUrl.url, {
+      startUrl: startUrl.url,
+      firstObservedListUrl: null,
+      listPagesVisited: 0,
+      parsedResultsCount: null,
+      parsedResultsText: null,
+    });
+  }
+}
 
 // B. Configure Logging
 if (input.debugLog) {
@@ -523,6 +672,21 @@ const crawler = new PlaywrightCrawler({
   proxyConfiguration,
   headless: true,
   requestHandler: router,
+  failedRequestHandler: async ({ request, error }) => {
+    failedRequests += 1;
+    if (failedRequestSamples.length < 10) {
+      failedRequestSamples.push(request.url);
+    }
+    log.error('Failed request after retries', {
+      url: request.url,
+      label: request.label,
+      sourceId:
+        typeof request.userData?.jobId === 'string'
+          ? request.userData.jobId
+          : request.userData?.jobId,
+      error,
+    });
+  },
   maxConcurrency: 1,
   maxRequestsPerMinute: 30,
   // Safety guard (maxItems is enforced by detail-page counting + abort logic above).
@@ -536,6 +700,95 @@ const crawler = new PlaywrightCrawler({
 
 log.info(`🚀 Starting scraper with limit: ${input.maxItems} items.`);
 
-await crawler.run(startUrls.map((req) => ({ ...req, label: 'LIST' })));
+await crawler.run(
+  startUrls.map((req) => ({
+    ...req,
+    label: 'LIST',
+    userData: {
+      startUrlSeed: req.url,
+      isSeedList: true,
+    },
+  })),
+);
+
+const runEndedAt = new Date();
+const runDurationMs = Date.now() - runStartedAtMs;
+const seedListSummaryArray = Array.from(seedListSummaries.values()).sort((a, b) =>
+  a.startUrl.localeCompare(b.startUrl),
+);
+const parsedListingResultsCounts = seedListSummaryArray
+  .map((item) => item.parsedResultsCount)
+  .filter((value): value is number => value !== null);
+const parsedListingResultsCountTotal = parsedListingResultsCounts.reduce(
+  (sum, value) => sum + value,
+  0,
+);
+const dynamicRenderedPagesCount =
+  detailRenderTypeCounts.widget + detailRenderTypeCounts['vacancy-detail'];
+const averageDetailRenderWaitMs =
+  detailPagesVisited > 0 ? Math.round(totalDetailRenderWaitMs / detailPagesVisited) : 0;
+const averageDetailHtmlByteSize =
+  htmlSnapshotsSaved > 0 ? Math.round(totalDetailHtmlBytes / htmlSnapshotsSaved) : 0;
+
+const runStopReason = maxItemsAbortTriggered
+  ? 'max_items_reached'
+  : storedDetailPages < input.maxItems
+    ? 'pagination_exhausted_or_no_more_requests'
+    : 'completed';
+
+const runSummary = {
+  startedAt: runStartedAt.toISOString(),
+  finishedAt: runEndedAt.toISOString(),
+  runDurationSeconds: Number((runDurationMs / 1000).toFixed(3)),
+  input: {
+    startUrlsCount: startUrls.length,
+    startUrls: startUrls.map((item) => item.url),
+    maxItems: input.maxItems,
+    maxRequestsPerCrawlSafetyCap: Math.max(input.maxItems * 5, 50),
+    maxConcurrency: 1,
+    maxRequestsPerMinute: 30,
+    debugLog: input.debugLog ?? false,
+    proxyConfigured: Boolean(input.proxyConfiguration),
+  },
+  outcome: {
+    stopReason: runStopReason,
+    maxItemsAbortTriggered,
+    maxItemsEnqueueGuardTriggered,
+    failedRequests,
+  },
+  counters: {
+    listPagesVisited,
+    paginationNextPagesEnqueued,
+    totalJobCardsSeen,
+    cardsSkippedMissingHrefOrId,
+    detailsEnqueuedUnique: enqueuedDetailRequests,
+    duplicateOrAlreadyHandledDetailRequests,
+    detailPagesVisited,
+    htmlSnapshotsSaved,
+    datasetRecordsStored: storedDetailPages,
+    detailsValidationSucceeded,
+    detailsValidationFailed,
+    detailRedirects,
+    dynamicRenderedPagesCount,
+  },
+  listPageResults: {
+    parsedSeedCountsFound: parsedListingResultsCounts.length,
+    parsedSeedCountsMissing: seedListSummaryArray.length - parsedListingResultsCounts.length,
+    parsedListingResultsCountTotal,
+    byStartUrl: seedListSummaryArray,
+  },
+  detailRendering: {
+    renderTypeCounts: detailRenderTypeCounts,
+    renderSignalCounts: detailRenderSignalCounts,
+    averageDetailRenderWaitMs,
+    maxDetailRenderWaitMs,
+    averageDetailHtmlByteSize,
+    totalDetailHtmlBytes,
+  },
+  failedRequestSamples,
+};
+
+await Actor.setValue('RUN_SUMMARY', runSummary);
+log.info('📊 Crawl run summary', runSummary);
 
 await Actor.exit();
