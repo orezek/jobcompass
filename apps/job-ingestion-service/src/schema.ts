@@ -26,7 +26,11 @@ const employmentTypeSchema = z.enum([
 const workModeSchema = z.enum(['onsite', 'hybrid', 'remote', 'unknown']);
 const seniorityLevelSchema = z.enum(['medior', 'senior', 'junior', 'absolvent']);
 
-const compensationPeriodSchema = z.enum(['hour', 'day', 'month', 'year', 'project', 'unknown']);
+const compensationPeriodSchema = z
+  .enum(['hour', 'day', 'month', 'year', 'project', 'unknown'])
+  .describe(
+    "The time unit for the salary payment. Default to 'month' if ambiguous but likely monthly.",
+  );
 
 export const sourceListingRecordSchema = z.object({
   sourceId: z.union([z.string(), z.number()]).transform((value) => String(value)),
@@ -44,12 +48,30 @@ export const sourceListingRecordSchema = z.object({
 export type SourceListingRecord = z.infer<typeof sourceListingRecordSchema>;
 
 export const extractedSalarySchema = z.object({
-  rawText: z.string().nullable().default(null),
-  currency: z.string().nullable().default(null),
-  minAmount: z.number().nullable().default(null),
-  maxAmount: z.number().nullable().default(null),
+  min: z
+    .number()
+    .nullable()
+    .default(null)
+    .describe(
+      "The lower bound of the salary range. Numeric only (e.g. 30000). If '30k' is found, convert to 30000.",
+    ),
+  max: z
+    .number()
+    .nullable()
+    .default(null)
+    .describe(
+      "The upper bound of the salary range. Numeric only. If fixed salary (e.g. '50000'), set both min and max to 50000.",
+    ),
+  currency: z
+    .string()
+    .nullable()
+    .default('CZK')
+    .describe("ISO currency code (e.g. CZK, EUR, USD). Infer from context (e.g. 'Kč' -> CZK)."),
   period: compensationPeriodSchema.default('unknown'),
-  isGross: z.boolean().nullable().default(null),
+  inferred: z
+    .boolean()
+    .default(false)
+    .describe('ALWAYS FALSE for the LLM. This flag is reserved for post-processing updates.'),
 });
 
 export const extractedLocationSchema = z.object({

@@ -39,7 +39,14 @@ Rules:
   full-time, part-time, contract, freelance, internship, temporary, other.
 - Normalize workModes to one or more of:
   onsite, hybrid, remote, unknown.
-- For salary use numbers only when explicitly available; otherwise keep numbers as null and fill rawText when possible.
+- For detail.salary:
+  - Fill salary.min and salary.max as numeric values only (no units, no separators text).
+  - Convert shorthand amounts like "30k" to 30000.
+  - If salary is fixed, set both salary.min and salary.max to the same value.
+  - Infer salary.currency from context (e.g. "Kč" => "CZK"); prefer ISO codes.
+  - Normalize salary.period to one of: hour, day, month, year, project, unknown.
+  - If period is ambiguous but likely monthly, use "month".
+  - Always return salary.inferred = false (reserved for post-processing).
 `;
 
 const buildPrompt = (

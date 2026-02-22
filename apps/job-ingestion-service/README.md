@@ -61,12 +61,11 @@ High-level shape:
     workModes: ("onsite" | "hybrid" | "remote" | "unknown")[];
     locations: { city: string | null; region: string | null; country: string | null; addressText: string | null }[];
     salary: {
-      rawText: string | null;
+      min: number | null;
+      max: number | null;
       currency: string | null;
-      minAmount: number | null;
-      maxAmount: number | null;
       period: "hour" | "day" | "month" | "year" | "project" | "unknown";
-      isGross: boolean | null;
+      inferred: boolean;
     };
     languageRequirements: { language: string; level: string | null }[];
     hiringProcess: string[];
