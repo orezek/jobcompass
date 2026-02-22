@@ -67,7 +67,6 @@ export const envSchema = z.object({
   GEMINI_MODEL: z.string().default('gemini-3-flash-preview'),
   GEMINI_TEMPERATURE: z.coerce.number().min(0).max(1).default(0),
   GEMINI_THINKING_LEVEL: thinkingLevelSchema.default('LOW'),
-  GEMINI_MAX_DETAIL_CHARS: z.coerce.number().int().min(2_000).max(300_000).default(60_000),
   DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS: z.coerce.number().int().min(100).max(300_000).default(700),
   GEMINI_INPUT_PRICE_USD_PER_1M_TOKENS: z.coerce.number().nonnegative().default(0.5),
   GEMINI_OUTPUT_PRICE_USD_PER_1M_TOKENS: z.coerce.number().nonnegative().default(3),
@@ -196,7 +195,6 @@ const parseRecords = async (): Promise<{
   const parserGraph = new JobParsingGraph({
     extractor,
     jobDescriptionExtractor,
-    maxDetailChars: envs.GEMINI_MAX_DETAIL_CHARS,
     minRelevantTextChars: envs.DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS,
     parserVersion: envs.PARSER_VERSION,
     logger,
@@ -215,7 +213,6 @@ const parseRecords = async (): Promise<{
       model: envs.GEMINI_MODEL,
       langsmithPromptName: envs.LANGSMITH_PROMPT_NAME,
       concurrency: workerCount,
-      maxDetailChars: envs.GEMINI_MAX_DETAIL_CHARS,
       minRelevantTextChars: envs.DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS,
     },
     'Starting parse run',

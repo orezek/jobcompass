@@ -83,11 +83,9 @@ High-level shape:
   };
   rawDetailPage: {
     text: string; // Cheerio-cleaned plain text from the details page (same source used for LLM input)
-    charCount: number; // stored text length (post-truncation)
+    charCount: number; // stored text length (full cleaned text)
     tokenCountApprox: number; // estimated as ceil(charCount / 4)
     tokenCountMethod: "chars_div_4";
-    wasTruncated: boolean; // true when original cleaned text exceeded GEMINI_MAX_DETAIL_CHARS
-    fullCharCount: number; // cleaned text length before truncation
   };
   ingestion: {
     datasetFileName: string;
@@ -129,6 +127,7 @@ Copy `.env.example` to `.env` and configure:
 
 Default token pricing currently reflects Gemini 3 Flash preview text pricing from Google AI pricing docs.
 `rawDetailPage.tokenCountApprox` is a local approximation (`ceil(charCount / 4)`) for quick sizing/cost heuristics.
+Detail-page plain text truncation is currently disabled; the full Cheerio-cleaned text is stored and sent downstream.
 
 ## Run
 

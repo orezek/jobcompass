@@ -87,8 +87,6 @@ export type LoadedDetailPage = {
   fileSizeBytes: number;
   rawHtmlChars: number;
   textContentChars: number;
-  fullTextContentChars: number;
-  wasTextContentTruncated: boolean;
 };
 
 export type DetailPageQualitySignals = {
@@ -113,7 +111,6 @@ export class IncompleteDetailPageError extends Error {
 
 export const loadDetailPage = async (
   detailHtmlPath: string,
-  maxDetailChars: number,
   minRelevantTextChars: number,
 ): Promise<LoadedDetailPage> => {
   await access(detailHtmlPath);
@@ -171,9 +168,7 @@ export const loadDetailPage = async (
     );
   }
 
-  const fullTextContentChars = mergedText.length;
-  const textContent = mergedText.slice(0, maxDetailChars);
-  const wasTextContentTruncated = fullTextContentChars > maxDetailChars;
+  const textContent = mergedText;
 
   return {
     rawHtml,
@@ -183,7 +178,5 @@ export const loadDetailPage = async (
     fileSizeBytes: fileBuffer.length,
     rawHtmlChars: rawHtml.length,
     textContentChars: textContent.length,
-    fullTextContentChars,
-    wasTextContentTruncated,
   };
 };

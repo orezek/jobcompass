@@ -105,8 +105,6 @@ export const rawDetailPageSchema = z.object({
   charCount: z.number().int().nonnegative(),
   tokenCountApprox: z.number().int().nonnegative(),
   tokenCountMethod: z.enum(['chars_div_4']),
-  wasTruncated: z.boolean(),
-  fullCharCount: z.number().int().nonnegative(),
 });
 
 export type RawDetailPage = z.infer<typeof rawDetailPageSchema>;
