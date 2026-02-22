@@ -86,6 +86,7 @@ High-level shape:
     tokenCountMethod: "chars_div_4";
   };
   ingestion: {
+    runId: string; // shared run identifier for matching job docs to one run-summary document
     datasetFileName: string;
     datasetRecordIndex: number;
     detailHtmlPath: string;
@@ -123,10 +124,16 @@ Copy `.env.example` to `.env` and configure:
 - `ENABLE_MONGO_WRITE=true` + `MONGODB_URI` for Atlas persistence
 - `OUTPUT_JSON_PATH` for structured output file
 - `MONGODB_JOBS_COLLECTION` for structured document output
+- `MONGODB_RUN_SUMMARIES_COLLECTION` for one summary document per ingestion run (linked via `runId`)
 
 Default token pricing currently reflects Gemini 3 Flash preview text pricing from Google AI pricing docs.
 `rawDetailPage.tokenCountApprox` is a local approximation (`ceil(charCount / 4)`) for quick sizing/cost heuristics.
 Detail-page plain text truncation is currently disabled; the full Cheerio-cleaned text is stored and sent downstream.
+
+When Mongo persistence is enabled, each run writes:
+
+- job documents to `MONGODB_JOBS_COLLECTION` with `ingestion.runId`
+- one run-summary document to `MONGODB_RUN_SUMMARIES_COLLECTION` with the same `runId`
 
 ## Run
 

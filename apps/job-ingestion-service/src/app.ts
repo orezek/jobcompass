@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -80,6 +81,7 @@ export const envSchema = z.object({
   MONGODB_URI: z.string().optional(),
   MONGODB_DB_NAME: z.string().default('jobcompass'),
   MONGODB_JOBS_COLLECTION: z.string().default('ingestionCollection'),
+  MONGODB_RUN_SUMMARIES_COLLECTION: z.string().default('ingestionRunSummaryCollection'),
   PARSER_VERSION: z.string().default('job-ingestion-service-v0.5.0'),
 });
 
@@ -95,6 +97,33 @@ type ParseRunStats = {
   totalTokens: number;
   totalEstimatedCostUsd: number;
 };
+
+const ingestionRunSummarySchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  startedAt: z.iso.datetime(),
+  completedAt: z.iso.datetime(),
+  runDurationSeconds: z.number().nonnegative(),
+  parserVersion: z.string(),
+  extractorModel: z.string(),
+  langsmithPromptName: z.string(),
+  sampleSize: z.union([z.number().int().positive(), z.literal('all')]),
+  concurrency: z.number().int().positive(),
+  jobsProcessed: z.number().int().nonnegative(),
+  jobsSkippedIncomplete: z.number().int().nonnegative(),
+  jobsFailed: z.number().int().nonnegative(),
+  mongoWritesStructured: z.number().int().nonnegative(),
+  totalInputTokens: z.number().int().nonnegative(),
+  totalOutputTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+  totalEstimatedCostUsd: z.number().nonnegative(),
+  avgTimeToProcssSeconds: z.number().nonnegative(),
+  p50TimeToProcssSeconds: z.number().nonnegative(),
+  p95TimeToProcssSeconds: z.number().nonnegative(),
+  avgLlmCallDurationSeconds: z.number().nonnegative(),
+});
+
+type IngestionRunSummary = z.infer<typeof ingestionRunSummarySchema>;
 
 export const envs: EnvSchema = loadEnv(envSchema, import.meta.url);
 const logger = createLogger(envs.LOG_LEVEL, { pretty: envs.LOG_PRETTY });
@@ -152,11 +181,51 @@ const buildRunStats = (parsed: UnifiedJobAd[]): ParseRunStats => {
   };
 };
 
-const parseRecords = async (): Promise<{
+const buildRunSummaryDocument = (input: {
+  runId: string;
+  startedAtIso: string;
+  completedAtIso: string;
+  runDurationSeconds: number;
+  stats: ParseRunStats;
+  structuredParsed: UnifiedJobAd[];
+  skippedIncomplete: number;
+  failed: number;
+  mongoWritesStructured: number;
+  workerCount: number;
+}): IngestionRunSummary =>
+  ingestionRunSummarySchema.parse({
+    id: input.runId,
+    runId: input.runId,
+    startedAt: input.startedAtIso,
+    completedAt: input.completedAtIso,
+    runDurationSeconds: input.runDurationSeconds,
+    parserVersion: envs.PARSER_VERSION,
+    extractorModel: envs.GEMINI_MODEL,
+    langsmithPromptName: envs.LANGSMITH_PROMPT_NAME,
+    sampleSize: envs.INGESTION_SAMPLE_SIZE ?? 'all',
+    concurrency: input.workerCount,
+    jobsProcessed: input.structuredParsed.length,
+    jobsSkippedIncomplete: input.skippedIncomplete,
+    jobsFailed: input.failed,
+    mongoWritesStructured: input.mongoWritesStructured,
+    totalInputTokens: input.stats.totalInputTokens,
+    totalOutputTokens: input.stats.totalOutputTokens,
+    totalTokens: input.stats.totalTokens,
+    totalEstimatedCostUsd: input.stats.totalEstimatedCostUsd,
+    avgTimeToProcssSeconds: input.stats.avgTimeToProcssSeconds,
+    p50TimeToProcssSeconds: input.stats.p50TimeToProcssSeconds,
+    p95TimeToProcssSeconds: input.stats.p95TimeToProcssSeconds,
+    avgLlmCallDurationSeconds: input.stats.avgLlmCallDurationSeconds,
+  });
+
+const parseRecords = async (
+  runId: string,
+): Promise<{
   structuredParsed: UnifiedJobAd[];
   failed: number;
   skippedIncomplete: number;
   stats: ParseRunStats;
+  workerCount: number;
 }> => {
   if (!envs.GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY is required to run detail-page extraction.');
@@ -192,6 +261,7 @@ const parseRecords = async (): Promise<{
     extractor,
     minRelevantTextChars: envs.DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS,
     parserVersion: envs.PARSER_VERSION,
+    runId,
     logger,
   });
 
@@ -209,6 +279,7 @@ const parseRecords = async (): Promise<{
       langsmithPromptName: envs.LANGSMITH_PROMPT_NAME,
       concurrency: workerCount,
       minRelevantTextChars: envs.DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS,
+      runId,
     },
     'Starting parse run',
   );
@@ -265,17 +336,22 @@ const parseRecords = async (): Promise<{
   const structuredParsed = parsedByIndex.filter((item): item is UnifiedJobAd => item !== null);
   const stats = buildRunStats(structuredParsed);
 
-  return { structuredParsed, failed, skippedIncomplete, stats };
+  return { structuredParsed, failed, skippedIncomplete, stats, workerCount };
 };
 
 async function main(): Promise<void> {
+  const runId = randomUUID();
+  const runStartedAtIso = new Date().toISOString();
+
   logger.info(
     {
+      runId,
       inputRootDir,
       outputJsonPath,
       enableMongoWrite: envs.ENABLE_MONGO_WRITE,
       mongoDbName: envs.MONGODB_DB_NAME,
       mongoCollectionStructured: envs.MONGODB_JOBS_COLLECTION,
+      mongoCollectionRunSummaries: envs.MONGODB_RUN_SUMMARIES_COLLECTION,
       model: envs.GEMINI_MODEL,
       langsmithPromptName: envs.LANGSMITH_PROMPT_NAME,
       minRelevantTextChars: envs.DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS,
@@ -286,8 +362,8 @@ async function main(): Promise<void> {
   );
 
   const startedAt = performance.now();
-  const { structuredParsed, failed, skippedIncomplete, stats } = await parseRecords();
-  const runDurationSeconds = (performance.now() - startedAt) / 1_000;
+  const { structuredParsed, failed, skippedIncomplete, stats, workerCount } =
+    await parseRecords(runId);
 
   await writeOutputToFile(
     outputJsonPath,
@@ -296,6 +372,7 @@ async function main(): Promise<void> {
   );
 
   let mongoWrittenStructured = 0;
+  let mongoWrittenRunSummary = 0;
   if (envs.ENABLE_MONGO_WRITE) {
     if (!envs.MONGODB_URI) {
       throw new Error('ENABLE_MONGO_WRITE=true requires MONGODB_URI to be configured.');
@@ -312,19 +389,49 @@ async function main(): Promise<void> {
     );
   }
 
+  const runCompletedAtIso = new Date().toISOString();
+  const runDurationSeconds = (performance.now() - startedAt) / 1_000;
+  const runSummaryDocument = buildRunSummaryDocument({
+    runId,
+    startedAtIso: runStartedAtIso,
+    completedAtIso: runCompletedAtIso,
+    runDurationSeconds,
+    stats,
+    structuredParsed,
+    skippedIncomplete,
+    failed,
+    mongoWritesStructured: mongoWrittenStructured,
+    workerCount,
+  });
+
+  if (envs.ENABLE_MONGO_WRITE && envs.MONGODB_URI) {
+    mongoWrittenRunSummary = await writeOutputToMongo(
+      {
+        mongoUri: envs.MONGODB_URI,
+        dbName: envs.MONGODB_DB_NAME,
+        collectionName: envs.MONGODB_RUN_SUMMARIES_COLLECTION,
+      },
+      [runSummaryDocument],
+      logger.child({ component: 'MongoRepository', outputType: 'run-summary' }),
+    );
+  }
+
   logger.info(
     {
+      runId,
       parsedStructured: structuredParsed.length,
       failed,
       skippedIncomplete,
       outputJsonPath,
       mongoWritesStructured: mongoWrittenStructured,
+      mongoWritesRunSummary: mongoWrittenRunSummary,
       runDurationSeconds,
     },
     'Completed parse run',
   );
   logger.info(
     {
+      runId,
       avgTimeToProcssSeconds: stats.avgTimeToProcssSeconds,
       p50TimeToProcssSeconds: stats.p50TimeToProcssSeconds,
       p95TimeToProcssSeconds: stats.p95TimeToProcssSeconds,
@@ -338,6 +445,7 @@ async function main(): Promise<void> {
   );
   logger.info(
     {
+      runId,
       jobsProcessed: structuredParsed.length,
       jobsSkippedIncomplete: skippedIncomplete,
       jobsFailed: failed,

@@ -10,6 +10,7 @@ type JobParsingGraphConfig = {
   extractor: GeminiJobDetailExtractor;
   minRelevantTextChars: number;
   parserVersion: string;
+  runId: string;
   logger: AppLogger;
 };
 
@@ -28,6 +29,7 @@ const approximateTokenCountFromChars = (charCount: number): number => Math.ceil(
 const buildDocument = (
   state: JobParsingGraphStateType,
   parserVersion: string,
+  runId: string,
   extractorModel: string,
 ): UnifiedJobAd => {
   const { inputRecord, loadedDetailPage, extractedDetail, extractionTelemetry } = state;
@@ -55,6 +57,7 @@ const buildDocument = (
       tokenCountMethod: 'chars_div_4',
     },
     ingestion: {
+      runId,
       datasetFileName: inputRecord.datasetFileName,
       datasetRecordIndex: inputRecord.datasetRecordIndex,
       detailHtmlPath: inputRecord.detailHtmlPath,
@@ -82,7 +85,7 @@ export class JobParsingGraph {
   };
 
   constructor(config: JobParsingGraphConfig) {
-    this.logger = config.logger.child({ component: 'JobParsingGraph' });
+    this.logger = config.logger.child({ component: 'JobParsingGraph', runId: config.runId });
 
     const loadDetailPageNode = async (
       state: JobParsingGraphStateType,
@@ -139,6 +142,7 @@ export class JobParsingGraph {
       const unifiedJobAd = buildDocument(
         state,
         config.parserVersion,
+        config.runId,
         config.extractor.getModelName(),
       );
       this.logger.debug(
