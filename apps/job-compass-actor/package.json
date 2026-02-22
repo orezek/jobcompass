@@ -1,0 +1,42 @@
+{
+  "name": "job-compass-actor",
+  "version": "1.0.0",
+  "description": "Job ad extractor from jobs.cz",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node ./dist/main.js",
+    "start:prod": "node ./dist/main.js",
+    "start:dev": "tsx src/main.ts",
+    "build": "tsc",
+    "dev": "tsx watch src/main.ts",
+    "lint": "eslint . --max-warnings 0",
+    "check-types": "tsc --noEmit",
+    "docker:build": "docker build -t job-compass-actor -f ./Dockerfile ../../",
+    "docker:run": "docker run --platform linux/arm64 --rm --entrypoint tail -v $(pwd)/storage:/app/apps/${APP_NAME}/storage job-compass-actor",
+    "docker:run:test": "docker run --memory=4g --shm-size=2g --platform linux/amd64 --rm -d --name debug-compass --entrypoint tail -v $(pwd)/storage:/app/apps/${APP_NAME}/storage job-compass-actor -f /dev/null",
+    "docker:exec": "docker exec -it debug-compass /bin/sh"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.13.1",
+  "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:"
+  },
+  "dependencies": {
+    "@repo/env-config": "workspace:*",
+    "apify": "catalog:",
+    "crawlee": "catalog:",
+    "playwright": "catalog:",
+    "zod": "catalog:"
+  }
+}

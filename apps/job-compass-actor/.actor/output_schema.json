@@ -1,0 +1,56 @@
+{
+  "actorSpecification": 1,
+  "fields": {
+    "sourceId": {
+      "type": "string",
+      "title": "Job ID",
+      "description": "The ID of the job ad as encoded on the website."
+    },
+    "adUrl": {
+      "type": "string",
+      "title": "Ad URL",
+      "description": "Url for the details page of the ad."
+    },
+    "jobTitle": {
+      "type": "string",
+      "title": "Job Title",
+      "description": "The title name of the job position."
+    },
+    "companyName": {
+      "type": "string",
+      "title": "Company",
+      "description": "The name of the company."
+    },
+    "location": {
+      "type": "string",
+      "title": "Location",
+      "description": "The location of the company as extracted from the list page."
+    },
+    "salary": {
+      "type": ["string", "null"],
+      "title": "Salary",
+      "description": "Salary as advertised on the server."
+    },
+    "publishedInfoText": {
+      "type": "string",
+      "title": "Published Info",
+      "description": "Information appended to search card (e.g. 'New')."
+    },
+    "scrapedAt": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Scraped At",
+      "description": "The date in ISO format when the ad was scraped."
+    },
+    "source": {
+      "type": "string",
+      "title": "Source Domain",
+      "description": "The source domain name."
+    },
+    "htmlDetailPageKey": {
+      "type": "string",
+      "title": "HTML Key",
+      "description": "Key that identifies the html blob from the details page."
+    }
+  }
+}

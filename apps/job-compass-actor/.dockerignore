@@ -1,0 +1,10 @@
+.idea
+.turbo
+node_modules
+dist
+.git
+.gitignore
+Dockerfile*
+storage
+README.md
+tsconfig.tsbuildinfo

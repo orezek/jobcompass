@@ -1,0 +1,35 @@
+{
+  "title": "Jobs.cz Scraper Configuration",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "startUrls": {
+      "title": "Start URLs",
+      "type": "array",
+      "description": "List of URLs from jobs.cz search results to start scraping from.",
+      "editor": "requestListSources",
+      "prefill": [{ "url": "https://www.jobs.cz/prace/?field%5B%5D=200900012" }]
+    },
+    "maxItems": {
+      "title": "Max Items",
+      "type": "integer",
+      "description": "Maximum number of jobs to scrape. Required to control costs.",
+      "default": 100,
+      "minimum": 1
+    },
+    "proxyConfiguration": {
+      "title": "Proxy Configuration",
+      "type": "object",
+      "description": "Select proxies to be used by your crawler.",
+      "editor": "proxy",
+      "default": { "useApifyProxy": true }
+    },
+    "debugLog": {
+      "title": "Debug Logging",
+      "type": "boolean",
+      "description": "Turn on verbose logging for debugging.",
+      "default": false
+    }
+  },
+  "required": ["startUrls", "maxItems"]
+}

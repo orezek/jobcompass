@@ -1,0 +1,28 @@
+{
+  "actorSpecification": 1,
+  "name": "job-compass-actor",
+  "version": "1.1",
+  "title": "Jobs.cz Scraper",
+  "description": "Scrapes job listings and details from Jobs.cz including salary, location, and company data.",
+  "dockerfile": "../Dockerfile",
+  "readme": "../README.md",
+  "storages": {
+    "dataset": {
+      "actorSpecification": 1,
+      "title": "Job Listings",
+      "views": {
+        "overview": {
+          "title": "Overview",
+          "transformation": {
+            "fields": ["url", "title", "company"]
+          }
+        }
+      }
+    }
+  },
+  "environmentVariables": {
+    "CRAWLEE_LOG_LEVEL": "INFO"
+  },
+  "dockerContextDir": "../../../",
+  "minMemoryMbytes": 1024
+}
