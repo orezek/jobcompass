@@ -335,6 +335,61 @@ const getVacancyDetailTextChars = async (page: {
     return (vacancyDetail.textContent ?? '').replace(/\s+/g, ' ').trim().length;
   });
 
+const getVacancyDetailReadinessSignals = async (page: {
+  evaluate<T>(fn: () => T): Promise<T>;
+}): Promise<{
+  vacancyTextChars: number;
+  hasPrimaryContentMarkers: boolean;
+  hasBlockingLoader: boolean;
+}> =>
+  page.evaluate(() => {
+    const vacancyDetail = document.querySelector('#vacancy-detail');
+    if (!vacancyDetail) {
+      return {
+        vacancyTextChars: 0,
+        hasPrimaryContentMarkers: false,
+        hasBlockingLoader: false,
+      };
+    }
+
+    const vacancyTextChars = (vacancyDetail.textContent ?? '').replace(/\s+/g, ' ').trim().length;
+    const hasPrimaryContentMarkers =
+      vacancyDetail.querySelector('.hero__title') !== null &&
+      vacancyDetail.querySelector('.cp-detail__content') !== null;
+
+    // Some career pages keep loaders for secondary widgets (e.g. "Similar vacancies")
+    // after the main job content is already rendered. Only treat visible loaders outside
+    // those secondary sections as blocking.
+    const hasBlockingLoader = Array.from(vacancyDetail.querySelectorAll('.cp-loader')).some(
+      (loaderNode) => {
+        if (!(loaderNode instanceof HTMLElement)) {
+          return false;
+        }
+
+        const isSecondarySimilarVacanciesLoader =
+          loaderNode.classList.contains('cp-loader--vacancies-list') ||
+          loaderNode.closest('.similar') !== null;
+        if (isSecondarySimilarVacanciesLoader) {
+          return false;
+        }
+
+        const computedStyle = window.getComputedStyle(loaderNode);
+        const isVisible =
+          computedStyle.display !== 'none' &&
+          computedStyle.visibility !== 'hidden' &&
+          parseFloat(computedStyle.opacity || '1') > 0 &&
+          (loaderNode.offsetWidth > 0 || loaderNode.offsetHeight > 0);
+        return isVisible;
+      },
+    );
+
+    return {
+      vacancyTextChars,
+      hasPrimaryContentMarkers,
+      hasBlockingLoader,
+    };
+  });
+
 router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
   const routerDetailsLog = log.child({ prefix: 'DETAILS' });
   const requestedDetailUrl = request.url;
@@ -425,9 +480,39 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
             return false;
           }
 
-          const loaderStillPresent = document.querySelector(loaderSelector) !== null;
           const text = (vacancyContainer.textContent ?? '').replace(/\s+/g, ' ').trim();
-          return !loaderStillPresent && text.length >= minTextChars;
+          const hasPrimaryContentMarkers =
+            vacancyContainer.querySelector('.hero__title') !== null &&
+            vacancyContainer.querySelector('.cp-detail__content') !== null;
+
+          if (hasPrimaryContentMarkers && text.length >= minTextChars) {
+            return true;
+          }
+
+          const blockingLoaderStillPresent = Array.from(
+            vacancyContainer.querySelectorAll(loaderSelector.replace(`${containerSelector} `, '')),
+          ).some((loaderNode) => {
+            if (!(loaderNode instanceof HTMLElement)) {
+              return false;
+            }
+
+            const isSecondarySimilarVacanciesLoader =
+              loaderNode.classList.contains('cp-loader--vacancies-list') ||
+              loaderNode.closest('.similar') !== null;
+            if (isSecondarySimilarVacanciesLoader) {
+              return false;
+            }
+
+            const computedStyle = window.getComputedStyle(loaderNode);
+            const isVisible =
+              computedStyle.display !== 'none' &&
+              computedStyle.visibility !== 'hidden' &&
+              parseFloat(computedStyle.opacity || '1') > 0 &&
+              (loaderNode.offsetWidth > 0 || loaderNode.offsetHeight > 0);
+            return isVisible;
+          });
+
+          return !blockingLoaderStillPresent && text.length >= minTextChars;
         },
         {
           containerSelector: DETAIL_VACANCY_CONTAINER_SELECTOR,
@@ -439,7 +524,8 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
       detailRenderWaitMs = Date.now() - renderWaitStartedAt;
       detailRenderSignal = 'vacancy_detail_text';
     } catch (error) {
-      const vacancyTextChars = await getVacancyDetailTextChars(page);
+      const { vacancyTextChars, hasPrimaryContentMarkers, hasBlockingLoader } =
+        await getVacancyDetailReadinessSignals(page);
       routerDetailsLog.warning(
         'Dynamic vacancy-detail page content did not render in time; throwing to let Crawlee retry',
         {
@@ -448,6 +534,8 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
           requestedDetailUrl,
           finalDetailUrl,
           vacancyTextChars,
+          hasPrimaryContentMarkers,
+          hasBlockingLoader,
           timeoutMs: DETAIL_VACANCY_RENDER_TIMEOUT_MS,
         },
       );
