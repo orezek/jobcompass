@@ -273,7 +273,7 @@ let maxDetailRenderWaitMs = 0;
 let maxItemsAbortTriggered = false;
 let maxItemsEnqueueGuardTriggered = false;
 let failedRequests = 0;
-const failedRequestSamples: string[] = [];
+const failedRequestUrls: string[] = [];
 const detailRenderTypeCounts: Record<DetailRenderType, number> = {
   'jobscz-template': 0,
   widget: 0,
@@ -788,9 +788,7 @@ const crawler = new PlaywrightCrawler({
   requestHandler: router,
   failedRequestHandler: async ({ request, error }) => {
     failedRequests += 1;
-    if (failedRequestSamples.length < 10) {
-      failedRequestSamples.push(request.url);
-    }
+    failedRequestUrls.push(request.url);
     log.error('Failed request after retries', {
       url: request.url,
       label: request.label,
@@ -935,7 +933,7 @@ const runSummary = {
     averageDetailHtmlByteSize,
     totalDetailHtmlBytes,
   },
-  failedRequestSamples,
+  failedRequestUrls,
   error: crawlerRunError ? serializeErrorForSummary(crawlerRunError) : null,
 };
 
