@@ -1,0 +1,50 @@
+name: 'Terraform Prod'
+
+on:
+  push:
+    branches: ['main']
+    # Only run this workflow if files inside the terraform folder change
+    paths:
+      - 'infra/terraform/**'
+  pull_request:
+    paths:
+      - 'infra/terraform/**'
+
+permissions:
+  contents: read
+  id-token: write # CRITICAL: Allows GitHub to request the WIF token
+
+jobs:
+  terraform:
+    name: 'Terraform'
+    runs-on: ubuntu-latest
+
+    # CRITICAL: This tells GitHub Actions to run all commands in your prod directory
+    defaults:
+      run:
+        working-directory: infra/terraform/envs/prod
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        # Only run apply on pushes to the main branch, not on Pull Requests
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: terraform apply -auto-approve tfplan
