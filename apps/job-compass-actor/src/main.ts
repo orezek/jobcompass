@@ -1082,7 +1082,10 @@ try {
   }
 
   localSharedDatasetRecordsWritten = sharedDatasetRecords.length;
-  localSharedDatasetJsonPath = await writeSharedDatasetJson(sharedRunOutputPaths, sharedDatasetRecords);
+  localSharedDatasetJsonPath = await writeSharedDatasetJson(
+    sharedRunOutputPaths,
+    sharedDatasetRecords,
+  );
 } catch (error) {
   crawlerRunError = error;
   log.error('Crawler run failed before completion', {
@@ -1121,8 +1124,8 @@ const runStopReason = crawlerRunError
   : reconcileNewJobsCount === 0
     ? 'no_new_jobs'
     : maxItemsAbortTriggered
-    ? 'max_items_reached'
-    : 'completed';
+      ? 'max_items_reached'
+      : 'completed';
 
 const runSummary = {
   crawlRunId,

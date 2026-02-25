@@ -205,40 +205,42 @@ export class CrawlStateRepository {
 
     const activeBeforeCount = await collection.countDocuments({ source, isActive: true });
 
-    const upsertOperations: AnyBulkWriteOperation<CrawlJobsStateDoc>[] = listings.map((listing) => ({
-      updateOne: {
-        filter: { source, sourceId: listing.sourceId },
-        update: {
-          $set: {
-            source,
-            sourceId: listing.sourceId,
-            isActive: true,
-            lastSeenAt: observedAtIso,
-            lastSeenRunId: crawlRunId,
-            listing: {
-              adUrl: listing.adUrl,
-              jobTitle: listing.jobTitle,
-              companyName: listing.companyName,
-              location: listing.location,
-              salary: listing.salary,
-              publishedInfoText: listing.publishedInfoText,
+    const upsertOperations: AnyBulkWriteOperation<CrawlJobsStateDoc>[] = listings.map(
+      (listing) => ({
+        updateOne: {
+          filter: { source, sourceId: listing.sourceId },
+          update: {
+            $set: {
+              source,
+              sourceId: listing.sourceId,
+              isActive: true,
+              lastSeenAt: observedAtIso,
+              lastSeenRunId: crawlRunId,
+              listing: {
+                adUrl: listing.adUrl,
+                jobTitle: listing.jobTitle,
+                companyName: listing.companyName,
+                location: listing.location,
+                salary: listing.salary,
+                publishedInfoText: listing.publishedInfoText,
+              },
+              updatedAt: observedAtIso,
             },
-            updatedAt: observedAtIso,
+            $setOnInsert: {
+              _id: crawlJobDocId(source, listing.sourceId),
+              firstSeenAt: observedAtIso,
+              firstSeenRunId: crawlRunId,
+              createdAt: observedAtIso,
+            },
+            $unset: {
+              inactiveAt: 1,
+              lastInactiveRunId: 1,
+            },
           },
-          $setOnInsert: {
-            _id: crawlJobDocId(source, listing.sourceId),
-            firstSeenAt: observedAtIso,
-            firstSeenRunId: crawlRunId,
-            createdAt: observedAtIso,
-          },
-          $unset: {
-            inactiveAt: 1,
-            lastInactiveRunId: 1,
-          },
+          upsert: true,
         },
-        upsert: true,
-      },
-    }));
+      }),
+    );
 
     if (upsertOperations.length > 0) {
       await collection.bulkWrite(upsertOperations, { ordered: false });
@@ -298,17 +300,19 @@ export class CrawlStateRepository {
     }
 
     const collection = this.collection();
-    const operations: AnyBulkWriteOperation<CrawlJobsStateDoc>[] = detailSnapshots.map((detailSnapshot) => ({
-      updateOne: {
-        filter: { source, sourceId: detailSnapshot.sourceId },
-        update: {
-          $set: {
-            detail: detailSnapshot,
-            updatedAt: updatedAtIso,
+    const operations: AnyBulkWriteOperation<CrawlJobsStateDoc>[] = detailSnapshots.map(
+      (detailSnapshot) => ({
+        updateOne: {
+          filter: { source, sourceId: detailSnapshot.sourceId },
+          update: {
+            $set: {
+              detail: detailSnapshot,
+              updatedAt: updatedAtIso,
+            },
           },
         },
-      },
-    }));
+      }),
+    );
 
     const result = await collection.bulkWrite(operations, { ordered: false });
     return result.modifiedCount + result.upsertedCount;
