@@ -22,10 +22,7 @@ const envSchema = z.object({
   ),
   LOCAL_SHARED_SCRAPED_JOBS_DIR: z.string().default('../job-ingestion-service/scrapped_jobs'),
   ENABLE_INGESTION_TRIGGER: toBoolean.default(false),
-  INGESTION_TRIGGER_URL: z
-    .string()
-    .url()
-    .default('http://127.0.0.1:3010/ingestion/start'),
+  INGESTION_TRIGGER_URL: z.string().url().default('http://127.0.0.1:3010/ingestion/start'),
   INGESTION_TRIGGER_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
   MONGODB_CRAWL_JOBS_COLLECTION: z.string().default('crawlJobsCollection'),
   CRAWL_INACTIVE_GUARD_MIN_ACTIVE_COUNT: z.coerce.number().int().nonnegative().default(100),
