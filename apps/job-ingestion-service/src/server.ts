@@ -265,99 +265,136 @@ async function main(): Promise<void> {
 
   const apiLogger = logger.child({ component: 'IngestionApi' });
   const mongoClient = new MongoClient(mongoUri);
-  await mongoClient.connect();
-  await ensureTriggerIndexes(mongoClient, envs.MONGODB_INGESTION_TRIGGERS_COLLECTION);
-
   const server = Fastify({ logger: false });
+  let mongoConnected = false;
 
-  server.get('/health', async () => ({ ok: true }));
+  try {
+    await mongoClient.connect();
+    mongoConnected = true;
+    await ensureTriggerIndexes(mongoClient, envs.MONGODB_INGESTION_TRIGGERS_COLLECTION);
 
-  server.post('/ingestion/start', async (request, reply) => {
-    const parsed = triggerRequestSchema.safeParse(request.body);
-    if (!parsed.success) {
-      reply.code(400);
-      return {
-        ok: false,
-        error: 'Invalid request body',
-        issues: parsed.error.issues,
-      };
-    }
+    server.get('/health', async () => ({ ok: true }));
 
-    const trigger = parsed.data;
-    const id = triggerDocId(trigger.source, trigger.crawlRunId);
-    const triggerLogger = apiLogger.child({
-      source: trigger.source,
-      crawlRunId: trigger.crawlRunId,
-    });
+    server.post('/ingestion/start', async (request, reply) => {
+      const parsed = triggerRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return {
+          ok: false,
+          error: 'Invalid request body',
+          issues: parsed.error.issues,
+        };
+      }
 
-    const runningPromise = runningTriggers.get(id);
-    if (runningPromise) {
-      const existing = await getTriggerCollection(mongoClient).findOne({ id });
+      const trigger = parsed.data;
+      const id = triggerDocId(trigger.source, trigger.crawlRunId);
+      const triggerLogger = apiLogger.child({
+        source: trigger.source,
+        crawlRunId: trigger.crawlRunId,
+      });
+
+      const runningPromise = runningTriggers.get(id);
+      if (runningPromise) {
+        const existing = await getTriggerCollection(mongoClient).findOne({ id });
+        reply.code(202);
+        return {
+          ok: true,
+          accepted: true,
+          deduplicated: true,
+          trigger: existing,
+        };
+      }
+
+      const claimResult = await claimTrigger(mongoClient, trigger);
+      if (!claimResult.claimed) {
+        reply.code(claimResult.doc?.status === 'running' ? 202 : 200);
+        return {
+          ok: true,
+          accepted: claimResult.doc?.status === 'running',
+          deduplicated: true,
+          trigger: claimResult.doc,
+        };
+      }
+
+      const backgroundPromise = (async () => {
+        try {
+          await runTriggerInBackground(mongoClient, trigger);
+        } catch (error) {
+          const inputRunDir = resolveTriggerInputRunDir(trigger.crawlRunId);
+          await updateTriggerFailure(mongoClient, trigger, inputRunDir, error);
+          triggerLogger.error({ err: error, inputRunDir }, 'Triggered ingestion run failed');
+        } finally {
+          runningTriggers.delete(id);
+        }
+      })();
+
+      runningTriggers.set(id, backgroundPromise);
+
       reply.code(202);
       return {
         ok: true,
         accepted: true,
-        deduplicated: true,
-        trigger: existing,
-      };
-    }
-
-    const claimResult = await claimTrigger(mongoClient, trigger);
-    if (!claimResult.claimed) {
-      reply.code(claimResult.doc?.status === 'running' ? 202 : 200);
-      return {
-        ok: true,
-        accepted: claimResult.doc?.status === 'running',
-        deduplicated: true,
+        deduplicated: false,
         trigger: claimResult.doc,
       };
-    }
+    });
 
-    const backgroundPromise = (async () => {
-      try {
-        await runTriggerInBackground(mongoClient, trigger);
-      } catch (error) {
-        const inputRunDir = resolveTriggerInputRunDir(trigger.crawlRunId);
-        await updateTriggerFailure(mongoClient, trigger, inputRunDir, error);
-        triggerLogger.error({ err: error, inputRunDir }, 'Triggered ingestion run failed');
-      } finally {
-        runningTriggers.delete(id);
-      }
-    })();
+    server.addHook('onClose', async () => {
+      await mongoClient.close();
+    });
 
-    runningTriggers.set(id, backgroundPromise);
-
-    reply.code(202);
-    return {
-      ok: true,
-      accepted: true,
-      deduplicated: false,
-      trigger: claimResult.doc,
-    };
-  });
-
-  server.addHook('onClose', async () => {
-    await mongoClient.close();
-  });
-
-  const address = await server.listen({
-    host: envs.INGESTION_API_HOST,
-    port: envs.INGESTION_API_PORT,
-  });
-  apiLogger.info(
-    {
-      address,
+    const address = await server.listen({
       host: envs.INGESTION_API_HOST,
       port: envs.INGESTION_API_PORT,
-      crawlRunsSubdir: envs.CRAWL_RUNS_SUBDIR,
-      mongoDbName: envs.MONGODB_DB_NAME,
-      mongoTriggersCollection: envs.MONGODB_INGESTION_TRIGGERS_COLLECTION,
-    },
-    'Ingestion Fastify API listening',
-  );
+    });
+    apiLogger.info(
+      {
+        address,
+        host: envs.INGESTION_API_HOST,
+        port: envs.INGESTION_API_PORT,
+        crawlRunsSubdir: envs.CRAWL_RUNS_SUBDIR,
+        mongoDbName: envs.MONGODB_DB_NAME,
+        mongoTriggersCollection: envs.MONGODB_INGESTION_TRIGGERS_COLLECTION,
+      },
+      'Ingestion Fastify API listening',
+    );
+  } catch (error) {
+    try {
+      await server.close();
+    } catch {
+      // ignore startup cleanup errors
+    }
+
+    if (mongoConnected) {
+      try {
+        await mongoClient.close();
+      } catch {
+        // ignore startup cleanup errors
+      }
+    }
+
+    throw error;
+  }
 }
 
 void main().catch((error) => {
-  logger.fatal({ err: error }, 'Unhandled fatal error in ingestion API server');
-  process.exitCode = 1;
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'EADDRINUSE'
+  ) {
+    logger.fatal(
+      {
+        err: error,
+        host: envs.INGESTION_API_HOST,
+        port: envs.INGESTION_API_PORT,
+      },
+      'Ingestion API port is already in use',
+    );
+  } else {
+    logger.fatal({ err: error }, 'Unhandled fatal error in ingestion API server');
+  }
+
+  process.exit(1);
 });
