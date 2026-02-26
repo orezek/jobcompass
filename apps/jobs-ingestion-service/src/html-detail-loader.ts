@@ -37,9 +37,15 @@ const minimumDetailWords = 100;
 const minimumDetailSignalToNoiseRatio = 0.2;
 
 const primaryJobContentContainerSelectors = [
+  '.cp-detail.text-content',
   '.cp-detail__content',
   '#capybara-position-detail',
   'article#capybara-position-detail',
+  '.job-detail__description',
+  '.job-detail__content',
+  '.job-detail',
+  '.m-detail__content',
+  '.m-detail',
 ] as const;
 
 const detailSignalPatterns = [
@@ -87,28 +93,55 @@ type PrimaryJobContentContainerMatch = {
 const findPrimaryJobContentContainer = (
   dom: CheerioAPI,
 ): PrimaryJobContentContainerMatch | null => {
+  const selectorPriority = new Map(
+    primaryJobContentContainerSelectors.map((selector, index) => [selector, index] as const),
+  );
+  const seenNodes = new Set<unknown>();
+  let bestMatch: PrimaryJobContentContainerMatch | null = null;
+
   for (const selector of primaryJobContentContainerSelectors) {
-    const element = dom(selector).first();
-    if (element.length === 0) {
-      continue;
-    }
+    dom(selector).each((_, elementNode) => {
+      if (seenNodes.has(elementNode)) {
+        return;
+      }
+      seenNodes.add(elementNode);
 
-    const text = normalizeWhitespace(element.text());
-    if (text.length === 0) {
-      continue;
-    }
+      const element = dom(elementNode);
+      const text = normalizeWhitespace(element.text());
+      if (text.length === 0) {
+        return;
+      }
 
-    const words = text.split(' ').length;
+      const words = text.split(' ').length;
+      const candidate: PrimaryJobContentContainerMatch = {
+        selector,
+        text,
+        chars: text.length,
+        words,
+      };
 
-    return {
-      selector,
-      text,
-      chars: text.length,
-      words,
-    };
+      if (bestMatch === null) {
+        bestMatch = candidate;
+        return;
+      }
+
+      const candidatePriority = selectorPriority.get(candidate.selector) ?? Number.MAX_SAFE_INTEGER;
+      const bestPriority = selectorPriority.get(bestMatch.selector) ?? Number.MAX_SAFE_INTEGER;
+
+      const isBetter =
+        candidate.chars > bestMatch.chars ||
+        (candidate.chars === bestMatch.chars && candidate.words > bestMatch.words) ||
+        (candidate.chars === bestMatch.chars &&
+          candidate.words === bestMatch.words &&
+          candidatePriority < bestPriority);
+
+      if (isBetter) {
+        bestMatch = candidate;
+      }
+    });
   }
 
-  return null;
+  return bestMatch;
 };
 
 const bufferToUtf8 = (buffer: Buffer): string => {
