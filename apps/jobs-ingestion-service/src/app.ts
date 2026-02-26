@@ -87,7 +87,7 @@ export const envSchema = z.object({
   MONGODB_CRAWL_JOBS_COLLECTION: z.string().default('crawl_job_states'),
   MONGODB_RUN_SUMMARIES_COLLECTION: z.string().default('ingestion_run_summaries'),
   MONGODB_INGESTION_TRIGGERS_COLLECTION: z.string().default('ingestion_trigger_requests'),
-  PARSER_VERSION: z.string().default('jobs-ingestion-service-v0.6.0'),
+  PARSER_VERSION: z.string().default('jobs-ingestion-service-v0.7.0'),
 });
 
 export type EnvSchema = z.infer<typeof envSchema>;
@@ -106,6 +106,10 @@ type ParseRunStats = {
 const detailPageQualitySignalsSchema = z.object({
   plainTextChars: z.number().int().nonnegative(),
   plainTextWords: z.number().int().nonnegative(),
+  hasPrimaryJobContentContainer: z.boolean(),
+  primaryJobContentContainerSelector: z.string().nullable(),
+  primaryJobContentChars: z.number().int().nonnegative(),
+  primaryJobContentWords: z.number().int().nonnegative(),
   detailSignalHits: z.number().int().nonnegative(),
   noiseSignalHits: z.number().int().nonnegative(),
 });

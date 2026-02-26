@@ -36,6 +36,12 @@ const nonContentSelectors = [
 const minimumDetailWords = 100;
 const minimumDetailSignalToNoiseRatio = 0.2;
 
+const primaryJobContentContainerSelectors = [
+  '.cp-detail__content',
+  '#capybara-position-detail',
+  'article#capybara-position-detail',
+] as const;
+
 const detailSignalPatterns = [
   /pracovn[íi]\s+nab[ií]dka/i,
   /n[aá]pl[nň]\s+pr[aá]ce/i,
@@ -71,6 +77,40 @@ const pruneNonContentNodes = (dom: CheerioAPI): void => {
   dom(nonContentSelectors.join(',')).remove();
 };
 
+type PrimaryJobContentContainerMatch = {
+  selector: (typeof primaryJobContentContainerSelectors)[number];
+  text: string;
+  chars: number;
+  words: number;
+};
+
+const findPrimaryJobContentContainer = (
+  dom: CheerioAPI,
+): PrimaryJobContentContainerMatch | null => {
+  for (const selector of primaryJobContentContainerSelectors) {
+    const element = dom(selector).first();
+    if (element.length === 0) {
+      continue;
+    }
+
+    const text = normalizeWhitespace(element.text());
+    if (text.length === 0) {
+      continue;
+    }
+
+    const words = text.split(' ').length;
+
+    return {
+      selector,
+      text,
+      chars: text.length,
+      words,
+    };
+  }
+
+  return null;
+};
+
 const bufferToUtf8 = (buffer: Buffer): string => {
   if (isGzipBuffer(buffer)) {
     return gunzipSync(buffer).toString('utf8');
@@ -92,6 +132,10 @@ export type LoadedDetailPage = {
 export type DetailPageQualitySignals = {
   plainTextChars: number;
   plainTextWords: number;
+  hasPrimaryJobContentContainer: boolean;
+  primaryJobContentContainerSelector: string | null;
+  primaryJobContentChars: number;
+  primaryJobContentWords: number;
   detailSignalHits: number;
   noiseSignalHits: number;
 };
@@ -125,12 +169,17 @@ export const loadDetailPage = async (
 
   const mergedText = normalizeWhitespace(dom('body').text());
   const plainTextWords = mergedText.length > 0 ? mergedText.split(' ').length : 0;
+  const primaryJobContentContainer = findPrimaryJobContentContainer(dom);
   const detailSignalHits = countPatternHits(mergedText, detailSignalPatterns);
   const noiseSignalHits = countPatternHits(mergedText, noiseSignalPatterns);
 
   const qualitySignals: DetailPageQualitySignals = {
     plainTextChars: mergedText.length,
     plainTextWords,
+    hasPrimaryJobContentContainer: primaryJobContentContainer !== null,
+    primaryJobContentContainerSelector: primaryJobContentContainer?.selector ?? null,
+    primaryJobContentChars: primaryJobContentContainer?.chars ?? 0,
+    primaryJobContentWords: primaryJobContentContainer?.words ?? 0,
     detailSignalHits,
     noiseSignalHits,
   };
@@ -149,6 +198,36 @@ export const loadDetailPage = async (
       `plain text word count ${plainTextWords} is below minimum ${minimumDetailWords}`,
       qualitySignals,
     );
+  }
+
+  if (primaryJobContentContainer !== null) {
+    if (primaryJobContentContainer.chars < minRelevantTextChars) {
+      throw new IncompleteDetailPageError(
+        detailHtmlPath,
+        `primary job content container "${primaryJobContentContainer.selector}" text length ${primaryJobContentContainer.chars} is below minimum ${minRelevantTextChars}`,
+        qualitySignals,
+      );
+    }
+
+    if (primaryJobContentContainer.words < minimumDetailWords) {
+      throw new IncompleteDetailPageError(
+        detailHtmlPath,
+        `primary job content container "${primaryJobContentContainer.selector}" word count ${primaryJobContentContainer.words} is below minimum ${minimumDetailWords}`,
+        qualitySignals,
+      );
+    }
+
+    const textContent = mergedText;
+
+    return {
+      rawHtml,
+      textContent,
+      htmlSha256,
+      wasGzipCompressed,
+      fileSizeBytes: fileBuffer.length,
+      rawHtmlChars: rawHtml.length,
+      textContentChars: textContent.length,
+    };
   }
 
   if (detailSignalHits === 0 && noiseSignalHits > 0) {
