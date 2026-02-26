@@ -138,6 +138,10 @@ function parseListingResultsCount(input: string): { rawText: string; count: numb
   };
 }
 
+function normalizeUrlForComparison(value: string): string {
+  return new URL(value).toString();
+}
+
 type DetailRenderType = z.infer<typeof internalJobAdSchema>['detailRenderType'];
 type DetailRenderSignal = z.infer<typeof internalJobAdSchema>['detailRenderSignal'];
 
@@ -1010,6 +1014,35 @@ if (!rawInput) {
   );
 }
 const input = actorInputSchema.parse(rawInput);
+if (envs.MVP_ENFORCE_FIXED_START_URL_SCOPE) {
+  if (input.startUrls.length !== 1) {
+    throw new Error(
+      [
+        'MVP fixed crawl scope is enforced and requires exactly one start URL.',
+        `Configured fixed URL: ${envs.MVP_FIXED_START_URL}`,
+        `Received startUrls count: ${input.startUrls.length}`,
+      ].join(' '),
+    );
+  }
+
+  const providedStartUrl = input.startUrls[0]?.url;
+  if (!providedStartUrl) {
+    throw new Error('MVP fixed crawl scope is enforced but the provided start URL is missing.');
+  }
+
+  const normalizedProvidedStartUrl = normalizeUrlForComparison(providedStartUrl);
+  const normalizedFixedStartUrl = normalizeUrlForComparison(envs.MVP_FIXED_START_URL);
+
+  if (normalizedProvidedStartUrl !== normalizedFixedStartUrl) {
+    throw new Error(
+      [
+        'MVP fixed crawl scope is enforced and the provided start URL does not match.',
+        `Expected: ${normalizedFixedStartUrl}`,
+        `Received: ${normalizedProvidedStartUrl}`,
+      ].join(' '),
+    );
+  }
+}
 
 const crawlRunId = randomUUID();
 const startUrls = input.startUrls;
@@ -1136,6 +1169,7 @@ let crawlerRunError: unknown = null;
 let listPhaseCompleted = false;
 let detailPhaseStarted = false;
 let detailPhaseCompleted = false;
+let partialListScanGuardTriggered = false;
 try {
   const listCrawler = createCrawler(Math.max(input.maxItems * 5, 50));
   await listCrawler.run(
@@ -1149,6 +1183,22 @@ try {
     })),
   );
   listPhaseCompleted = true;
+
+  const isUsingProdCrawlStateDb = envs.MONGODB_DB_NAME === envs.PROD_CRAWL_STATE_DB_NAME;
+  if (
+    envs.ENFORCE_FULL_SCAN_FOR_PROD_CRAWL_STATE &&
+    isUsingProdCrawlStateDb &&
+    maxItemsEnqueueGuardTriggered
+  ) {
+    partialListScanGuardTriggered = true;
+    throw new Error(
+      [
+        `Refusing to reconcile a partial list scan into production crawl-state DB "${envs.MONGODB_DB_NAME}".`,
+        'The list phase stopped early because maxItems was reached while collecting listings.',
+        `Use a dev DB for sample runs (for example MONGODB_DB_NAME=job-compass-dev), or run a full scan with the fixed MVP URL (${envs.MVP_FIXED_START_URL}).`,
+      ].join(' '),
+    );
+  }
 
   const reconcileObservedAtIso = new Date().toISOString();
   const reconcileResult = await crawlStateRepo.reconcileListings({
@@ -1297,6 +1347,7 @@ const runSummary = {
     listPhaseCompleted,
     detailPhaseStarted,
     detailPhaseCompleted,
+    partialListScanGuardTriggered,
     maxItemsAbortTriggered,
     maxItemsEnqueueGuardTriggered,
     failedRequests,
@@ -1352,6 +1403,8 @@ const runSummary = {
   ingestionTrigger,
   crawlState: {
     mongoDbName: envs.MONGODB_DB_NAME,
+    isProdCrawlStateDb: envs.MONGODB_DB_NAME === envs.PROD_CRAWL_STATE_DB_NAME,
+    prodCrawlStateDbName: envs.PROD_CRAWL_STATE_DB_NAME,
     mongoCollection: envs.MONGODB_CRAWL_JOBS_COLLECTION,
   },
   failedRequestUrls,
