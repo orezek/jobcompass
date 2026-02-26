@@ -126,6 +126,7 @@ Copy `.env.example` to `.env` and configure:
 - `CRAWL_RUNS_SUBDIR` for crawl-run local handoff directories under `INPUT_ROOT_DIR` (default `runs`)
 - `INGESTION_API_HOST` and `INGESTION_API_PORT` for the Fastify ingestion trigger API
 - `MONGODB_JOBS_COLLECTION` for structured document output
+- `MONGODB_CRAWL_JOBS_COLLECTION` for crawler state cleanup of non-success ingestion records (MVP consistency fix)
 - `MONGODB_RUN_SUMMARIES_COLLECTION` for one summary document per ingestion run (linked via `runId`)
 - `MONGODB_INGESTION_TRIGGERS_COLLECTION` for idempotent ingestion trigger request state (`source + crawlRunId`)
 
@@ -137,7 +138,9 @@ When Mongo persistence is enabled, each run writes:
 
 - job documents to `MONGODB_JOBS_COLLECTION` with `ingestion.runId`
 - one run-summary document to `MONGODB_RUN_SUMMARIES_COLLECTION` with the same `runId`
-  - includes `jobsSkippedIncomplete` and `skippedIncompleteJobs[]` (listing metadata + skip reason) for audit/debugging
+  - includes `jobsTotal`, success/non-success rates, `skippedIncompleteJobs[]`, and `failedJobs[]` for audit/debugging
+- crawler-state cleanup in `MONGODB_CRAWL_JOBS_COLLECTION`
+  - removes skipped/failed jobs from crawl state so the next crawl retries them
 
 ## Run
 
@@ -169,4 +172,11 @@ Trigger states are persisted to `MONGODB_INGESTION_TRIGGERS_COLLECTION` and retu
 pnpm -C apps/jobs-ingestion-service lint
 pnpm -C apps/jobs-ingestion-service check-types
 pnpm -C apps/jobs-ingestion-service build
+```
+
+One-off maintenance (keeps crawl state aligned with normalized output):
+
+```bash
+pnpm -C apps/jobs-ingestion-service build
+pnpm -C apps/jobs-ingestion-service run align-crawl-state
 ```

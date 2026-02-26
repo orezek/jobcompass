@@ -11,7 +11,7 @@ import { IncompleteDetailPageError } from './html-detail-loader.js';
 import { LocalScrapedJobsInputProvider } from './input-provider.js';
 import { JobParsingGraph } from './job-parsing-graph.js';
 import { createLogger } from './logger.js';
-import { writeOutputToFile, writeOutputToMongo } from './repository.js';
+import { pruneCrawlStateByDocIds, writeOutputToFile, writeOutputToMongo } from './repository.js';
 import { sourceListingRecordSchema, type UnifiedJobAd } from './schema.js';
 
 const toOptionalPositiveInt = z.preprocess((value) => {
@@ -84,6 +84,7 @@ export const envSchema = z.object({
   MONGODB_URI: z.string().optional(),
   MONGODB_DB_NAME: z.string().default('jobcompass'),
   MONGODB_JOBS_COLLECTION: z.string().default('normalized_job_ads'),
+  MONGODB_CRAWL_JOBS_COLLECTION: z.string().default('crawl_job_states'),
   MONGODB_RUN_SUMMARIES_COLLECTION: z.string().default('ingestion_run_summaries'),
   MONGODB_INGESTION_TRIGGERS_COLLECTION: z.string().default('ingestion_trigger_requests'),
   PARSER_VERSION: z.string().default('jobs-ingestion-service-v0.6.0'),
@@ -123,6 +124,20 @@ const skippedIncompleteJobSchema = z.object({
 
 type SkippedIncompleteJob = z.infer<typeof skippedIncompleteJobSchema>;
 
+const failedJobSchema = z.object({
+  sourceId: z.string(),
+  source: z.string(),
+  datasetFileName: z.string(),
+  datasetRecordIndex: z.number().int().nonnegative(),
+  detailHtmlPath: z.string(),
+  htmlDetailPageKey: z.string(),
+  errorName: z.string(),
+  errorMessage: z.string(),
+  listing: sourceListingRecordSchema,
+});
+
+type FailedJob = z.infer<typeof failedJobSchema>;
+
 const ingestionRunSummarySchema = z.object({
   id: z.string(),
   runId: z.string(),
@@ -134,10 +149,17 @@ const ingestionRunSummarySchema = z.object({
   langsmithPromptName: z.string(),
   sampleSize: z.union([z.number().int().positive(), z.literal('all')]),
   concurrency: z.number().int().positive(),
+  jobsTotal: z.number().int().nonnegative(),
   jobsProcessed: z.number().int().nonnegative(),
   jobsSkippedIncomplete: z.number().int().nonnegative(),
   skippedIncompleteJobs: z.array(skippedIncompleteJobSchema),
   jobsFailed: z.number().int().nonnegative(),
+  failedJobs: z.array(failedJobSchema),
+  jobsNonSuccess: z.number().int().nonnegative(),
+  jobsSuccessRate: z.number().min(0).max(1),
+  jobsNonSuccessRate: z.number().min(0).max(1),
+  jobsSkippedIncompleteRate: z.number().min(0).max(1),
+  jobsFailedRate: z.number().min(0).max(1),
   mongoWritesStructured: z.number().int().nonnegative(),
   totalInputTokens: z.number().int().nonnegative(),
   totalOutputTokens: z.number().int().nonnegative(),
@@ -217,35 +239,49 @@ const buildRunSummaryDocument = (input: {
   skippedIncomplete: number;
   skippedIncompleteJobs: SkippedIncompleteJob[];
   failed: number;
+  failedJobs: FailedJob[];
   mongoWritesStructured: number;
   workerCount: number;
   sampleSize: number | null;
 }): IngestionRunSummary =>
-  ingestionRunSummarySchema.parse({
-    id: input.runId,
-    runId: input.runId,
-    startedAt: input.startedAtIso,
-    completedAt: input.completedAtIso,
-    runDurationSeconds: input.runDurationSeconds,
-    parserVersion: envs.PARSER_VERSION,
-    extractorModel: envs.GEMINI_MODEL,
-    langsmithPromptName: envs.LANGSMITH_PROMPT_NAME,
-    sampleSize: input.sampleSize ?? 'all',
-    concurrency: input.workerCount,
-    jobsProcessed: input.structuredParsed.length,
-    jobsSkippedIncomplete: input.skippedIncomplete,
-    skippedIncompleteJobs: input.skippedIncompleteJobs,
-    jobsFailed: input.failed,
-    mongoWritesStructured: input.mongoWritesStructured,
-    totalInputTokens: input.stats.totalInputTokens,
-    totalOutputTokens: input.stats.totalOutputTokens,
-    totalTokens: input.stats.totalTokens,
-    totalEstimatedCostUsd: input.stats.totalEstimatedCostUsd,
-    avgTimeToProcssSeconds: input.stats.avgTimeToProcssSeconds,
-    p50TimeToProcssSeconds: input.stats.p50TimeToProcssSeconds,
-    p95TimeToProcssSeconds: input.stats.p95TimeToProcssSeconds,
-    avgLlmCallDurationSeconds: input.stats.avgLlmCallDurationSeconds,
-  });
+  (() => {
+    const jobsTotal = input.structuredParsed.length + input.skippedIncomplete + input.failed;
+    const jobsNonSuccess = input.skippedIncomplete + input.failed;
+    const rate = (value: number): number => (jobsTotal === 0 ? 0 : value / jobsTotal);
+
+    return ingestionRunSummarySchema.parse({
+      id: input.runId,
+      runId: input.runId,
+      startedAt: input.startedAtIso,
+      completedAt: input.completedAtIso,
+      runDurationSeconds: input.runDurationSeconds,
+      parserVersion: envs.PARSER_VERSION,
+      extractorModel: envs.GEMINI_MODEL,
+      langsmithPromptName: envs.LANGSMITH_PROMPT_NAME,
+      sampleSize: input.sampleSize ?? 'all',
+      concurrency: input.workerCount,
+      jobsTotal,
+      jobsProcessed: input.structuredParsed.length,
+      jobsSkippedIncomplete: input.skippedIncomplete,
+      skippedIncompleteJobs: input.skippedIncompleteJobs,
+      jobsFailed: input.failed,
+      failedJobs: input.failedJobs,
+      jobsNonSuccess,
+      jobsSuccessRate: rate(input.structuredParsed.length),
+      jobsNonSuccessRate: rate(jobsNonSuccess),
+      jobsSkippedIncompleteRate: rate(input.skippedIncomplete),
+      jobsFailedRate: rate(input.failed),
+      mongoWritesStructured: input.mongoWritesStructured,
+      totalInputTokens: input.stats.totalInputTokens,
+      totalOutputTokens: input.stats.totalOutputTokens,
+      totalTokens: input.stats.totalTokens,
+      totalEstimatedCostUsd: input.stats.totalEstimatedCostUsd,
+      avgTimeToProcssSeconds: input.stats.avgTimeToProcssSeconds,
+      p50TimeToProcssSeconds: input.stats.p50TimeToProcssSeconds,
+      p95TimeToProcssSeconds: input.stats.p95TimeToProcssSeconds,
+      avgLlmCallDurationSeconds: input.stats.avgLlmCallDurationSeconds,
+    });
+  })();
 
 type ParseRecordsOptions = {
   runId: string;
@@ -261,6 +297,7 @@ const parseRecords = async (
   failed: number;
   skippedIncomplete: number;
   skippedIncompleteJobs: SkippedIncompleteJob[];
+  failedJobs: FailedJob[];
   stats: ParseRunStats;
   workerCount: number;
 }> => {
@@ -308,6 +345,7 @@ const parseRecords = async (
   let failed = 0;
   let skippedIncomplete = 0;
   const skippedIncompleteJobs: SkippedIncompleteJob[] = [];
+  const failedJobs: FailedJob[] = [];
   let nextIndex = 0;
 
   logger.info(
@@ -370,6 +408,20 @@ const parseRecords = async (
         }
 
         failed += 1;
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        failedJobs.push(
+          failedJobSchema.parse({
+            sourceId: inputRecord.listingRecord.sourceId,
+            source: inputRecord.listingRecord.source,
+            datasetFileName: inputRecord.datasetFileName,
+            datasetRecordIndex: inputRecord.datasetRecordIndex,
+            detailHtmlPath: inputRecord.detailHtmlPath,
+            htmlDetailPageKey: inputRecord.listingRecord.htmlDetailPageKey,
+            errorName: normalizedError.name,
+            errorMessage: normalizedError.message,
+            listing: inputRecord.listingRecord,
+          }),
+        );
         logger.error(
           {
             err: error,
@@ -388,7 +440,15 @@ const parseRecords = async (
   const structuredParsed = parsedByIndex.filter((item): item is UnifiedJobAd => item !== null);
   const stats = buildRunStats(structuredParsed);
 
-  return { structuredParsed, failed, skippedIncomplete, skippedIncompleteJobs, stats, workerCount };
+  return {
+    structuredParsed,
+    failed,
+    skippedIncomplete,
+    skippedIncompleteJobs,
+    failedJobs,
+    stats,
+    workerCount,
+  };
 };
 
 export type IngestionRunStatus = 'succeeded' | 'completed_with_errors';
@@ -409,6 +469,7 @@ export type RunIngestionWorkflowResult = {
   failed: number;
   skippedIncomplete: number;
   skippedIncompleteJobs: SkippedIncompleteJob[];
+  failedJobs: FailedJob[];
   stats: ParseRunStats;
   workerCount: number;
   outputJsonPath: string;
@@ -441,6 +502,7 @@ export const runIngestionWorkflow = async (
       enableMongoWrite: envs.ENABLE_MONGO_WRITE,
       mongoDbName: envs.MONGODB_DB_NAME,
       mongoCollectionStructured: envs.MONGODB_JOBS_COLLECTION,
+      mongoCollectionCrawlJobs: envs.MONGODB_CRAWL_JOBS_COLLECTION,
       mongoCollectionRunSummaries: envs.MONGODB_RUN_SUMMARIES_COLLECTION,
       model: envs.GEMINI_MODEL,
       langsmithPromptName: envs.LANGSMITH_PROMPT_NAME,
@@ -452,13 +514,20 @@ export const runIngestionWorkflow = async (
   );
 
   const startedAt = performance.now();
-  const { structuredParsed, failed, skippedIncomplete, skippedIncompleteJobs, stats, workerCount } =
-    await parseRecords({
-      runId,
-      inputRootDir: resolvedInputRootDir,
-      recordsDirName: resolvedRecordsDirName,
-      sampleSize: resolvedSampleSize,
-    });
+  const {
+    structuredParsed,
+    failed,
+    skippedIncomplete,
+    skippedIncompleteJobs,
+    failedJobs,
+    stats,
+    workerCount,
+  } = await parseRecords({
+    runId,
+    inputRootDir: resolvedInputRootDir,
+    recordsDirName: resolvedRecordsDirName,
+    sampleSize: resolvedSampleSize,
+  });
 
   await writeOutputToFile(
     resolvedOutputJsonPath,
@@ -468,6 +537,7 @@ export const runIngestionWorkflow = async (
 
   let mongoWrittenStructured = 0;
   let mongoWrittenRunSummary = 0;
+  let mongoPrunedCrawlStateNonSuccess = 0;
   if (envs.ENABLE_MONGO_WRITE) {
     if (!envs.MONGODB_URI) {
       throw new Error('ENABLE_MONGO_WRITE=true requires MONGODB_URI to be configured.');
@@ -481,6 +551,19 @@ export const runIngestionWorkflow = async (
       },
       structuredParsed,
       logger.child({ component: 'MongoRepository', outputType: 'structured' }),
+    );
+
+    mongoPrunedCrawlStateNonSuccess = await pruneCrawlStateByDocIds(
+      {
+        mongoUri: envs.MONGODB_URI,
+        dbName: envs.MONGODB_DB_NAME,
+        crawlJobsCollectionName: envs.MONGODB_CRAWL_JOBS_COLLECTION,
+      },
+      [
+        ...skippedIncompleteJobs.map((job) => `${job.source}:${job.sourceId}`),
+        ...failedJobs.map((job) => `${job.source}:${job.sourceId}`),
+      ],
+      logger.child({ component: 'MongoRepository', outputType: 'crawl-state-prune' }),
     );
   }
 
@@ -496,6 +579,7 @@ export const runIngestionWorkflow = async (
     skippedIncomplete,
     skippedIncompleteJobs,
     failed,
+    failedJobs,
     mongoWritesStructured: mongoWrittenStructured,
     workerCount,
     sampleSize: resolvedSampleSize,
@@ -522,6 +606,7 @@ export const runIngestionWorkflow = async (
       outputJsonPath: resolvedOutputJsonPath,
       mongoWritesStructured: mongoWrittenStructured,
       mongoWritesRunSummary: mongoWrittenRunSummary,
+      mongoPrunedCrawlStateNonSuccess,
       runDurationSeconds,
     },
     'Completed parse run',
@@ -544,10 +629,15 @@ export const runIngestionWorkflow = async (
     {
       runId,
       jobsProcessed: structuredParsed.length,
+      jobsTotal: runSummaryDocument.jobsTotal,
       jobsSkippedIncomplete: skippedIncomplete,
       jobsFailed: failed,
+      jobsNonSuccess: runSummaryDocument.jobsNonSuccess,
+      jobsSuccessRate: runSummaryDocument.jobsSuccessRate,
+      jobsNonSuccessRate: runSummaryDocument.jobsNonSuccessRate,
       totalTokensUsed: stats.totalTokens,
       totalEstimatedCostUsd: stats.totalEstimatedCostUsd,
+      mongoPrunedCrawlStateNonSuccess,
       runDurationSeconds,
     },
     'Parse run summary',
@@ -561,6 +651,7 @@ export const runIngestionWorkflow = async (
     failed,
     skippedIncomplete,
     skippedIncompleteJobs,
+    failedJobs,
     stats,
     workerCount,
     outputJsonPath: resolvedOutputJsonPath,
