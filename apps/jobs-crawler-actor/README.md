@@ -1,92 +1,259 @@
-# Job Compass: Jobs.cz Scraper
+# Jobs Crawler Actor
 
-A robust and efficient crawler for extracting job opportunities from **Jobs.cz**, one of the largest job boards in the Czech Republic. This actor parses list pages and details pages to extract structured data about vacancies, salaries, and companies.
+`jobs-crawler-actor` crawls Jobs.cz list pages, extracts listing metadata, fetches detail-page HTML snapshots (for selected jobs), writes local crawl artifacts for ingestion, and can trigger `jobs-ingestion-service` after crawl finalization.
 
-## Monorepo Notes
+This app is the upstream producer in the JobCompass pipeline.
 
-- This app is part of the `pnpm` + Turborepo workspace in JobCompass.
-- The crawler logic is preserved from the original actor implementation.
-- Runtime target remains Apify actor images (Node 20 compatible) to avoid changing deployed behavior.
+## What This App Does
 
-## 🚀 Features
+At a high level, one run performs these phases:
 
-- **Detailed Extraction:** Scrapes job title, company name, salary (if available), location, and publication date.
-- **Smart Formatting:** Automatically cleans up whitespace and standardizes text fields.
-- **Proxy Support:** Fully compatible with Apify Proxy to avoid IP blocking.
-- **Cost Control:** Configurable `maxItems` limit (job ads/detail pages) to control your scraping budget.
-- **Typed Output:** Returns clean, JSON-structured data validated against a schema.
+1. Crawl list pages (`LIST`) and extract listing cards.
+2. Reconcile the found jobs against Mongo crawler state (`crawl_job_states`) in incremental mode.
+3. Fetch detail pages (`DETAILS`) only for jobs selected for detail scraping (currently new jobs).
+4. Save rendered HTML snapshots and crawl metadata.
+5. Write run summary (KV store and optional MongoDB summary collection).
+6. Optionally trigger `jobs-ingestion-service` via Fastify (`POST /ingestion/start`).
 
-## 📋 Input Parameters
+## Responsibilities and Boundaries
 
-The input of this actor should be JSON. Using the Apify platform, you can configure these parameters via a visual interface.
+Owned by this app:
 
-| Field | Type | Description |
-|Args|---|---|
-| **startUrls** | Array | Optional. List of Search URLs from Jobs.cz. You can paste multiple different search categories here. If omitted, the actor starts from the default Jobs.cz search page. |
-| **maxItems** | Integer | **Required.** The maximum number of job ads (detail pages) to scrape. The actor will stop once this limit is reached. |
-| **proxyConfiguration** | Object | (Optional) Proxy settings. Default is Apify Proxy (Automatic). |
-| **debugLog** | Boolean | (Optional) Enable detailed debug logging for troubleshooting. |
+- Jobs.cz list-page crawling and pagination
+- Detail-page navigation and dynamic rendering waits
+- Detail HTML snapshot generation (`page.content()` after render checks)
+- Crawl state reconciliation (`crawl_job_states`)
+- Crawl run summary generation (`RUN_SUMMARY` + optional Mongo summary)
+- Local MVP handoff to `jobs-ingestion-service/scrapped_jobs`
+- Optional ingestion trigger call
 
-### Example Input
+Not owned by this app:
+
+- LLM extraction / structured parsing
+- Unified normalized schema generation
+- `normalized_job_ads` writes (done by `jobs-ingestion-service`)
+
+## Runtime Modes
+
+### 1. Apify Actor Mode (native actor behavior)
+
+- Input comes from Apify actor input (`Actor.getInput()`)
+- Storage uses Apify/Crawlee local/remote storages (dataset, key-value store, request queue)
+
+### 2. Local Monorepo Mode (current MVP workflow)
+
+- Input comes from local Apify-compatible file:
+  - `apps/jobs-crawler-actor/storage/key_value_stores/default/INPUT.json`
+- Crawl artifacts are written to a shared local directory used by `jobs-ingestion-service`
+- Ingestion can be triggered automatically via Fastify
+
+## Input (Actor Input / Local `INPUT.json`)
+
+Defined by:
+
+- `apps/jobs-crawler-actor/.actor/input_schema.json`
+
+Required/optional fields:
+
+- `startUrls` (optional): list of Jobs.cz search URLs. If omitted, defaults to `https://www.jobs.cz/prace/`
+- `maxItems` (required): maximum number of job ads (detail pages) to target in the run
+- `proxyConfiguration` (optional): Apify proxy configuration object
+- `debugLog` (optional): enables verbose crawl logging
+
+### Local Input Example
 
 ```json
 {
   "startUrls": [
     {
-      "url": "https://www.jobs.cz/prace/?field%5B%5D=200900012"
+      "url": "https://www.jobs.cz/prace/praha/?field%5B%5D=200900012&field%5B%5D=200900013&field%5B%5D=200900011&field%5B%5D=200900033&locality%5Bradius%5D=0"
     }
   ],
   "maxItems": 50,
+  "maxConcurrency": 1,
+  "maxRequestsPerMinute": 10,
+  "debugLog": false,
   "proxyConfiguration": {
-    "useApifyProxy": true
+    "useApifyProxy": false
   }
 }
 ```
 
-## Local Development (Monorepo)
+Note:
 
-From the repository root:
+- `maxConcurrency` and `maxRequestsPerMinute` are accepted by runtime and are useful for local safety, but the current `.actor/input_schema.json` documents the core actor fields only.
+
+## Incremental Crawl Behavior (Current MVP)
+
+This app uses Mongo crawler state (`crawl_job_states`) to avoid unnecessary detail-page fetching.
+
+Current decision model:
+
+- If `sourceId` is not in `crawl_job_states` -> enqueue for detail fetch (new)
+- If `sourceId` exists in `crawl_job_states` -> treat as already known for detail-fetch decision (skip detail fetch for now)
+- Jobs missing from the current list run are marked inactive immediately (guarded by safety thresholds)
+
+Important interaction with ingestion:
+
+- `jobs-ingestion-service` prunes non-success ingestion records from `crawl_job_states`
+- This makes skipped/failed records eligible for re-fetch on future crawler runs without adding extra ingestion-state fields to crawl state
+
+## Output Artifacts
+
+### A. Crawlee Dataset Records
+
+Each successfully processed detail page produces a dataset record with:
+
+- list-page fields (`sourceId`, `jobTitle`, `companyName`, `location`, `salary`, `publishedInfoText`)
+- canonical + redirected detail URL metadata
+- render diagnostics (type/signal/text chars/wait ms)
+- detail snapshot metadata (`htmlDetailPageKey`, `detailHtmlByteSize`, `detailHtmlSha256`)
+
+Output schema metadata:
+
+- `apps/jobs-crawler-actor/.actor/output_schema.json`
+
+### B. Detail HTML Snapshots (Key-Value Store and Local Shared Folder)
+
+Each fetched detail page HTML snapshot is stored under a key:
+
+- `job-html-<sourceId>.html`
+
+In local MVP handoff mode, the actor writes a run-scoped artifact folder under:
+
+- `../jobs-ingestion-service/scrapped_jobs/runs/<crawlRunId>/`
+
+Expected contents per run:
+
+```text
+scrapped_jobs/
+  runs/
+    <crawlRunId>/
+      dataset.json
+      records/
+        job-html-<sourceId>.html
+        ...
+```
+
+### C. Run Summary
+
+The actor writes a crawl summary to the key-value store as:
+
+- `RUN_SUMMARY`
+
+Summary includes:
+
+- input config snapshot
+- stop reason
+- list-page counters
+- parsed page-reported listing totals (`Našli jsme X nabídek`)
+- detail rendering breakdowns
+- failed request URLs
+
+Optional Mongo summary sink:
+
+- `crawl_run_summaries`
+
+## Dynamic Page Rendering (Why It Matters)
+
+Many employer-hosted `*.jobs.cz` pages are client-rendered and require waiting after navigation before capturing HTML.
+
+Implemented render patterns include:
+
+- jobs.cz native template pages
+- widget/capybara pages (`#widget_container` / `#capybara-position-detail`)
+- vacancy-detail pages (`#vacancy-detail`) with template-specific loader handling
+
+The crawler captures the HTML only after template-specific readiness signals are satisfied.
+
+## Environment Variables (`.env`)
+
+Documented example:
+
+- `apps/jobs-crawler-actor/.env.example`
+
+Key variables:
+
+- `CRAWLEE_LOG_LEVEL`
+- `LOCAL_SHARED_SCRAPED_JOBS_DIR`
+- `ENABLE_INGESTION_TRIGGER`
+- `INGESTION_TRIGGER_URL`
+- `INGESTION_TRIGGER_TIMEOUT_MS`
+- `MONGODB_URI`
+- `MONGODB_DB_NAME`
+- `MONGODB_CRAWL_JOBS_COLLECTION` (default `crawl_job_states`)
+- `ENABLE_MONGO_RUN_SUMMARY_WRITE`
+- `MONGODB_CRAWL_RUN_SUMMARIES_COLLECTION` (default `crawl_run_summaries`)
+- `CRAWL_INACTIVE_GUARD_MIN_ACTIVE_COUNT`
+- `CRAWL_INACTIVE_GUARD_MIN_SEEN_RATIO`
+
+## Local Development
+
+### Build / Run
+
+```bash
+pnpm -C apps/jobs-crawler-actor build
+pnpm -C apps/jobs-crawler-actor start
+```
+
+### Watch mode
 
 ```bash
 pnpm -C apps/jobs-crawler-actor dev
 ```
 
-## Output Metadata (Detail HTML Snapshot)
+### Required local input file
 
-Each dataset record also includes detail-page snapshot metadata to support downstream ingestion,
-debugging, and reprocessing:
+If local actor input is missing, the app now throws a clear error and points to:
 
-- `requestedDetailUrl` (canonical jobs.cz URL enqueued by the crawler)
-- `finalDetailUrl` and `finalDetailHost` (actual page URL/host after redirects)
-- `detailRedirected` (whether redirect occurred)
-- `detailRenderType` / `detailRenderSignal` (how the detail page was rendered and validated)
-- `detailRenderTextChars`, `detailRenderWaitMs`, `detailRenderComplete`
-- `detailHtmlByteSize`, `detailHtmlSha256` (rendered HTML snapshot size/hash)
+- `apps/jobs-crawler-actor/storage/key_value_stores/default/INPUT.json`
 
-The actor also writes a run-level summary JSON into the key-value store under `RUN_SUMMARY`,
-including parsed list-page totals (for example `Našli jsme 1 587 nabídek`), crawl counters,
-render-type breakdowns, and stop reason.
+## Local Pipeline (Crawler -> Ingestion)
 
-Optional MongoDB sink for run summaries (best effort; crawler still succeeds if Mongo is unavailable):
+When `ENABLE_INGESTION_TRIGGER=true`:
 
-- `ENABLE_MONGO_RUN_SUMMARY_WRITE=true`
-- `MONGODB_URI=...`
-- `MONGODB_DB_NAME=jobCompass` (default)
-- `MONGODB_CRAWL_RUN_SUMMARIES_COLLECTION=crawl_run_summaries` (default)
+1. Crawler completes crawl + detail snapshot phase
+2. Crawler writes shared local artifacts into `jobs-ingestion-service/scrapped_jobs/runs/<crawlRunId>/`
+3. Crawler calls `POST /ingestion/start` on `jobs-ingestion-service`
+4. `jobs-ingestion-service` processes the run idempotently by `source + crawlRunId`
 
-Optional ingestion trigger (best effort; runs after crawl finalization for `succeeded` and
-`completed_with_errors`):
-
-- `ENABLE_INGESTION_TRIGGER=true`
-- `INGESTION_TRIGGER_URL=http://127.0.0.1:3010/ingestion/start` (default)
-- `INGESTION_TRIGGER_TIMEOUT_MS=10000` (default)
-
-## Validate
-
-From the repository root:
+## Validation Commands
 
 ```bash
 pnpm -C apps/jobs-crawler-actor lint
 pnpm -C apps/jobs-crawler-actor check-types
 pnpm -C apps/jobs-crawler-actor build
 ```
+
+## Troubleshooting
+
+### `Input is missing!`
+
+Create local Apify input file:
+
+- `apps/jobs-crawler-actor/storage/key_value_stores/default/INPUT.json`
+
+Or run with isolated temp storage using `CRAWLEE_STORAGE_DIR`.
+
+### Ingestion trigger fails
+
+Check:
+
+- `ENABLE_INGESTION_TRIGGER=true`
+- `INGESTION_TRIGGER_URL` matches ingestion API host/port
+- `jobs-ingestion-service` server is running (`/health`)
+
+### Detail pages appear loaded but ingestion skips them
+
+This is usually an ingestion completeness-gate issue, not a crawler snapshot issue. Use:
+
+- crawler detail HTML snapshots (`job-html-*.html`)
+- `ingestion_run_summaries.skippedIncompleteJobs[]`
+
+for diagnosis.
+
+## Related Docs
+
+- Detailed crawler spec: `docs/specs/jobs-crawler-actor.md`
+- Incremental crawler + ingestion MVP design: `docs/specs/incremental-crawler-ingestion-monolith.md`
+- App changelog: `apps/jobs-crawler-actor/CHANGELOG.md`

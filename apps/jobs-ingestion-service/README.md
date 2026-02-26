@@ -1,172 +1,275 @@
-# Job Ingestion Service
+# Jobs Ingestion Service
 
-`jobs-ingestion-service` parses scraped job listing records + corresponding detail HTML pages into a single unified JobCompass schema.
+`jobs-ingestion-service` converts crawler outputs (listing JSON + detail HTML snapshots) into normalized job documents (`normalized_job_ads`) using a LangGraph pipeline and Gemini structured extraction.
 
-The parser currently supports this local input layout at app root:
+It supports two execution modes:
+
+- batch CLI ingestion (`src/app.ts`)
+- Fastify trigger API for idempotent crawl-run ingestion (`src/server.ts`)
+
+## What This App Does
+
+For each listing record + detail HTML snapshot pair, the service:
+
+1. loads and validates the detail HTML page
+2. builds cleaned plain-text content with Cheerio
+3. runs Gemini structured extraction using a LangSmith Hub prompt (`job-ad-extractor`)
+4. applies deterministic post-processing / normalization
+5. writes normalized output to JSON and optionally MongoDB (`normalized_job_ads`)
+6. records run summaries and ingestion trigger state for observability
+
+## Input Contract (Local MVP Handoff)
+
+Current MVP integration expects local crawler artifacts under a run-specific folder:
 
 ```text
 scrapped_jobs/
-  *.json
-  records/
-    *.html   # gzip-compressed HTML is supported
+  runs/
+    <crawlRunId>/
+      dataset.json
+      records/
+        job-html-<sourceId>.html
 ```
 
-## LangGraph Pipeline
+The ingestion trigger API receives only:
 
-The parser is implemented with `@langchain/langgraph` and runs these nodes per record:
-
-1. `loadDetailPage`: reads `htmlDetailPageKey`, handles gzip, builds cleaned plain text with Cheerio, and checks page completeness.
-2. `extractDetail`: pulls `job-ad-extractor` from LangSmith Hub (`langchain/hub/node`) and runs Gemini structured extraction with the Zod schema using listing context + detail text.
-   - `seniorityLevel` is inferred from whole ad context when not explicitly stated.
-3. `merge`: merges listing + detail into one Zod-validated structured document.
-
-`loadDetailPage` now includes a completeness gate. If the details page does not contain enough relevant ad content, the ad is skipped entirely.
-
-This is designed to be template-agnostic, so both jobs.cz detail pages and custom client pages can map into the same schema.
-Set `LOG_LEVEL=debug` to see per-step logs for file loading, LLM extraction, merge, and persistence.
-
-## Proposed Unified Schema Shape
-
-The final schema is defined in `src/schema.ts` as `unifiedJobAdSchema`.
-
-High-level shape:
-
-```ts
+```json
 {
-  id: string; // "${source}:${sourceId}"
-  source: string;
-  sourceId: string;
-  adUrl: string;
-  htmlDetailPageKey: string;
-  scrapedAt: string;
-  listing: {
-    jobTitle: string;
-    companyName: string | null;
-    locationText: string | null;
-    salaryText: string | null;
-    publishedInfoText: string | null;
-  };
-  detail: {
-    canonicalTitle: string | null;
-    seniorityLevel: "medior" | "senior" | "junior" | "absolvent" | null;
-    employmentTypes: ("full-time" | "part-time" | "contract" | "freelance" | "internship" | "temporary" | "other")[];
-    workModes: ("onsite" | "hybrid" | "remote" | "unknown")[];
-    locations: { city: string | null; region: string | null; country: string | null; addressText: string | null }[];
-    salary: {
-      min: number | null;
-      max: number | null;
-      currency: string | null;
-      period: "hour" | "day" | "month" | "year" | "project" | "unknown";
-      inferred: boolean;
-    };
-    languageRequirements: { language: string; level: string | null }[];
-    techStack: string[];
-    travelRequirements: string | null;
-    startDateText: string | null;
-    applicationDeadlineText: string | null;
-    applyUrl: string | null;
-    recruiterContacts: {
-      contactName: string | null;
-      contactEmail: string | null;
-      contactPhone: string | null;
-    };
-    responsibilities: string[];
-    requirements: string[];
-    niceToHave: string[];
-    benefits: string[];
-    hiringProcess: string[];
-    summary: string | null; // derived deterministically from extracted fields + listing context
-    jobDescription: string | null;
-    companyDescription: string | null;
-  };
-  rawDetailPage: {
-    text: string; // Cheerio-cleaned plain text from the details page (same source used for LLM input)
-    charCount: number; // stored text length (full cleaned text)
-    tokenCountApprox: number; // estimated as ceil(charCount / 4)
-    tokenCountMethod: "chars_div_4";
-  };
-  ingestion: {
-    runId: string; // shared run identifier for matching job docs to one run-summary document
-    datasetFileName: string;
-    datasetRecordIndex: number;
-    detailHtmlPath: string;
-    detailHtmlSha256: string;
-    extractorModel: string;
-    extractedAt: string;
-    parserVersion: string;
-    timeToProcssSeconds: number;
-    llmCallDurationSeconds: number;
-    llmInputTokens: number;
-    llmOutputTokens: number;
-    llmTotalTokens: number;
-    llmInputCostUsd: number;
-    llmOutputCostUsd: number;
-    llmTotalCostUsd: number;
-  };
+  "source": "jobs.cz",
+  "crawlRunId": "<crawl-run-id>"
 }
 ```
 
-## Environment
+The service resolves the actual local folder using:
 
-Copy `.env.example` to `.env` and configure:
+- `INPUT_ROOT_DIR`
+- `CRAWL_RUNS_SUBDIR`
+- `crawlRunId`
 
-- `LOG_LEVEL` for structured pino logs (`trace`, `debug`, `info`, `warn`, `error`, `fatal`, `silent`)
-- `LOG_PRETTY=true` to enable human-readable `pino-pretty` console logs in a TTY terminal (development/local use)
-- `GEMINI_API_KEY` for model access
-- `LANGSMITH_API_KEY` to authenticate prompt pulls from LangSmith Hub
-- `LANGSMITH_PROMPT_NAME` (default `job-ad-extractor`)
-- `GEMINI_MODEL` (default `gemini-3-flash-preview`)
-- `GEMINI_THINKING_LEVEL` (`LOW`, `MEDIUM`, `HIGH`) to control reasoning depth vs latency
-- `DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS` minimum required relevant text length for processing a detail page
-- `GEMINI_INPUT_PRICE_USD_PER_1M_TOKENS` and `GEMINI_OUTPUT_PRICE_USD_PER_1M_TOKENS` for cost estimation
-- `INGESTION_CONCURRENCY` to process multiple ads in parallel
-- `INGESTION_SAMPLE_SIZE` for cost-controlled test runs (positive integer, `all`, or empty/unset to process all records)
-- `ENABLE_MONGO_WRITE=true` + `MONGODB_URI` for Atlas persistence
-- `OUTPUT_JSON_PATH` for structured output file
-- `CRAWL_RUNS_SUBDIR` for crawl-run local handoff directories under `INPUT_ROOT_DIR` (default `runs`)
-- `INGESTION_API_HOST` and `INGESTION_API_PORT` for the Fastify ingestion trigger API
-- `MONGODB_JOBS_COLLECTION` for structured document output
-- `MONGODB_CRAWL_JOBS_COLLECTION` for crawler state cleanup of non-success ingestion records (MVP consistency fix)
-- `MONGODB_RUN_SUMMARIES_COLLECTION` for one summary document per ingestion run (linked via `runId`)
-- `MONGODB_INGESTION_TRIGGERS_COLLECTION` for idempotent ingestion trigger request state (`source + crawlRunId`)
+## Pipeline Architecture (LangGraph)
 
-Default token pricing currently reflects Gemini 3 Flash preview text pricing from Google AI pricing docs.
-`rawDetailPage.tokenCountApprox` is a local approximation (`ceil(charCount / 4)`) for quick sizing/cost heuristics.
-Detail-page plain text truncation is currently disabled; the full Cheerio-cleaned text is stored and sent downstream.
+Defined in `src/job-parsing-graph.ts`.
 
-When Mongo persistence is enabled, each run writes:
+Current graph nodes:
 
-- job documents to `MONGODB_JOBS_COLLECTION` with `ingestion.runId`
-- one run-summary document to `MONGODB_RUN_SUMMARIES_COLLECTION` with the same `runId`
-  - includes `jobsTotal`, success/non-success rates, `skippedIncompleteJobs[]`, and `failedJobs[]` for audit/debugging
-- crawler-state cleanup in `MONGODB_CRAWL_JOBS_COLLECTION`
-  - removes skipped/failed jobs from crawl state so the next crawl retries them
+1. `loadDetailPage`
+   - reads detail HTML from disk
+   - handles plain HTML and gzip-compressed HTML
+   - parses HTML with Cheerio
+   - extracts plain text and validates completeness
+   - returns metadata (hash, bytes, text content)
 
-## Run
+2. `extractDetail`
+   - pulls LangSmith prompt `job-ad-extractor`
+   - calls Gemini structured output with Zod schema
+   - applies normalization and deterministic overrides
+   - derives `summary` deterministically from structured fields (not creative free-form summary generation)
 
-CLI (existing batch mode):
+3. `merge`
+   - merges listing + extracted detail + ingestion metadata
+   - validates final `unifiedJobAdSchema`
 
-```bash
-pnpm -C apps/jobs-ingestion-service dev
-```
+## Completeness Gate (Important)
 
-Fastify API (idempotent crawl-run trigger endpoint):
+The service skips pages that look incomplete or non-job pages.
 
-```bash
-pnpm -C apps/jobs-ingestion-service dev-server
-```
+Current strategy (stabilized for custom employer templates):
 
-Start endpoint:
+- **Structural-first validation**:
+  - if a primary job-content container exists (for example `.cp-detail__content` or `#capybara-position-detail`) and contains enough text, the page is considered complete
+- **Fallback heuristic**:
+  - older keyword/noise signal heuristics are retained for unknown templates
+
+This avoids false negatives on Alma Career / Capybara custom employer pages where valid content exists but page-wide cookie/legal/footer text previously dominated the heuristic.
+
+Skipped pages are recorded in run summaries with listing metadata and quality signals.
+
+## Output: Normalized Job Document
+
+Final schema is `unifiedJobAdSchema` in `src/schema.ts`.
+
+Key top-level sections:
+
+- `listing`: list-page snapshot
+- `detail`: normalized extracted detail fields
+- `rawDetailPage`: Cheerio-cleaned text used for extraction (and token estimate)
+- `ingestion`: run metadata, HTML hash/path, timing, token usage, costs, parser version
+
+Primary Mongo collection (default):
+
+- `normalized_job_ads`
+
+## MongoDB Collections (Current Defaults)
+
+Configured in `src/app.ts` / `src/server.ts` and `.env`.
+
+- `normalized_job_ads`
+  - normalized structured output documents
+- `ingestion_run_summaries`
+  - one document per ingestion run
+- `ingestion_trigger_requests`
+  - idempotent trigger lifecycle (`source + crawlRunId`)
+- `crawl_job_states`
+  - crawler state collection (used here only for cleanup/pruning non-success ingestion records)
+
+### Why `crawl_job_states` is touched here
+
+MVP consistency fix:
+
+- if ingestion skips or fails a job, this service removes that job from `crawl_job_states`
+- next crawler run can then re-fetch and retry it
+
+This keeps crawler state aligned with practically usable normalized output, without adding ingestion lifecycle state to `crawl_job_states`.
+
+## Run Summaries (Observability)
+
+`ingestion_run_summaries` now includes:
+
+- totals and rates:
+  - `jobsTotal`
+  - `jobsProcessed`
+  - `jobsSkippedIncomplete`
+  - `jobsFailed`
+  - `jobsNonSuccess`
+  - success/non-success/skipped/failed rates
+- audit arrays:
+  - `skippedIncompleteJobs[]`
+  - `failedJobs[]`
+
+These arrays include listing metadata (title/company/url/etc.) so skipped/failed jobs can be investigated without relying on logs.
+
+## Idempotent Ingestion Trigger API
+
+Implemented in `src/server.ts`.
+
+### Endpoint
 
 - `POST /ingestion/start`
-- body: `{ "source": "jobs.cz", "crawlRunId": "<crawl-run-id>" }`
-- behavior: idempotent by `source + crawlRunId`
-- input source (MVP): local crawl artifacts in `INPUT_ROOT_DIR/<CRAWL_RUNS_SUBDIR>/<crawlRunId>/`
-  - expected files: `dataset.json` and `records/*.html`
 
-Trigger states are persisted to `MONGODB_INGESTION_TRIGGERS_COLLECTION` and return `running`, `succeeded`, `completed_with_errors`, or `failed`.
+Request body:
 
-## Validate
+```json
+{
+  "source": "jobs.cz",
+  "crawlRunId": "<crawlRunId>"
+}
+```
+
+Behavior:
+
+- idempotent by `source + crawlRunId`
+- duplicate requests do not start duplicate runs
+- trigger request state persisted in `ingestion_trigger_requests`
+- run executes in background after acceptance
+
+Statuses:
+
+- `pending`
+- `running`
+- `succeeded`
+- `completed_with_errors`
+- `failed`
+
+### Health Endpoint
+
+- `GET /health`
+
+## Environment (`.env`)
+
+Copy `apps/jobs-ingestion-service/.env.example` to `.env`.
+
+Core runtime/env groups:
+
+### Logging
+
+- `LOG_LEVEL`
+- `LOG_PRETTY`
+
+### Input / local handoff
+
+- `INPUT_ROOT_DIR` (default `scrapped_jobs`)
+- `INPUT_RECORDS_DIR_NAME` (default `records`)
+- `CRAWL_RUNS_SUBDIR` (default `runs`)
+
+### Ingestion execution controls
+
+- `INGESTION_SAMPLE_SIZE` (integer, `all`, or unset)
+- `INGESTION_CONCURRENCY`
+
+### LLM / extraction
+
+- `GEMINI_API_KEY`
+- `LANGSMITH_API_KEY`
+- `LANGSMITH_PROMPT_NAME` (default `job-ad-extractor`)
+- `GEMINI_MODEL`
+- `GEMINI_TEMPERATURE`
+- `GEMINI_THINKING_LEVEL`
+- `DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS`
+- token pricing envs for cost estimation
+
+### Ingestion API server
+
+- `INGESTION_API_HOST`
+- `INGESTION_API_PORT`
+
+### MongoDB
+
+- `ENABLE_MONGO_WRITE`
+- `MONGODB_URI`
+- `MONGODB_DB_NAME`
+- `MONGODB_JOBS_COLLECTION` (default `normalized_job_ads`)
+- `MONGODB_CRAWL_JOBS_COLLECTION` (default `crawl_job_states`)
+- `MONGODB_RUN_SUMMARIES_COLLECTION` (default `ingestion_run_summaries`)
+- `MONGODB_INGESTION_TRIGGERS_COLLECTION` (default `ingestion_trigger_requests`)
+
+### Parser metadata
+
+- `PARSER_VERSION` (current default `jobs-ingestion-service-v0.7.0`)
+
+## Run Modes
+
+### 1. Batch CLI Ingestion (direct)
+
+```bash
+pnpm -C apps/jobs-ingestion-service build
+pnpm -C apps/jobs-ingestion-service start
+```
+
+This runs ingestion from the configured `INPUT_ROOT_DIR` and writes JSON output.
+
+### 2. Fastify Trigger API (recommended for crawler handoff)
+
+```bash
+pnpm -C apps/jobs-ingestion-service build
+pnpm -C apps/jobs-ingestion-service start-server
+```
+
+Then trigger with:
+
+```bash
+curl -X POST http://127.0.0.1:3010/ingestion/start \
+  -H 'content-type: application/json' \
+  -d '{"source":"jobs.cz","crawlRunId":"<crawlRunId>"}'
+```
+
+## One-off Maintenance Command
+
+Align crawler state with normalized output (removes orphaned crawler-state docs):
+
+```bash
+pnpm -C apps/jobs-ingestion-service build
+pnpm -C apps/jobs-ingestion-service run align-crawl-state
+```
+
+## Local Pipeline Run Order (MVP)
+
+1. Start ingestion API server
+2. Run crawler actor
+3. Crawler writes local shared run artifacts
+4. Crawler triggers `/ingestion/start`
+5. Ingestion processes that exact crawl run folder idempotently
+
+## Validation Commands
 
 ```bash
 pnpm -C apps/jobs-ingestion-service lint
@@ -174,9 +277,36 @@ pnpm -C apps/jobs-ingestion-service check-types
 pnpm -C apps/jobs-ingestion-service build
 ```
 
-One-off maintenance (keeps crawl state aligned with normalized output):
+## Troubleshooting
 
-```bash
-pnpm -C apps/jobs-ingestion-service build
-pnpm -C apps/jobs-ingestion-service run align-crawl-state
-```
+### `EADDRINUSE` on ingestion API startup
+
+Port is already in use.
+
+- Change `INGESTION_API_PORT`, or
+- stop the existing process (`lsof -nP -iTCP:<port> -sTCP:LISTEN`)
+
+Startup now fails fast on port conflicts.
+
+### Trigger accepted but no ingestion result appears
+
+Check:
+
+- ingestion server logs (`start-server` process)
+- `ingestion_trigger_requests` status for the `crawlRunId`
+- local run directory exists under `scrapped_jobs/runs/<crawlRunId>/`
+
+### High `jobsSkippedIncomplete`
+
+Inspect:
+
+- `ingestion_run_summaries.skippedIncompleteJobs[]`
+- `detailHtmlPath` and `qualitySignals`
+
+This usually indicates a completeness-gate false negative or a new page template pattern.
+
+## Related Docs
+
+- Detailed ingestion spec: `docs/specs/jobs-ingestion-service.md`
+- Crawler/ingestion MVP design: `docs/specs/incremental-crawler-ingestion-monolith.md`
+- App changelog: `apps/jobs-ingestion-service/CHANGELOG.md`
