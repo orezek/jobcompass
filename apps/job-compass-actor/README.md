@@ -72,7 +72,7 @@ Optional MongoDB sink for run summaries (best effort; crawler still succeeds if 
 - `ENABLE_MONGO_RUN_SUMMARY_WRITE=true`
 - `MONGODB_URI=...`
 - `MONGODB_DB_NAME=jobCompass` (default)
-- `MONGODB_CRAWL_RUN_SUMMARIES_COLLECTION=crawlRunSummaryCollection` (default)
+- `MONGODB_CRAWL_RUN_SUMMARIES_COLLECTION=crawl_run_summaries` (default)
 
 Optional ingestion trigger (best effort; runs after crawl finalization for `succeeded` and
 `completed_with_errors`):

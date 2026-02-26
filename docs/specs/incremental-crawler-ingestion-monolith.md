@@ -49,7 +49,7 @@ Owns:
 - Fastify ingestion trigger endpoint (`POST /ingestion/start`)
 - idempotent ingestion start behavior
 - parsing/extraction pipeline
-- normalized output persistence (`ingestionCollection`)
+- normalized output persistence (`normalized_job_ads`)
 - ingestion run summary
 
 ## High-Level Design
@@ -89,7 +89,7 @@ Future improvement (explicitly deferred):
 
 The crawler needs persistent memory independent of ingestion/parser success.
 
-If crawler dedupe used only `ingestionCollection`, then jobs would be treated as `new` again when:
+If crawler dedupe used only `normalized_job_ads`, then jobs would be treated as `new` again when:
 
 - crawl succeeded but ingestion has not run yet
 - ingestion failed
@@ -107,7 +107,7 @@ The crawler state collection is the crawler's own source of truth for:
 
 ### 1) Crawler State Collection (new)
 
-Proposed name: `crawlJobsCollection`
+Proposed name: `crawl_job_states`
 
 Purpose: incremental crawl state and crawl-owned metadata.
 
@@ -157,11 +157,11 @@ Notes:
 
 Keep using the existing crawl run summary collection (Mongo + KV summary).
 
-This collection remains run-level, while `crawlJobsCollection` is job-level state.
+This collection remains run-level, while `crawl_job_states` is job-level state.
 
 ## Required Indexes
 
-For `crawlJobsCollection`:
+For `crawl_job_states`:
 
 - Unique index on `{ source: 1, sourceId: 1 }`
 - Index on `{ source: 1, isActive: 1 }`
@@ -187,7 +187,7 @@ Output of this phase:
 - `listingRecords[]`
 - `seenSourceIds`
 
-### Phase 2: Reconciliation (against `crawlJobsCollection`)
+### Phase 2: Reconciliation (against `crawl_job_states`)
 
 For each listing record:
 
@@ -216,7 +216,7 @@ Counters updated:
 - Consume internal queue of `new` jobs
 - Run existing robust detail fetch/render logic
 - Save HTML dump + detail metadata (existing behavior)
-- Update `crawlJobsCollection` doc for that job with detail metadata
+- Update `crawl_job_states` doc for that job with detail metadata
 
 On success:
 
@@ -236,7 +236,7 @@ Precondition:
 
 Action:
 
-- Mark inactive any `crawlJobsCollection` docs for `source = jobs.cz` where:
+- Mark inactive any `crawl_job_states` docs for `source = jobs.cz` where:
   - `isActive == true`
   - `lastSeenRunId != crawlRunId`
 
@@ -281,7 +281,7 @@ Rationale:
 
 No artifact URI contract yet in MVP.
 
-Ingestion service will read required records from Mongo (`crawlJobsCollection`) using `crawlRunId` and read raw files from the local shared directory (env-configurable base path, defaulting to `apps/job-ingestion-service/scrapped_jobs/`).
+Ingestion service will read required records from Mongo (`crawl_job_states`) using `crawlRunId` and read raw files from the local shared directory (env-configurable base path, defaulting to `apps/job-ingestion-service/scrapped_jobs/`).
 
 ## Ingestion Idempotency Requirements
 
@@ -312,7 +312,7 @@ Crawler (`job-compass-actor`) owns:
 
 - discovery (list pages)
 - detail HTML dump capture
-- crawl state (`crawlJobsCollection`)
+- crawl state (`crawl_job_states`)
 - crawl run summary
 
 Ingestion (`job-ingestion-service`) owns:
@@ -391,17 +391,17 @@ These are low-complexity additions that materially improve reliability without c
 
 6. Index creation on startup (idempotent)
 
-- Ensure required `crawlJobsCollection` indexes exist automatically.
+- Ensure required `crawl_job_states` indexes exist automatically.
 - This avoids hidden performance issues and duplicate-key surprises later.
 
 ## Open Questions (for agreement)
 
-1. Should `crawlJobsCollection` include an `ingestionStatus` subdocument in MVP, or keep ingestion state fully separate?
+1. Should `crawl_job_states` include an `ingestionStatus` subdocument in MVP, or keep ingestion state fully separate?
 2. Do we want to store `inactiveAt` now, or add it later?
 
 ## Proposed MVP Implementation Order
 
-1. Add `crawlJobsCollection` repository and indexes
+1. Add `crawl_job_states` repository and indexes
 2. Implement list reconciliation + `new/existing` classification
 3. Restrict detail fetch to `new` jobs only
 4. Add inactive finalization (safe guard: only after successful list crawl)
