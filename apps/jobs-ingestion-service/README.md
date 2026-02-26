@@ -137,6 +137,7 @@ When Mongo persistence is enabled, each run writes:
 
 - job documents to `MONGODB_JOBS_COLLECTION` with `ingestion.runId`
 - one run-summary document to `MONGODB_RUN_SUMMARIES_COLLECTION` with the same `runId`
+  - includes `jobsSkippedIncomplete` and `skippedIncompleteJobs[]` (listing metadata + skip reason) for audit/debugging
 
 ## Run
 

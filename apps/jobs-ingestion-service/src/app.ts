@@ -12,7 +12,7 @@ import { LocalScrapedJobsInputProvider } from './input-provider.js';
 import { JobParsingGraph } from './job-parsing-graph.js';
 import { createLogger } from './logger.js';
 import { writeOutputToFile, writeOutputToMongo } from './repository.js';
-import type { UnifiedJobAd } from './schema.js';
+import { sourceListingRecordSchema, type UnifiedJobAd } from './schema.js';
 
 const toOptionalPositiveInt = z.preprocess((value) => {
   if (value === undefined || value === null || value === '') {
@@ -102,6 +102,27 @@ type ParseRunStats = {
   totalEstimatedCostUsd: number;
 };
 
+const detailPageQualitySignalsSchema = z.object({
+  plainTextChars: z.number().int().nonnegative(),
+  plainTextWords: z.number().int().nonnegative(),
+  detailSignalHits: z.number().int().nonnegative(),
+  noiseSignalHits: z.number().int().nonnegative(),
+});
+
+const skippedIncompleteJobSchema = z.object({
+  sourceId: z.string(),
+  source: z.string(),
+  datasetFileName: z.string(),
+  datasetRecordIndex: z.number().int().nonnegative(),
+  detailHtmlPath: z.string(),
+  htmlDetailPageKey: z.string(),
+  reason: z.string(),
+  qualitySignals: detailPageQualitySignalsSchema,
+  listing: sourceListingRecordSchema,
+});
+
+type SkippedIncompleteJob = z.infer<typeof skippedIncompleteJobSchema>;
+
 const ingestionRunSummarySchema = z.object({
   id: z.string(),
   runId: z.string(),
@@ -115,6 +136,7 @@ const ingestionRunSummarySchema = z.object({
   concurrency: z.number().int().positive(),
   jobsProcessed: z.number().int().nonnegative(),
   jobsSkippedIncomplete: z.number().int().nonnegative(),
+  skippedIncompleteJobs: z.array(skippedIncompleteJobSchema),
   jobsFailed: z.number().int().nonnegative(),
   mongoWritesStructured: z.number().int().nonnegative(),
   totalInputTokens: z.number().int().nonnegative(),
@@ -193,6 +215,7 @@ const buildRunSummaryDocument = (input: {
   stats: ParseRunStats;
   structuredParsed: UnifiedJobAd[];
   skippedIncomplete: number;
+  skippedIncompleteJobs: SkippedIncompleteJob[];
   failed: number;
   mongoWritesStructured: number;
   workerCount: number;
@@ -211,6 +234,7 @@ const buildRunSummaryDocument = (input: {
     concurrency: input.workerCount,
     jobsProcessed: input.structuredParsed.length,
     jobsSkippedIncomplete: input.skippedIncomplete,
+    skippedIncompleteJobs: input.skippedIncompleteJobs,
     jobsFailed: input.failed,
     mongoWritesStructured: input.mongoWritesStructured,
     totalInputTokens: input.stats.totalInputTokens,
@@ -236,6 +260,7 @@ const parseRecords = async (
   structuredParsed: UnifiedJobAd[];
   failed: number;
   skippedIncomplete: number;
+  skippedIncompleteJobs: SkippedIncompleteJob[];
   stats: ParseRunStats;
   workerCount: number;
 }> => {
@@ -282,6 +307,7 @@ const parseRecords = async (
   const parsedByIndex: Array<UnifiedJobAd | null> = new Array(inputRecords.length).fill(null);
   let failed = 0;
   let skippedIncomplete = 0;
+  const skippedIncompleteJobs: SkippedIncompleteJob[] = [];
   let nextIndex = 0;
 
   logger.info(
@@ -317,6 +343,19 @@ const parseRecords = async (
       } catch (error) {
         if (error instanceof IncompleteDetailPageError) {
           skippedIncomplete += 1;
+          skippedIncompleteJobs.push(
+            skippedIncompleteJobSchema.parse({
+              sourceId: inputRecord.listingRecord.sourceId,
+              source: inputRecord.listingRecord.source,
+              datasetFileName: inputRecord.datasetFileName,
+              datasetRecordIndex: inputRecord.datasetRecordIndex,
+              detailHtmlPath: inputRecord.detailHtmlPath,
+              htmlDetailPageKey: inputRecord.listingRecord.htmlDetailPageKey,
+              reason: error.message,
+              qualitySignals: error.qualitySignals,
+              listing: inputRecord.listingRecord,
+            }),
+          );
           logger.warn(
             {
               sourceId: inputRecord.listingRecord.sourceId,
@@ -349,7 +388,7 @@ const parseRecords = async (
   const structuredParsed = parsedByIndex.filter((item): item is UnifiedJobAd => item !== null);
   const stats = buildRunStats(structuredParsed);
 
-  return { structuredParsed, failed, skippedIncomplete, stats, workerCount };
+  return { structuredParsed, failed, skippedIncomplete, skippedIncompleteJobs, stats, workerCount };
 };
 
 export type IngestionRunStatus = 'succeeded' | 'completed_with_errors';
@@ -369,6 +408,7 @@ export type RunIngestionWorkflowResult = {
   structuredParsed: UnifiedJobAd[];
   failed: number;
   skippedIncomplete: number;
+  skippedIncompleteJobs: SkippedIncompleteJob[];
   stats: ParseRunStats;
   workerCount: number;
   outputJsonPath: string;
@@ -412,12 +452,13 @@ export const runIngestionWorkflow = async (
   );
 
   const startedAt = performance.now();
-  const { structuredParsed, failed, skippedIncomplete, stats, workerCount } = await parseRecords({
-    runId,
-    inputRootDir: resolvedInputRootDir,
-    recordsDirName: resolvedRecordsDirName,
-    sampleSize: resolvedSampleSize,
-  });
+  const { structuredParsed, failed, skippedIncomplete, skippedIncompleteJobs, stats, workerCount } =
+    await parseRecords({
+      runId,
+      inputRootDir: resolvedInputRootDir,
+      recordsDirName: resolvedRecordsDirName,
+      sampleSize: resolvedSampleSize,
+    });
 
   await writeOutputToFile(
     resolvedOutputJsonPath,
@@ -453,6 +494,7 @@ export const runIngestionWorkflow = async (
     stats,
     structuredParsed,
     skippedIncomplete,
+    skippedIncompleteJobs,
     failed,
     mongoWritesStructured: mongoWrittenStructured,
     workerCount,
@@ -518,6 +560,7 @@ export const runIngestionWorkflow = async (
     structuredParsed,
     failed,
     skippedIncomplete,
+    skippedIncompleteJobs,
     stats,
     workerCount,
     outputJsonPath: resolvedOutputJsonPath,
