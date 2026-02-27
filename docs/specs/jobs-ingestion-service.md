@@ -94,7 +94,7 @@ Responsibilities:
 
 - pull LangSmith Hub prompt (`LANGSMITH_CLEANER_PROMPT_NAME`, default `ad-cleaner-job-compass`)
 - pass `textContent` as prompt input
-- return cleaned text output used only for LLM extraction input
+- return cleaned text output used for LLM extraction input and persisted to output
 
 ### Node 3: `extractDetail`
 
@@ -111,8 +111,27 @@ Responsibilities:
 Responsibilities:
 
 - merge listing snapshot + extracted detail + ingestion metadata
-- attach `rawDetailPage` (cleaned text + token estimate)
+- attach `rawDetailPage` (LLM-cleaned text + token estimate)
 - validate final `unifiedJobAdSchema`
+
+## Text Transformation Mapping (Source -> Stored Fields)
+
+1. Step 1 (`loadDetailPage`)
+   - source: raw HTML dump (`records/*.html`)
+   - output: static-cleaned text (`loadedDetailPage.textContent`)
+2. Step 2 (`cleanDetailText`)
+   - source: step-1 text
+   - output: LLM-cleaned text (`cleanedDetailText`)
+3. Step 3 (`extractDetail`)
+   - source: step-2 text
+   - output: structured detail object (`detail`)
+
+Persistence contract:
+
+- Raw HTML dump remains the audit/reprocessing source of truth in filesystem artifacts.
+- `normalized_job_ads.rawDetailPage.text` stores step-2 LLM-cleaned text.
+- `normalized_job_ads.detail` stores step-3 structured extraction output.
+- Step-1 static-cleaned text is transient (not persisted as a separate field).
 
 ## Completeness Gate (Current Strategy)
 

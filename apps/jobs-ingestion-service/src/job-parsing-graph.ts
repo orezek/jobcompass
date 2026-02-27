@@ -14,6 +14,8 @@ type JobParsingGraphConfig = {
   textCleaner: GeminiDetailTextCleaner;
   extractor: GeminiJobDetailExtractor;
   minRelevantTextChars: number;
+  logTextTransformContent: boolean;
+  textTransformPreviewChars: number;
   parserVersion: string;
   runId: string;
   crawlRunId: string | null;
@@ -32,6 +34,9 @@ const JobParsingGraphState = Annotation.Root({
 type JobParsingGraphStateType = typeof JobParsingGraphState.State;
 
 const approximateTokenCountFromChars = (charCount: number): number => Math.ceil(charCount / 4);
+
+const toTextPreview = (text: string, maxChars: number): string =>
+  text.length <= maxChars ? text : `${text.slice(0, maxChars)} ...[truncated]`;
 
 const buildDocument = (
   state: JobParsingGraphStateType,
@@ -60,9 +65,10 @@ const buildDocument = (
     },
     detail: extractedDetail,
     rawDetailPage: {
-      text: loadedDetailPage.textContent,
-      charCount: loadedDetailPage.textContentChars,
-      tokenCountApprox: approximateTokenCountFromChars(loadedDetailPage.textContentChars),
+      // Persist step-3 cleaned text to enable cheaper reprocessing without re-running cleaner.
+      text: state.cleanedDetailText,
+      charCount: state.cleanedDetailText.length,
+      tokenCountApprox: approximateTokenCountFromChars(state.cleanedDetailText.length),
       tokenCountMethod: 'chars_div_4',
     },
     ingestion: {
@@ -115,12 +121,42 @@ export class JobParsingGraph {
         'Loaded detail HTML file',
       );
 
+      if (config.logTextTransformContent) {
+        this.logger.info(
+          {
+            sourceId: state.inputRecord.listingRecord.sourceId,
+            stage: 'loadDetailPage',
+            textContentChars: loadedDetailPage.textContentChars,
+            textContentPreview: toTextPreview(
+              loadedDetailPage.textContent,
+              config.textTransformPreviewChars,
+            ),
+          },
+          'Text transform trace',
+        );
+      }
+
       return { loadedDetailPage };
     };
 
     const extractDetailNode = async (
       state: JobParsingGraphStateType,
     ): Promise<Pick<JobParsingGraphStateType, 'extractedDetail' | 'extractionTelemetry'>> => {
+      if (config.logTextTransformContent) {
+        this.logger.info(
+          {
+            sourceId: state.inputRecord.listingRecord.sourceId,
+            stage: 'extractDetail_input',
+            cleanedDetailTextChars: state.cleanedDetailText.length,
+            cleanedDetailTextPreview: toTextPreview(
+              state.cleanedDetailText,
+              config.textTransformPreviewChars,
+            ),
+          },
+          'Text transform trace',
+        );
+      }
+
       const extractionResult = await config.extractor.extractFromDetailPage(
         state.inputRecord.listingRecord,
         state.cleanedDetailText,
@@ -159,6 +195,23 @@ export class JobParsingGraph {
         },
         'Cleaned detail text before extraction',
       );
+
+      if (config.logTextTransformContent) {
+        this.logger.info(
+          {
+            sourceId: state.inputRecord.listingRecord.sourceId,
+            stage: 'cleanDetailText',
+            beforeChars: state.loadedDetailPage.textContentChars,
+            afterChars: cleanedDetailText.length,
+            beforePreview: toTextPreview(
+              state.loadedDetailPage.textContent,
+              config.textTransformPreviewChars,
+            ),
+            afterPreview: toTextPreview(cleanedDetailText, config.textTransformPreviewChars),
+          },
+          'Text transform trace',
+        );
+      }
 
       return { cleanedDetailText };
     };

@@ -81,7 +81,7 @@ These instructions are app-local extensions of the repository root rules.
 - `cleanDetailText` is LLM-based and performs:
   - LangSmith prompt-driven text cleanup (`ad-cleaner-job-compass`)
   - removal of UI/cookie/GDPR/legal noise before extraction
-  - produces cleaned text only for extraction input (does not overwrite stored `rawDetailPage.text`)
+  - produces cleaned text for extraction input and persists it as `rawDetailPage.text`
 - The structured extraction is performed downstream in the LangGraph pipeline.
 
 ## Detail Page Completeness Gate (Important)
@@ -94,8 +94,9 @@ These instructions are app-local extensions of the repository root rules.
 
 ## Raw Text Quality Rule (Current MVP)
 
-- Keep only one processed text copy in the pipeline output (`textContent`) plus raw HTML dump.
-- When a valid primary job content container exists, `textContent` uses the primary container text (not whole-body merged text) to reduce cookie/legal/footer noise.
+- Keep only one processed text copy in the persisted output (`rawDetailPage.text`) plus raw HTML dump.
+- `rawDetailPage.text` stores the LLM-cleaned text (step 3 input).
+- When a valid primary job content container exists, step-1 `textContent` uses the primary container text (not whole-body merged text) before cleaner runs.
 - `rawHtml` remains the audit/reprocessing source of truth.
 
 ## Mongo Collection Responsibilities (Current Naming)

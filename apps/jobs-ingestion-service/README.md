@@ -62,8 +62,8 @@ Current graph nodes:
 2. `cleanDetailText`
    - pulls LangSmith prompt `ad-cleaner-job-compass`
    - cleans `textContent` (UI/GDPR/cookie/legal noise removal)
-   - feeds cleaned text to extraction node only
-   - does not overwrite `rawDetailPage.text` in final document
+   - feeds cleaned text to extraction node
+   - cleaned text is persisted to `rawDetailPage.text` in final document
 
 3. `extractDetail`
    - pulls LangSmith prompt `job-ad-extractor`
@@ -99,8 +99,31 @@ Key top-level sections:
 - `crawlRunId`: crawler run identifier for traceability (`null` when unknown in generic CLI batch mode)
 - `listing`: list-page snapshot
 - `detail`: normalized extracted detail fields
-- `rawDetailPage`: Cheerio-cleaned text used for extraction (and token estimate)
+- `rawDetailPage`: LLM-cleaned text used for extraction (and token estimate)
 - `ingestion`: run metadata, HTML hash/path, timing, token usage, costs, parser version
+
+### Text Transformation Steps & Field Mapping
+
+1. Step 1 (`loadDetailPage`)
+   - input: raw HTML dump file
+   - output: static-cleaned extracted text (`loadedDetailPage.textContent`)
+2. Step 2 (`cleanDetailText`)
+   - input: `loadedDetailPage.textContent`
+   - output: LLM-cleaned text (`cleanedDetailText`)
+3. Step 3 (`extractDetail`)
+   - input: `cleanedDetailText`
+   - output: structured `detail`
+
+Persistence mapping:
+
+- raw HTML source of truth:
+  - file in `scrapped_jobs/runs/<crawlRunId>/records/*.html`
+- static-cleaned text (step 1):
+  - transient in graph state (`loadedDetailPage.textContent`)
+- LLM-cleaned text (step 2):
+  - persisted to `normalized_job_ads.rawDetailPage.text`
+- structured extraction result (step 3):
+  - persisted to `normalized_job_ads.detail`
 
 Primary Mongo collection (default):
 
@@ -191,6 +214,8 @@ Core runtime/env groups:
 
 - `LOG_LEVEL`
 - `LOG_PRETTY`
+- `LOG_TEXT_TRANSFORM_CONTENT` (set `true` to log text previews at each stage)
+- `LOG_TEXT_TRANSFORM_PREVIEW_CHARS` (max chars for each preview log entry)
 
 ### Input / local handoff
 
