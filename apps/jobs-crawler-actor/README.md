@@ -33,6 +33,21 @@ Not owned by this app:
 - Unified normalized schema generation
 - `normalized_job_ads` writes (done by `jobs-ingestion-service`)
 
+## Codebase Structure (Current)
+
+- `src/main.ts`
+  - Run orchestration, crawler lifecycle, phase transitions, counters, and run summary emission.
+- `src/detail-rendering.ts`
+  - Detail-page render detection and readiness waits for template variants (`jobscz-template`, `widget`, `vacancy-detail`).
+- `src/listing-card-parser.ts`
+  - List-card field extraction and normalization from list pages.
+- `src/crawl-state.ts`
+  - MongoDB crawl-state repository, reconciliation, inactivation guards, and detail snapshot persistence.
+- `src/local-shared-output.ts`
+  - Shared local artifact pathing and file writes for crawler -> ingestion handoff.
+- `src/env-setup.ts`
+  - Typed environment loading and validation.
+
 ## Runtime Modes
 
 ### 1. Apify Actor Mode (native actor behavior)

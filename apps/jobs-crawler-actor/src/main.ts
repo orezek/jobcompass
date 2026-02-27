@@ -3,7 +3,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { PlaywrightCrawler, Dataset, createPlaywrightRouter, log, type LogLevel } from 'crawlee';
-import type { Locator } from 'playwright';
 import { Actor, type ProxyConfigurationOptions } from 'apify';
 import { MongoClient } from 'mongodb';
 import { envs } from './env-setup.js';
@@ -19,6 +18,12 @@ import {
   writeSharedDetailHtml,
   type SharedRunOutputPaths,
 } from './local-shared-output.js';
+import {
+  waitForDetailRenderReadiness,
+  type DetailRenderSignal,
+  type DetailRenderType,
+} from './detail-rendering.js';
+import { extractListingFromCard } from './listing-card-parser.js';
 
 // ------------------ 1. Definition of Schemas & Types ------------------ //
 
@@ -143,9 +148,6 @@ function parseListingResultsCount(input: string): { rawText: string; count: numb
 function normalizeUrlForComparison(value: string): string {
   return new URL(value).toString();
 }
-
-type DetailRenderType = z.infer<typeof internalJobAdSchema>['detailRenderType'];
-type DetailRenderSignal = z.infer<typeof internalJobAdSchema>['detailRenderSignal'];
 
 type SeedListSummary = {
   startUrl: string;
@@ -377,15 +379,7 @@ async function triggerIngestionStartBestEffort(
 }
 
 const JOB_CARD_SELECTOR = 'article.SearchResultCard, article[data-jobad-id]';
-const SALARY_SELECTOR = 'span.Tag--success, [data-test="serp-salary"]';
 const NEXT_PAGE_SELECTOR = '.Pagination__button--next, [data-test="pagination-next"]';
-const DETAIL_WIDGET_CONTAINER_SELECTOR = '#widget_container';
-const DETAIL_VACANCY_CONTAINER_SELECTOR = '#vacancy-detail';
-const DETAIL_VACANCY_LOADER_SELECTOR = '#vacancy-detail .cp-loader';
-const DETAIL_WIDGET_RENDER_TIMEOUT_MS = 15_000;
-const DETAIL_WIDGET_MIN_TEXT_CHARS = 200;
-const DETAIL_VACANCY_RENDER_TIMEOUT_MS = 15_000;
-const DETAIL_VACANCY_MIN_TEXT_CHARS = 200;
 
 // ------------------ 2. Router & Handler Logic ------------------ //
 
@@ -440,109 +434,6 @@ const sharedDatasetRecords: z.infer<typeof internalJobAdSchema>[] = [];
 const detailSnapshotsForState: CrawlDetailSnapshot[] = [];
 let sharedRunOutputPaths: SharedRunOutputPaths | null = null;
 
-const isCareerWidgetHostedDetailPage = async (page: { evaluate<T>(fn: () => T): Promise<T> }) =>
-  page.evaluate(() => {
-    const widgetContainer = document.querySelector('#widget_container');
-    if (!widgetContainer) {
-      return false;
-    }
-
-    return Array.from(document.scripts).some((script) =>
-      (script.textContent ?? '').includes('__LMC_CAREER_WIDGET__'),
-    );
-  });
-
-const getWidgetContainerTextChars = async (page: {
-  evaluate<T>(fn: () => T): Promise<T>;
-}): Promise<number> =>
-  page.evaluate(() => {
-    const widgetContainer = document.querySelector('#widget_container');
-    if (!widgetContainer) {
-      return 0;
-    }
-
-    return (widgetContainer.textContent ?? '').replace(/\s+/g, ' ').trim().length;
-  });
-
-const isVacancyDetailLoaderPage = async (page: { evaluate<T>(fn: () => T): Promise<T> }) =>
-  page.evaluate(() => {
-    const vacancyDetail = document.querySelector('#vacancy-detail');
-    if (!vacancyDetail) {
-      return false;
-    }
-
-    const hasLoader = vacancyDetail.querySelector('.cp-loader') !== null;
-    const hasDataAssets = vacancyDetail.hasAttribute('data-assets');
-    return hasLoader || hasDataAssets;
-  });
-
-const getVacancyDetailTextChars = async (page: {
-  evaluate<T>(fn: () => T): Promise<T>;
-}): Promise<number> =>
-  page.evaluate(() => {
-    const vacancyDetail = document.querySelector('#vacancy-detail');
-    if (!vacancyDetail) {
-      return 0;
-    }
-
-    return (vacancyDetail.textContent ?? '').replace(/\s+/g, ' ').trim().length;
-  });
-
-const getVacancyDetailReadinessSignals = async (page: {
-  evaluate<T>(fn: () => T): Promise<T>;
-}): Promise<{
-  vacancyTextChars: number;
-  hasPrimaryContentMarkers: boolean;
-  hasBlockingLoader: boolean;
-}> =>
-  page.evaluate(() => {
-    const vacancyDetail = document.querySelector('#vacancy-detail');
-    if (!vacancyDetail) {
-      return {
-        vacancyTextChars: 0,
-        hasPrimaryContentMarkers: false,
-        hasBlockingLoader: false,
-      };
-    }
-
-    const vacancyTextChars = (vacancyDetail.textContent ?? '').replace(/\s+/g, ' ').trim().length;
-    const hasPrimaryContentMarkers =
-      vacancyDetail.querySelector('.hero__title') !== null &&
-      vacancyDetail.querySelector('.cp-detail__content') !== null;
-
-    // Some career pages keep loaders for secondary widgets (e.g. "Similar vacancies")
-    // after the main job content is already rendered. Only treat visible loaders outside
-    // those secondary sections as blocking.
-    const hasBlockingLoader = Array.from(vacancyDetail.querySelectorAll('.cp-loader')).some(
-      (loaderNode) => {
-        if (!(loaderNode instanceof HTMLElement)) {
-          return false;
-        }
-
-        const isSecondarySimilarVacanciesLoader =
-          loaderNode.classList.contains('cp-loader--vacancies-list') ||
-          loaderNode.closest('.similar') !== null;
-        if (isSecondarySimilarVacanciesLoader) {
-          return false;
-        }
-
-        const computedStyle = window.getComputedStyle(loaderNode);
-        const isVisible =
-          computedStyle.display !== 'none' &&
-          computedStyle.visibility !== 'hidden' &&
-          parseFloat(computedStyle.opacity || '1') > 0 &&
-          (loaderNode.offsetWidth > 0 || loaderNode.offsetHeight > 0);
-        return isVisible;
-      },
-    );
-
-    return {
-      vacancyTextChars,
-      hasPrimaryContentMarkers,
-      hasBlockingLoader,
-    };
-  });
-
 router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
   const routerDetailsLog = log.child({ prefix: 'DETAILS' });
   const requestedDetailUrl = request.url;
@@ -553,8 +444,6 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
   const finalDetailUrl = page.url();
   const finalDetailHost = getHostnameFromUrl(finalDetailUrl);
   const redirectedToDifferentHost = finalDetailUrl !== requestedDetailUrl;
-  let detailRenderWaitMs = 0;
-  let detailRenderSignal: z.infer<typeof internalJobAdSchema>['detailRenderSignal'] = 'none';
 
   if (redirectedToDifferentHost) {
     detailRedirects += 1;
@@ -565,189 +454,33 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
     });
   }
 
-  const isWidgetHostedPage = await isCareerWidgetHostedDetailPage(page);
-  const isVacancyLoaderPage = !isWidgetHostedPage && (await isVacancyDetailLoaderPage(page));
-  if (isWidgetHostedPage) {
-    routerDetailsLog.debug(
-      'Detected client-hosted jobs.cz widget detail page; waiting for widget content render',
-      {
-        sourceId: request.userData.jobId,
-        requestedDetailUrl,
-        finalDetailUrl,
-      },
-    );
-
-    try {
-      const renderWaitStartedAt = Date.now();
-      await page.waitForFunction(
-        ({ selector, minTextChars }) => {
-          const widgetContainer = document.querySelector(selector);
-          if (!widgetContainer) {
-            return false;
-          }
-
-          const text = (widgetContainer.textContent ?? '').replace(/\s+/g, ' ').trim();
-          return text.length >= minTextChars;
-        },
-        {
-          selector: DETAIL_WIDGET_CONTAINER_SELECTOR,
-          minTextChars: DETAIL_WIDGET_MIN_TEXT_CHARS,
-        },
-        { timeout: DETAIL_WIDGET_RENDER_TIMEOUT_MS },
-      );
-      detailRenderWaitMs = Date.now() - renderWaitStartedAt;
-      detailRenderSignal = 'widget_container_text';
-    } catch (error) {
-      const widgetTextChars = await getWidgetContainerTextChars(page);
-      routerDetailsLog.warning(
-        'Widget detail page content did not render in time; throwing to let Crawlee retry',
-        {
-          err: error,
-          sourceId: request.userData.jobId,
-          requestedDetailUrl,
-          finalDetailUrl,
-          widgetTextChars,
-          timeoutMs: DETAIL_WIDGET_RENDER_TIMEOUT_MS,
-        },
-      );
-      throw error;
-    }
-  }
-
-  if (isVacancyLoaderPage) {
-    routerDetailsLog.debug(
-      'Detected dynamic vacancy-detail page; waiting for client-rendered content',
-      {
-        sourceId: request.userData.jobId,
-        requestedDetailUrl,
-        finalDetailUrl,
-      },
-    );
-
-    try {
-      const renderWaitStartedAt = Date.now();
-      await page.waitForFunction(
-        ({ containerSelector, loaderSelector, minTextChars }) => {
-          const vacancyContainer = document.querySelector(containerSelector);
-          if (!vacancyContainer) {
-            return false;
-          }
-
-          const text = (vacancyContainer.textContent ?? '').replace(/\s+/g, ' ').trim();
-          const hasPrimaryContentMarkers =
-            vacancyContainer.querySelector('.hero__title') !== null &&
-            vacancyContainer.querySelector('.cp-detail__content') !== null;
-
-          if (hasPrimaryContentMarkers && text.length >= minTextChars) {
-            return true;
-          }
-
-          const blockingLoaderStillPresent = Array.from(
-            vacancyContainer.querySelectorAll(loaderSelector.replace(`${containerSelector} `, '')),
-          ).some((loaderNode) => {
-            if (!(loaderNode instanceof HTMLElement)) {
-              return false;
-            }
-
-            const isSecondarySimilarVacanciesLoader =
-              loaderNode.classList.contains('cp-loader--vacancies-list') ||
-              loaderNode.closest('.similar') !== null;
-            if (isSecondarySimilarVacanciesLoader) {
-              return false;
-            }
-
-            const computedStyle = window.getComputedStyle(loaderNode);
-            const isVisible =
-              computedStyle.display !== 'none' &&
-              computedStyle.visibility !== 'hidden' &&
-              parseFloat(computedStyle.opacity || '1') > 0 &&
-              (loaderNode.offsetWidth > 0 || loaderNode.offsetHeight > 0);
-            return isVisible;
-          });
-
-          return !blockingLoaderStillPresent && text.length >= minTextChars;
-        },
-        {
-          containerSelector: DETAIL_VACANCY_CONTAINER_SELECTOR,
-          loaderSelector: DETAIL_VACANCY_LOADER_SELECTOR,
-          minTextChars: DETAIL_VACANCY_MIN_TEXT_CHARS,
-        },
-        { timeout: DETAIL_VACANCY_RENDER_TIMEOUT_MS },
-      );
-      detailRenderWaitMs = Date.now() - renderWaitStartedAt;
-      detailRenderSignal = 'vacancy_detail_text';
-    } catch (error) {
-      const { vacancyTextChars, hasPrimaryContentMarkers, hasBlockingLoader } =
-        await getVacancyDetailReadinessSignals(page);
-      routerDetailsLog.warning(
-        'Dynamic vacancy-detail page content did not render in time; throwing to let Crawlee retry',
-        {
-          err: error,
-          sourceId: request.userData.jobId,
-          requestedDetailUrl,
-          finalDetailUrl,
-          vacancyTextChars,
-          hasPrimaryContentMarkers,
-          hasBlockingLoader,
-          timeoutMs: DETAIL_VACANCY_RENDER_TIMEOUT_MS,
-        },
-      );
-      throw error;
-    }
-  }
-
-  const widgetContainerTextChars = isWidgetHostedPage ? await getWidgetContainerTextChars(page) : 0;
-  const vacancyDetailTextChars = isVacancyLoaderPage ? await getVacancyDetailTextChars(page) : 0;
-  if (isWidgetHostedPage && widgetContainerTextChars < DETAIL_WIDGET_MIN_TEXT_CHARS) {
-    routerDetailsLog.warning(
-      'Widget detail page appears incomplete after render wait; throwing to let Crawlee retry',
-      {
-        sourceId: request.userData.jobId,
-        requestedDetailUrl,
-        finalDetailUrl,
-        widgetContainerTextChars,
-      },
-    );
-    throw new Error(
-      `Widget detail page not fully rendered for job ${String(request.userData.jobId)} (widget text chars: ${widgetContainerTextChars})`,
-    );
-  }
-
-  if (isVacancyLoaderPage && vacancyDetailTextChars < DETAIL_VACANCY_MIN_TEXT_CHARS) {
-    routerDetailsLog.warning(
-      'Dynamic vacancy-detail page appears incomplete after render wait; throwing to let Crawlee retry',
-      {
-        sourceId: request.userData.jobId,
-        requestedDetailUrl,
-        finalDetailUrl,
-        vacancyDetailTextChars,
-      },
-    );
-    throw new Error(
-      `Dynamic vacancy-detail page not fully rendered for job ${String(request.userData.jobId)} (vacancy detail text chars: ${vacancyDetailTextChars})`,
-    );
-  }
+  const detailRenderAssessment = await waitForDetailRenderReadiness({
+    page,
+    sourceId: String(request.userData.jobId),
+    requestedDetailUrl,
+    finalDetailUrl,
+    finalDetailHost,
+    log: {
+      debug: (message, data) => routerDetailsLog.debug(message, data),
+      warning: (message, data) => routerDetailsLog.warning(message, data),
+    },
+  });
+  const {
+    detailRenderType,
+    detailRenderSignal,
+    detailRenderTextChars,
+    detailRenderWaitMs,
+    detailRenderComplete,
+    isWidgetHostedPage,
+    widgetContainerTextChars,
+    isVacancyLoaderPage,
+    vacancyDetailTextChars,
+  } = detailRenderAssessment;
 
   const jobDetailHtml = await page.content();
   const detailHtmlByteSize = Buffer.byteLength(jobDetailHtml, 'utf8');
   const detailHtmlSha256 = createHash('sha256').update(jobDetailHtml, 'utf8').digest('hex');
   const htmlDetailPageKey = `job-html-${request.userData.jobId}.html`;
-  const detailRenderType: z.infer<typeof internalJobAdSchema>['detailRenderType'] =
-    isWidgetHostedPage
-      ? 'widget'
-      : isVacancyLoaderPage
-        ? 'vacancy-detail'
-        : finalDetailHost === 'www.jobs.cz' || finalDetailHost === 'jobs.cz'
-          ? 'jobscz-template'
-          : 'unknown';
-  const detailRenderTextChars = isWidgetHostedPage
-    ? widgetContainerTextChars
-    : vacancyDetailTextChars;
-  const detailRenderComplete = isWidgetHostedPage
-    ? widgetContainerTextChars >= DETAIL_WIDGET_MIN_TEXT_CHARS
-    : isVacancyLoaderPage
-      ? vacancyDetailTextChars >= DETAIL_VACANCY_MIN_TEXT_CHARS
-      : true;
   detailRenderTypeCounts[detailRenderType] += 1;
   detailRenderSignalCounts[detailRenderSignal] += 1;
   totalDetailHtmlBytes += detailHtmlByteSize;
@@ -911,34 +644,8 @@ router.addHandler('LIST', async ({ request, enqueueLinks, page, log }) => {
   }
 
   for (const card of jobCards) {
-    // Extract Data
-    const titleLocator = card.locator('h2[data-test-ad-title]');
-    const idLocator = card.locator('a[data-jobad-id]');
-    const statusLocator = card.locator('[data-test-ad-status]');
-    const locationLocator = card.locator('li[data-test="serp-locality"]');
-    const salaryLocator = card.locator(SALARY_SELECTOR);
-    const companyLocator = card.locator('span[translate="no"]');
-
-    const getSafeText = async (loc: Locator) => {
-      if ((await loc.count()) > 0) {
-        const elValue = await loc.first().textContent();
-        return elValue ? elValue.trim() : null;
-      }
-      return null;
-    };
-
-    const title = await titleLocator.getAttribute('data-test-ad-title');
-    const jobId = await idLocator.getAttribute('data-jobad-id');
-    const status = (await getSafeText(statusLocator)) || '';
-    const location = (await getSafeText(locationLocator)) || '';
-    const rawSalary = await getSafeText(salaryLocator);
-    const salary = rawSalary ? normalizeWhitespace(rawSalary) : null;
-    const company = (await getSafeText(companyLocator)) || '';
-
-    const linkLocator = card.locator('h2[data-test-ad-title] a');
-    const href = await linkLocator.getAttribute('href');
-
-    if (!href || !jobId) {
+    const listingRecord = await extractListingFromCard(card, request.url);
+    if (!listingRecord) {
       cardsSkippedMissingHrefOrId += 1;
       continue;
     }
@@ -951,21 +658,10 @@ router.addHandler('LIST', async ({ request, enqueueLinks, page, log }) => {
       break;
     }
 
-    const listingRecord: CrawlListingRecord = {
-      source: 'jobs.cz',
-      sourceId: jobId,
-      adUrl: new URL(href, request.url).toString(),
-      jobTitle: title || 'Unknown',
-      companyName: company,
-      location,
-      salary,
-      publishedInfoText: status,
-    };
-
-    if (collectedListingsBySourceId.has(jobId)) {
+    if (collectedListingsBySourceId.has(listingRecord.sourceId)) {
       listListingsDuplicateSourceIds += 1;
     } else {
-      collectedListingsBySourceId.set(jobId, listingRecord);
+      collectedListingsBySourceId.set(listingRecord.sourceId, listingRecord);
       listListingsCollectedUnique = collectedListingsBySourceId.size;
     }
   }
