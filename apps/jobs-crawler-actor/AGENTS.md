@@ -19,7 +19,6 @@ These instructions are app-local extensions of the repository root rules.
 - Preserve the current runtime entrypoint unless explicitly requested to refactor:
   - `build` -> `tsc`
   - `start` -> `node ./dist/main.js`
-  - `dev` -> `tsx watch src/main.ts`
 - Keep Apify actor metadata in `.actor/**` consistent with app behavior when changing scripts, Dockerfile, or README.
 - Keep dependency style aligned with repo standards: internal packages as `workspace:*`.
 - Keep dependency style aligned with repo standards: external shared dependencies as `catalog:`.
@@ -109,11 +108,12 @@ These instructions are app-local extensions of the repository root rules.
 
 ## Testing Guidance (Local)
 
-- Preserve local Apify `INPUT.json` for developer runs:
-  - `storage/key_value_stores/default/INPUT.json`
-- Treat that file as a generated runtime artifact in local mode, not the primary human config surface.
-- Prefer maintaining `search-spaces/*.json` and generating local input with:
-  - `pnpm -C apps/jobs-crawler-actor prepare:input -- --search-space <id>`
+- Prefer the canonical runtime flow:
+  - `pnpm -C apps/jobs-crawler-actor start -- --search-space <id>`
+- Search spaces are the human-maintained crawl config surface.
+- Actor input should be treated as:
+  - `searchSpaceId`
+  - optional overrides
 - For automated tests / ad-hoc verification:
   - prefer `CRAWLEE_STORAGE_DIR=$(mktemp -d ...)`
   - disable ingestion trigger unless needed

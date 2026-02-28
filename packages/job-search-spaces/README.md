@@ -5,13 +5,15 @@ Shared search-space schemas and runtime helpers for JobCompass apps.
 ## Responsibilities
 
 - validate named search-space configuration files
-- build Apify-compatible actor input from search-space config
+- validate operator-facing actor input keyed by `searchSpaceId`
+- resolve full runtime crawl input from canonical search-space config
 - derive per-search-space Mongo database names
 - validate runtime search-space identifiers
 
 ## Core API
 
 - `searchSpaceConfigSchema`
-- `actorRuntimeInputSchema`
+- `actorOperatorInputSchema`
+- `resolvedActorRuntimeInputSchema`
 - `buildActorInputFromSearchSpace(...)`
 - `deriveMongoDbName(...)`

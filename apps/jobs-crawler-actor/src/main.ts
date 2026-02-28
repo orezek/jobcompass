@@ -1,14 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
+import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { PlaywrightCrawler, Dataset, createPlaywrightRouter, log, type LogLevel } from 'crawlee';
 import { Actor, type ProxyConfigurationOptions } from 'apify';
 import { MongoClient } from 'mongodb';
 import {
-  actorRuntimeInputSchema,
   deriveMongoDbName,
-  type ActorRuntimeInput,
+  actorOperatorInputSchema,
+  type ResolvedActorRuntimeInput,
 } from '@repo/job-search-spaces';
 import { envs } from './env-setup.js';
 import {
@@ -29,6 +30,11 @@ import {
   type DetailRenderType,
 } from './detail-rendering.js';
 import { extractListingFromCard } from './listing-card-parser.js';
+import {
+  listAvailableSearchSpaceIds,
+  parseCliActorOverrides,
+  resolveActorInputForSearchSpace,
+} from './search-space.js';
 
 // ------------------ 1. Definition of Schemas & Types ------------------ //
 
@@ -684,26 +690,56 @@ router.addHandler('LIST', async ({ request, enqueueLinks, page, log }) => {
 // ------------------ 3. Main Execution Block ------------------ //
 
 await Actor.init();
-// Sanity Check for local run!
 const actorAppRootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const defaultLocalInputPath = path.join(
-  actorAppRootDir,
-  'storage',
-  'key_value_stores',
-  'default',
-  'INPUT.json',
-);
-const rawInput = await Actor.getInput<unknown>();
-if (!rawInput) {
+const cliOverrides = parseCliActorOverrides(process.argv.slice(2));
+const { useApifyProxy: cliUseApifyProxy, ...cliOperatorInput } = cliOverrides;
+const isApifyAtHome = Actor.isAtHome();
+const rawInput = isApifyAtHome ? ((await Actor.getInput<unknown>()) ?? {}) : {};
+const mergedRawOperatorInput = isApifyAtHome
+  ? {
+      ...(typeof rawInput === 'object' && rawInput !== null ? rawInput : {}),
+      ...cliOperatorInput,
+    }
+  : cliOperatorInput;
+
+if (!('searchSpaceId' in mergedRawOperatorInput) || !mergedRawOperatorInput.searchSpaceId) {
+  const availableSearchSpaceIds = await listAvailableSearchSpaceIds();
   throw new Error(
     [
-      'Input is missing (Actor.getInput() returned null).',
-      `Local Apify input expected at: ${defaultLocalInputPath}`,
-      'If using temp storage, create key_value_stores/default/INPUT.json under CRAWLEE_STORAGE_DIR.',
+      'searchSpaceId is required.',
+      isApifyAtHome
+        ? 'Provide searchSpaceId in actor input.'
+        : 'Pass --search-space <id> when starting the crawler locally.',
+      `Available search spaces: ${availableSearchSpaceIds.join(', ') || 'none found'}.`,
     ].join(' '),
   );
 }
-const input = actorRuntimeInputSchema.parse(rawInput) as ActorRuntimeInput & {
+
+const mergedOperatorInput = actorOperatorInputSchema.safeParse(mergedRawOperatorInput);
+if (!mergedOperatorInput.success) {
+  throw new Error(
+    [
+      'Invalid actor input.',
+      ...mergedOperatorInput.error.issues.map(
+        (issue) => `${issue.path.join('.')}: ${issue.message}`,
+      ),
+    ].join(' '),
+  );
+}
+
+const resolvedActorInput = await resolveActorInputForSearchSpace({
+  searchSpaceId: mergedOperatorInput.data.searchSpaceId,
+  overrides: {
+    maxItems: mergedOperatorInput.data.maxItems,
+    maxConcurrency: mergedOperatorInput.data.maxConcurrency,
+    maxRequestsPerMinute: mergedOperatorInput.data.maxRequestsPerMinute,
+    debugLog: mergedOperatorInput.data.debugLog,
+    proxyConfiguration: mergedOperatorInput.data.proxyConfiguration,
+    allowInactiveMarkingOnPartialRuns: mergedOperatorInput.data.allowInactiveMarkingOnPartialRuns,
+    useApifyProxy: typeof cliUseApifyProxy === 'boolean' ? cliUseApifyProxy : undefined,
+  },
+});
+const input = resolvedActorInput.actorInput as ResolvedActorRuntimeInput & {
   proxyConfiguration?: ProxyConfigurationOptions;
 };
 
@@ -823,7 +859,7 @@ await upsertRunSummaryToMongoBestEffort(
     input: {
       searchSpaceId: input.searchSpaceId,
       startUrlsCount: startUrls.length,
-      startUrls: startUrls.map((item: ActorRuntimeInput['startUrls'][number]) => item.url),
+      startUrls: startUrls.map((item: ResolvedActorRuntimeInput['startUrls'][number]) => item.url),
       maxItems: input.maxItems,
       maxRequestsPerCrawlSafetyCap: Math.max(input.maxItems * 5, 50),
       maxConcurrency: input.maxConcurrency,
@@ -846,7 +882,7 @@ let partialRunInactiveMarkingBlocked = false;
 try {
   const listCrawler = createCrawler(Math.max(input.maxItems * 5, 50));
   await listCrawler.run(
-    startUrls.map((req: ActorRuntimeInput['startUrls'][number]) => ({
+    startUrls.map((req: ResolvedActorRuntimeInput['startUrls'][number]) => ({
       ...req,
       label: 'LIST',
       userData: {
@@ -1004,7 +1040,7 @@ const runSummary = {
   input: {
     searchSpaceId: input.searchSpaceId,
     startUrlsCount: startUrls.length,
-    startUrls: startUrls.map((item: ActorRuntimeInput['startUrls'][number]) => item.url),
+    startUrls: startUrls.map((item: ResolvedActorRuntimeInput['startUrls'][number]) => item.url),
     maxItems: input.maxItems,
     maxRequestsPerCrawlSafetyCap: Math.max(input.maxItems * 5, 50),
     maxConcurrency: input.maxConcurrency,

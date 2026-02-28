@@ -6,57 +6,43 @@
     "searchSpaceId": {
       "title": "Search Space ID",
       "type": "string",
-      "description": "Logical search-space identifier used for DB derivation and run traceability. In local mode this is usually generated from search-space config.",
-      "default": "default",
+      "description": "Required canonical crawl configuration. The actor resolves start URLs and crawl defaults from the checked-in search-space definition.",
       "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
-    },
-    "startUrls": {
-      "title": "Start URLs",
-      "type": "array",
-      "description": "List of Jobs.cz search-result URLs to crawl. In local mode this is usually generated from a checked-in search-space JSON file.",
-      "editor": "requestListSources",
-      "prefill": [{ "url": "https://www.jobs.cz/prace/" }]
     },
     "maxItems": {
       "title": "Max Items",
       "type": "integer",
-      "description": "Maximum number of job ads (detail pages) to scrape. Required to control costs.",
-      "default": 100,
+      "description": "Optional override for the search-space default maximum number of job ads to process.",
       "minimum": 1
     },
     "maxConcurrency": {
       "title": "Max Concurrency",
       "type": "integer",
-      "description": "Maximum number of parallel browser tasks for crawl processing.",
-      "default": 1,
+      "description": "Optional override for the search-space default maximum number of parallel browser tasks.",
       "minimum": 1
     },
     "maxRequestsPerMinute": {
       "title": "Max Requests Per Minute",
       "type": "integer",
-      "description": "Global rate limit for outgoing crawl requests per minute.",
-      "default": 30,
+      "description": "Optional override for the search-space default rate limit.",
       "minimum": 1
     },
     "proxyConfiguration": {
       "title": "Proxy Configuration",
       "type": "object",
-      "description": "Select proxies to be used by your crawler.",
-      "editor": "proxy",
-      "default": { "useApifyProxy": true }
+      "description": "Optional proxy override. If omitted, the search-space default proxy setting is used.",
+      "editor": "proxy"
     },
     "debugLog": {
       "title": "Debug Logging",
       "type": "boolean",
-      "description": "Turn on verbose logging for debugging.",
-      "default": false
+      "description": "Optional override for verbose logging."
     },
     "allowInactiveMarkingOnPartialRuns": {
       "title": "Allow Inactive Marking On Partial Runs",
       "type": "boolean",
-      "description": "If false, a partial list scan must not mark missing jobs inactive during reconciliation. Recommended default is false.",
-      "default": false
+      "description": "Optional override of the search-space reconciliation rule for partial runs."
     }
   },
-  "required": ["maxItems", "startUrls"]
+  "required": ["searchSpaceId"]
 }

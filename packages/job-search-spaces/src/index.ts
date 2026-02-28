@@ -43,20 +43,34 @@ export const searchSpaceConfigSchema = z
 
 export type SearchSpaceConfig = z.infer<typeof searchSpaceConfigSchema>;
 
-export const actorRuntimeInputSchema = z
+export const actorOperatorInputSchema = z
   .object({
-    searchSpaceId: searchSpaceIdSchema.default('default'),
-    startUrls: z.array(z.object({ url: z.string().url() })).min(1),
-    maxItems: z.coerce.number().int().positive(),
-    maxConcurrency: z.coerce.number().int().positive().default(1),
-    maxRequestsPerMinute: z.coerce.number().int().positive().default(30),
+    searchSpaceId: searchSpaceIdSchema,
+    maxItems: z.coerce.number().int().positive().optional(),
+    maxConcurrency: z.coerce.number().int().positive().optional(),
+    maxRequestsPerMinute: z.coerce.number().int().positive().optional(),
     proxyConfiguration: proxyConfigurationSchema.optional(),
-    debugLog: z.boolean().default(false),
-    allowInactiveMarkingOnPartialRuns: z.boolean().default(false),
+    debugLog: z.boolean().optional(),
+    allowInactiveMarkingOnPartialRuns: z.boolean().optional(),
   })
   .strict();
 
-export type ActorRuntimeInput = z.infer<typeof actorRuntimeInputSchema>;
+export type ActorOperatorInput = z.infer<typeof actorOperatorInputSchema>;
+
+export const resolvedActorRuntimeInputSchema = z
+  .object({
+    searchSpaceId: searchSpaceIdSchema,
+    startUrls: z.array(z.object({ url: z.string().url() })).min(1),
+    maxItems: z.coerce.number().int().positive(),
+    maxConcurrency: z.coerce.number().int().positive(),
+    maxRequestsPerMinute: z.coerce.number().int().positive(),
+    proxyConfiguration: proxyConfigurationSchema.optional(),
+    debugLog: z.boolean(),
+    allowInactiveMarkingOnPartialRuns: z.boolean(),
+  })
+  .strict();
+
+export type ResolvedActorRuntimeInput = z.infer<typeof resolvedActorRuntimeInputSchema>;
 
 export type ActorInputOverrides = {
   maxItems?: number;
@@ -70,8 +84,8 @@ export type ActorInputOverrides = {
 export const buildActorInputFromSearchSpace = (
   searchSpace: SearchSpaceConfig,
   overrides: ActorInputOverrides = {},
-): ActorRuntimeInput =>
-  actorRuntimeInputSchema.parse({
+): ResolvedActorRuntimeInput =>
+  resolvedActorRuntimeInputSchema.parse({
     searchSpaceId: searchSpace.searchSpaceId,
     startUrls: searchSpace.startUrls.map((url) => ({ url })),
     maxItems: overrides.maxItems ?? searchSpace.crawlDefaults.maxItems,

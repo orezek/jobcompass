@@ -33,11 +33,12 @@ Each search space defines:
 - reconciliation policy
 - optional ingestion default
 
-### 2. Apify input remains the runtime contract
+### 2. Actor input selects the search space at runtime
 
-The crawler runtime still consumes standard actor input / `INPUT.json`.
+The crawler runtime still consumes standard actor input, but the canonical operator input is:
 
-Local mode generates that file from a search-space JSON config.
+- `searchSpaceId`
+- optional overrides
 
 This preserves:
 
@@ -134,48 +135,26 @@ Current shape:
 }
 ```
 
-## Generated Runtime Input
+## Runtime Actor Input
 
-Local search-space generation produces Apify-compatible actor input:
+Operator-facing actor input is:
 
 ```json
 {
   "searchSpaceId": "prague-tech-jobs",
-  "startUrls": [
-    {
-      "url": "https://www.jobs.cz/prace/praha/?field%5B%5D=200900012&field%5B%5D=200900013&field%5B%5D=200900011&field%5B%5D=200900033&locality%5Bradius%5D=0"
-    }
-  ],
-  "maxItems": 2000,
-  "maxConcurrency": 1,
-  "maxRequestsPerMinute": 10,
-  "proxyConfiguration": {
-    "useApifyProxy": false
-  },
-  "debugLog": false,
-  "allowInactiveMarkingOnPartialRuns": false
+  "maxItems": 2000
 }
 ```
 
+The actor resolves `startUrls`, crawl defaults, and reconciliation policy from the checked-in search-space definition.
+
 ## Local Operator Workflow
-
-### Generate local input
-
-```bash
-pnpm -C apps/jobs-crawler-actor prepare:input -- --search-space prague-tech-jobs
-```
 
 ### Run locally
 
 ```bash
-pnpm -C apps/jobs-crawler-actor start:local -- --search-space prague-tech-jobs --max-items 100
+pnpm -C apps/jobs-crawler-actor start -- --search-space prague-tech-jobs --max-items 100
 ```
-
-### What gets generated
-
-- `apps/jobs-crawler-actor/storage/key_value_stores/default/INPUT.json`
-
-This file is a runtime artifact. It should not be the primary human-maintained config surface.
 
 ## Crawl Algorithm
 

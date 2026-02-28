@@ -15,6 +15,15 @@ The app package version is currently `1.0.0` (see `package.json`). This changelo
 
 ### Changed
 
+- The crawler now resolves canonical crawl config from `searchSpaceId` at runtime.
+- Local helper scripts were removed:
+  - `prepare:input`
+  - `start:local`
+  - `start:prod`
+  - `start:dev`
+  - `dev`
+- Operator flow is now:
+  - `pnpm -C apps/jobs-crawler-actor start -- --search-space <id>`
 - Expanded `.actor/input_schema.json` to include:
   - `maxConcurrency`
   - `maxRequestsPerMinute`
@@ -55,6 +64,7 @@ The app package version is currently `1.0.0` (see `package.json`). This changelo
 - Dynamic detail-page readiness checks for multiple employer templates (including vacancy-detail and widget/capybara variants).
 - False render timeouts caused by secondary template loaders (e.g. similar-vacancies loaders inside `#vacancy-detail`).
 - Redirect observability: crawler now records/logs requested URL vs final loaded URL.
+- Missing or unknown `searchSpaceId` now fails fast with an explicit error and a list of available search spaces.
 
 ## Versioning Notes
 

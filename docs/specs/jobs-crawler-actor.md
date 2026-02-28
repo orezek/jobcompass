@@ -30,13 +30,12 @@ Each search space owns:
 
 ### Runtime input
 
-The runtime still consumes Apify-compatible actor input.
+The runtime consumes Apify-compatible actor input keyed by:
 
-Local mode generates:
+- `searchSpaceId`
+- optional overrides
 
-- `storage/key_value_stores/default/INPUT.json`
-
-from a search-space config.
+The actor resolves `startUrls` and crawl defaults from the checked-in search-space config at runtime.
 
 ### Database naming
 
@@ -110,7 +109,6 @@ Output layout:
 Actor input:
 
 - `searchSpaceId`
-- `startUrls`
 - `maxItems`
 - `maxConcurrency`
 - `maxRequestsPerMinute`
@@ -132,14 +130,8 @@ Env:
 
 ## Local Operator Flow
 
-Generate input:
-
-```bash
-pnpm -C apps/jobs-crawler-actor prepare:input -- --search-space prague-tech-jobs
-```
-
 Run locally:
 
 ```bash
-pnpm -C apps/jobs-crawler-actor start:local -- --search-space prague-tech-jobs --max-items 100
+pnpm -C apps/jobs-crawler-actor start -- --search-space prague-tech-jobs --max-items 100
 ```

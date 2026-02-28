@@ -8,13 +8,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "prepare:input": "tsx src/prepare-local-input.ts",
-    "start:local": "tsx src/run-local.ts",
     "start": "node ./dist/main.js",
-    "start:prod": "node ./dist/main.js",
-    "start:dev": "tsx src/main.ts",
     "build": "tsc",
-    "dev": "tsx watch src/main.ts",
     "lint": "eslint . --max-warnings 0",
     "check-types": "tsc --noEmit",
     "docker:build": "docker build -t jobs-crawler-actor -f ./Dockerfile ../../",
@@ -31,7 +26,6 @@
     "@repo/typescript-config": "workspace:*",
     "@types/node": "catalog:",
     "eslint": "catalog:",
-    "tsx": "catalog:",
     "typescript": "catalog:"
   },
   "dependencies": {

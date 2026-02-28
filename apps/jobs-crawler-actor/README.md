@@ -28,15 +28,14 @@ Use this app in the following order:
 
 1. configure runtime and infrastructure in `apps/jobs-crawler-actor/.env`
 2. define crawl behavior in `apps/jobs-crawler-actor/search-spaces/*.json`
-3. generate Apify-compatible `INPUT.json`
-4. run the crawler
-5. let the crawler trigger ingestion or start ingestion separately
+3. run the crawler with `--search-space <id>`
+4. let the crawler trigger ingestion or start ingestion separately
 
 The important separation is:
 
 - `.env` = runtime, secrets, paths, Mongo, trigger URL
 - `search-spaces/*.json` = what to crawl and how that search space behaves
-- `storage/key_value_stores/default/INPUT.json` = generated runtime artifact, not the human-maintained config source
+- actor input / CLI = `searchSpaceId` plus optional overrides
 
 ## Search Spaces
 
@@ -67,7 +66,7 @@ They give you:
 - a human-maintained config source
 - stable operational naming
 - automatic MongoDB database derivation
-- Apify-compatible runtime input generation
+- a single canonical crawl definition for local runs and Apify runs
 
 ## Database Naming
 
@@ -108,49 +107,33 @@ This is the key safety rule that prevents sample runs from corrupting crawl stat
 
 ## Runtime Input
 
-The crawler runtime still uses standard Apify/Crawlee actor input.
-
-Runtime `INPUT.json` now contains:
+The crawler runtime uses standard Apify/Crawlee actor input, but the canonical operator input is:
 
 - `searchSpaceId`
+- optional overrides:
+  - `maxItems`
+  - `maxConcurrency`
+  - `maxRequestsPerMinute`
+  - `proxyConfiguration`
+  - `debugLog`
+  - `allowInactiveMarkingOnPartialRuns`
+
+The actor resolves:
+
 - `startUrls`
-- `maxItems`
-- `maxConcurrency`
-- `maxRequestsPerMinute`
-- `proxyConfiguration`
-- `debugLog`
-- `allowInactiveMarkingOnPartialRuns`
+- crawl defaults
+- reconciliation policy
+
+from the checked-in search-space definition at runtime.
 
 ### Local workflow
 
-Humans should not edit `storage/key_value_stores/default/INPUT.json` directly.
+Local operators should not maintain `INPUT.json` directly.
 
-Instead:
-
-1. maintain search-space JSON files
-2. generate `INPUT.json`
-3. run the actor
-
-Generate local input:
+Run from a search space:
 
 ```bash
-pnpm -C apps/jobs-crawler-actor prepare:input -- --search-space prague-tech-jobs
-```
-
-Generate with overrides:
-
-```bash
-pnpm -C apps/jobs-crawler-actor prepare:input -- \
-  --search-space prague-tech-jobs \
-  --max-items 100 \
-  --max-concurrency 1 \
-  --max-requests-per-minute 10
-```
-
-Run locally from a search space:
-
-```bash
-pnpm -C apps/jobs-crawler-actor start:local -- --search-space prague-tech-jobs --max-items 100
+pnpm -C apps/jobs-crawler-actor start -- --search-space prague-tech-jobs --max-items 100
 ```
 
 ## Apify Compatibility
@@ -161,10 +144,10 @@ The runtime contract is still actor input.
 
 That means:
 
-- local mode generates Apify-compatible `INPUT.json`
-- Apify platform can receive the same input shape directly
+- local runs pass `--search-space <id>` and optional overrides
+- Apify platform provides the same operator-facing input shape directly
 
-So `INPUT.json` remains the runtime artifact, but search-space JSON is the human-maintained config source.
+So search-space JSON is the canonical crawl config, and operator input only selects a search space plus optional runtime overrides.
 
 ## Local Handoff to Ingestion
 
@@ -227,13 +210,9 @@ Key variables:
 ## Key Files
 
 - `src/main.ts`
-  - crawl orchestration
+  - crawl orchestration and runtime search-space resolution
 - `src/search-space.ts`
-  - search-space loading, local input generation, DB derivation
-- `src/prepare-local-input.ts`
-  - writes Apify-compatible local `INPUT.json`
-- `src/run-local.ts`
-  - generates input then runs the actor locally
+  - search-space loading, CLI parsing, DB derivation
 - `src/crawl-state.ts`
   - Mongo reconciliation and crawl-state updates
 - `src/detail-rendering.ts`
@@ -251,6 +230,5 @@ Key variables:
 pnpm -C apps/jobs-crawler-actor build
 pnpm -C apps/jobs-crawler-actor lint
 pnpm -C apps/jobs-crawler-actor check-types
-pnpm -C apps/jobs-crawler-actor prepare:input -- --search-space default
-pnpm -C apps/jobs-crawler-actor start:local -- --search-space default --max-items 20
+pnpm -C apps/jobs-crawler-actor start -- --search-space default --max-items 20
 ```
