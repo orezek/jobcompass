@@ -92,6 +92,13 @@ Those are seeded from the crawler listing record and crawl context during first 
 6. upsert trusted normalized doc
 7. write ingestion run summary
 
+## Lineage
+
+- `normalized_job_ads.crawlRunId` links each normalized document to its crawler run.
+- `normalized_job_ads.ingestion.runId` links each normalized document to the ingestion run that wrote it.
+- `ingestion_run_summaries.crawlRunId` links each ingestion run back to its crawler run.
+- `ingestion_trigger_requests.ingestionRunId` links each accepted trigger to the ingestion run it created.
+
 ## Raw text snapshots
 
 Persist in `normalized_job_ads.rawDetailPage`:

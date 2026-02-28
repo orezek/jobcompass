@@ -178,10 +178,18 @@ Default collection names:
 - `ingestion_run_summaries`
 - `ingestion_trigger_requests`
 
+Lineage keys:
+
+- `normalized_job_ads.crawlRunId -> crawl_run_summaries.crawlRunId`
+- `normalized_job_ads.ingestion.runId -> ingestion_run_summaries.runId`
+- `ingestion_run_summaries.crawlRunId -> crawl_run_summaries.crawlRunId`
+- `ingestion_trigger_requests.ingestionRunId -> ingestion_run_summaries.runId`
+
 ## Ingestion Run Summaries
 
 Run summaries include:
 
+- `crawlRunId`
 - `searchSpaceId`
 - `mongoDbName`
 - totals and rates

@@ -83,6 +83,15 @@ The crawler-to-ingestion handoff boundary is:
 - HTML artifact written successfully
 - item trigger accepted successfully
 
+## Lineage
+
+- `crawl_run_summaries.crawlRunId`
+- `ingestion_trigger_requests.crawlRunId`
+- `ingestion_run_summaries.crawlRunId`
+- `normalized_job_ads.crawlRunId`
+
+All four collections now share the crawl-run lineage key directly.
+
 ## Why this design
 
 This removes the old trust gap where crawler-only state could say a job was already handled even when ingestion never completed.

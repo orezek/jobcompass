@@ -99,7 +99,7 @@ export const envSchema = z.object({
   MONGODB_JOBS_COLLECTION: z.string().default('normalized_job_ads'),
   MONGODB_RUN_SUMMARIES_COLLECTION: z.string().default('ingestion_run_summaries'),
   MONGODB_INGESTION_TRIGGERS_COLLECTION: z.string().default('ingestion_trigger_requests'),
-  PARSER_VERSION: z.string().default('jobs-ingestion-service-v1.0.0'),
+  PARSER_VERSION: z.string().default('jobs-ingestion-service-v1.0.1'),
 });
 
 type ParsedEnvSchema = z.infer<typeof envSchema>;
@@ -198,6 +198,7 @@ const llmRunStatsSchema = z.object({
 const ingestionRunSummarySchema = z.object({
   id: z.string(),
   runId: z.string(),
+  crawlRunId: z.string().nullable(),
   searchSpaceId: z.string(),
   mongoDbName: z.string(),
   startedAt: z.iso.datetime(),
@@ -400,6 +401,7 @@ const buildRunStats = (parsed: UnifiedJobAd[]): ParseRunStats => {
 
 const buildRunSummaryDocument = (input: {
   runId: string;
+  crawlRunId: string | null;
   searchSpaceId: string;
   mongoDbName: string;
   startedAtIso: string;
@@ -423,6 +425,7 @@ const buildRunSummaryDocument = (input: {
     return ingestionRunSummarySchema.parse({
       id: input.runId,
       runId: input.runId,
+      crawlRunId: input.crawlRunId,
       searchSpaceId: input.searchSpaceId,
       mongoDbName: input.mongoDbName,
       startedAt: input.startedAtIso,
@@ -914,6 +917,7 @@ export const runIngestionRecordWorkflow = async (
   const runDurationSeconds = (performance.now() - startedAt) / 1_000;
   const runSummaryDocument = buildRunSummaryDocument({
     runId,
+    crawlRunId: options.crawlRunId ?? null,
     searchSpaceId: resolvedSearchSpaceId,
     mongoDbName: resolvedMongoDbName,
     startedAtIso: runStartedAtIso,
@@ -1069,6 +1073,7 @@ export const runIngestionWorkflow = async (
   const runDurationSeconds = (performance.now() - startedAt) / 1_000;
   const runSummaryDocument = buildRunSummaryDocument({
     runId,
+    crawlRunId: resolvedCrawlRunId,
     searchSpaceId: resolvedSearchSpaceId,
     mongoDbName: resolvedMongoDbName,
     startedAtIso: runStartedAtIso,
