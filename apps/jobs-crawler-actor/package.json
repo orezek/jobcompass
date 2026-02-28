@@ -8,6 +8,8 @@
     "node": ">=20"
   },
   "scripts": {
+    "prepare:input": "tsx src/prepare-local-input.ts",
+    "start:local": "tsx src/run-local.ts",
     "start": "node ./dist/main.js",
     "start:prod": "node ./dist/main.js",
     "start:dev": "tsx src/main.ts",
@@ -34,6 +36,7 @@
   },
   "dependencies": {
     "@repo/env-config": "workspace:*",
+    "@repo/job-search-spaces": "workspace:*",
     "apify": "catalog:",
     "crawlee": "catalog:",
     "mongodb": "catalog:",

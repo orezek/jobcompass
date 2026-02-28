@@ -42,7 +42,7 @@ These instructions are app-local extensions of the repository root rules.
 ### 1) Fastify Trigger Mode (MVP default integration path)
 
 - Start the server (`start-server`) and let the crawler trigger ingestion.
-- Trigger endpoint is idempotent and keyed by `{ source, crawlRunId }`.
+- Trigger endpoint is idempotent and keyed by `{ source, searchSpaceId, crawlRunId }`.
 - Trigger request tracking is stored in `ingestion_trigger_requests`.
 
 ### 2) CLI Batch Mode (maintenance/debug)
@@ -57,19 +57,13 @@ These instructions are app-local extensions of the repository root rules.
 - This service reads:
   - `dataset.json`
   - `records/*.html`
-- The trigger payload includes only `{ source, crawlRunId }`; HTML is not sent over HTTP.
-- The crawler is expected to use a full production scan when writing into production collections; sample runs should use a dev DB (same collection names) to avoid corrupting `crawl_job_states`.
-
-### Named Run Profiles (MVP Convention)
-
-- `prod_full`
-  - crawler uses `MONGODB_DB_NAME=jobCompass`
-  - ingestion uses `MONGODB_DB_NAME=jobCompass`
-  - crawler runs full list scan and triggers ingestion
-- `dev_sample`
-  - crawler uses `MONGODB_DB_NAME=job-compass-dev`
-  - ingestion uses `MONGODB_DB_NAME=job-compass-dev`
-  - sample/partial runs are allowed for debugging
+- The trigger payload includes:
+  - `source`
+  - `crawlRunId`
+  - `searchSpaceId`
+  - `mongoDbName`
+- HTML is not sent over HTTP.
+- Database identity for triggered runs should come from the crawler payload, not from hidden local assumptions.
 
 ## Parsing / Extraction Pipeline (Current Behavior)
 
@@ -109,6 +103,7 @@ These instructions are app-local extensions of the repository root rules.
   - run-level summaries, metrics, rates, and skipped/failed audit arrays
 - `ingestion_trigger_requests`
   - idempotent trigger lifecycle tracking for `POST /ingestion/start`
+  - written into the same search-space database as the rest of the run data
 - `crawl_job_states` (shared with crawler)
   - crawler state; this service may prune non-success jobs after ingestion
 
@@ -134,6 +129,9 @@ These instructions are app-local extensions of the repository root rules.
 - If the port is in use, startup now fails fast with a clear error (`EADDRINUSE` path).
 - When testing locally, align the crawler trigger URL with the server port:
   - actor `INGESTION_TRIGGER_URL=http://127.0.0.1:<port>/ingestion/start`
+- Default DB derivation for manual runs is:
+  - `<JOB_COMPASS_DB_PREFIX>-<SEARCH_SPACE_ID>`
+- For trigger-driven runs, prefer the explicit `mongoDbName` sent by the crawler.
 
 ## Testing Guidance
 

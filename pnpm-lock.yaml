@@ -153,6 +153,9 @@ importers:
       '@repo/env-config':
         specifier: workspace:*
         version: link:../../packages/env-config
+      '@repo/job-search-spaces':
+        specifier: workspace:*
+        version: link:../../packages/job-search-spaces
       apify:
         specifier: 'catalog:'
         version: 3.6.0
@@ -199,6 +202,9 @@ importers:
       '@repo/env-config':
         specifier: workspace:*
         version: link:../../packages/env-config
+      '@repo/job-search-spaces':
+        specifier: workspace:*
+        version: link:../../packages/job-search-spaces
       cheerio:
         specifier: 'catalog:'
         version: 1.2.0
@@ -361,6 +367,28 @@ importers:
       typescript-eslint:
         specifier: ^8.37.0
         version: 8.37.0(eslint@9.39.2(jiti@2.6.1))(typescript@5.8.3)
+
+  packages/job-search-spaces:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.3.5
+    devDependencies:
+      '@repo/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@repo/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.0.3
+      eslint:
+        specifier: 'catalog:'
+        version: 9.39.2(jiti@2.6.1)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.8.3
 
   packages/typescript-config:
     dependencies:

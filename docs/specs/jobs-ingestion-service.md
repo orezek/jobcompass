@@ -2,332 +2,134 @@
 
 ## Status
 
-- Owner: JobCompass ingestion / normalization pipeline
-- Scope: Current implementation in `apps/jobs-ingestion-service`
-- Mode: Local-monolith MVP (Fastify trigger + local crawl artifact consumption)
+- Scope: current implementation in `apps/jobs-ingestion-service`
+- Role: downstream parsing/normalization service in the JobCompass pipeline
 
 ## Purpose
 
-`jobs-ingestion-service` transforms crawler artifacts into normalized structured job documents using a combination of:
+The ingestion service reads crawler artifacts, converts detail HTML into clean text, extracts structured job data with Gemini, writes normalized documents, records ingestion summaries, and tracks trigger lifecycle.
 
-- deterministic HTML loading / validation (Cheerio)
-- LLM-based text cleanup (Gemini + LangSmith Hub prompt)
-- LLM-based structured extraction (Gemini + LangSmith Hub prompt)
-- deterministic normalization and schema validation
-- persistence to JSON and MongoDB
+## Core Design
 
-## Non-goals (Current Spec)
+### Trigger-driven ingestion
 
-- Crawling list pages or fetching detail pages directly
-- Remote artifact transport abstraction (bucket/object storage) for the MVP
-- Long-running queue workers (trigger API starts in-process background runs)
-
-## Runtime Environment
-
-- Node.js 24+
-- `fastify` (trigger API)
-- `@langchain/langgraph`
-- `@langchain/google-genai`
-- `langchain` (LangSmith hub prompt pull)
-- `cheerio`
-- `mongodb`
-- `zod`
-
-## Inputs
-
-### A. Batch CLI mode
-
-Input source is filesystem under:
-
-- `INPUT_ROOT_DIR`
-- records dir `INPUT_RECORDS_DIR_NAME`
-
-### B. Trigger API mode (recommended with crawler)
-
-API request body:
+Preferred contract:
 
 ```json
 {
   "source": "jobs.cz",
-  "crawlRunId": "<crawlRunId>"
+  "crawlRunId": "<crawlRunId>",
+  "searchSpaceId": "prague-tech-jobs",
+  "mongoDbName": "job-compass-prague-tech-jobs"
 }
 ```
 
-The service resolves local run folder:
+This makes each ingestion run explicit about:
 
-```text
-<INPUT_ROOT_DIR>/<CRAWL_RUNS_SUBDIR>/<crawlRunId>/
-```
+- artifact identity
+- search-space identity
+- target Mongo database
 
-Required files in run folder:
+### Database naming
 
-- `dataset.json`
-- `records/*.html`
+Manual/default ingestion runs derive DB as:
 
-## Core Pipeline (Per Record)
+- `<JOB_COMPASS_DB_PREFIX>-<SEARCH_SPACE_ID>`
 
-Implemented via `JobParsingGraph`.
+Trigger-driven runs should use:
 
-### Node 1: `loadDetailPage`
+- explicit `mongoDbName` from the crawler payload
 
-Responsibilities:
+## Responsibilities
 
-- resolve `htmlDetailPageKey` to local file path
-- read file (plain HTML or gzip-compressed HTML)
-- parse with Cheerio
-- prune non-content DOM nodes
-- extract cleaned plain-text content
-- run completeness validation
-- compute metadata (hash, bytes, gzip flag)
+Owned here:
 
-Outputs include:
+- idempotent trigger API
+- HTML load + completeness validation
+- deterministic text extraction
+- LLM cleaning
+- LLM structured extraction
+- normalized output writes
+- ingestion summaries
+- trigger lifecycle tracking
+- crawl-state pruning for non-success jobs
 
-- `rawHtml`
-- `textContent`
-- `textContent` prefers the best primary job-content container text when available (single cleaned text copy)
-- detail HTML metadata (`sha256`, bytes, gzip)
-- quality signals (when skipped)
+Not owned here:
 
-### Node 2: `cleanDetailText`
+- list crawling
+- detail-page fetching
+- list reconciliation logic
 
-Responsibilities:
+## Pipeline
 
-- pull LangSmith Hub prompt (`LLM_CLEANER_PROMPT_NAME`, default `jobcompass-job-ad-text-cleaner`)
-- pass `textContent` as prompt input
-- return cleaned text output used for LLM extraction input and persisted to output
+1. `loadDetailPage`
+   - read HTML
+   - parse DOM
+   - extract deterministic text
+   - run completeness gate
 
-### Node 3: `extractDetail`
+2. `cleanDetailText`
+   - prompt: `jobcompass-job-ad-text-cleaner`
+   - remove UI/GDPR/cookie/legal noise
 
-Responsibilities:
+3. `extractDetail`
+   - prompt: `jobcompass-job-ad-structured-extractor`
+   - structured Gemini output validated by local schema
 
-- pull LangSmith Hub prompt (`LLM_EXTRACTOR_PROMPT_NAME`, default `jobcompass-job-ad-structured-extractor`)
-- provide prompt variables from listing + detail page text
-- invoke Gemini structured output using Zod schema
-- normalize extracted output
-- no deterministic field overrides (model output is trusted, then normalized/validated)
+4. `merge`
+   - combine listing + extracted detail + ingestion metadata
 
-### Node 4: `merge`
+## Persisted Text Snapshots
 
-Responsibilities:
+Stored in `normalized_job_ads.rawDetailPage`:
 
-- merge listing snapshot + extracted detail + ingestion metadata
-- attach `rawDetailPage` snapshots:
-  - step-1 static-cleaned text + metadata
-  - step-2 LLM-cleaned text + metadata
-- validate final `unifiedJobAdSchema`
+- `loadDetailPageText`
+- `cleanDetailText`
 
-## Text Transformation Mapping (Source -> Stored Fields)
+Raw HTML remains the audit/reprocessing source of truth on disk.
 
-1. Step 1 (`loadDetailPage`)
-   - source: raw HTML dump (`records/*.html`)
-   - output: static-cleaned text (`loadedDetailPage.textContent`)
-2. Step 2 (`cleanDetailText`)
-   - source: step-1 text
-   - output: LLM-cleaned text (`cleanedDetailText`)
-3. Step 3 (`extractDetail`)
-   - source: step-2 text
-   - output: structured detail object (`detail`)
+## Completeness Gate
 
-Persistence contract:
+The completeness gate is structural-first:
 
-- Raw HTML dump remains the audit/reprocessing source of truth in filesystem artifacts.
-- `normalized_job_ads.rawDetailPage.loadDetailPageText` stores step-1 static-cleaned text.
-- `normalized_job_ads.rawDetailPage.cleanDetailText` stores step-2 LLM-cleaned text.
-- `normalized_job_ads.detail` stores step-3 structured extraction output.
+- prefer known content containers
+- evaluate the best candidate container
+- keep keyword/noise fallback only for unknown templates
 
-## Completeness Gate (Current Strategy)
+## Mongo Collections
 
-This is a critical quality control step in `loadDetailPage`.
+- `normalized_job_ads`
+- `crawl_job_states`
+- `ingestion_run_summaries`
+- `ingestion_trigger_requests`
 
-### Problem it solves
+### Crawl-state prune rule
 
-Avoid sending clearly incomplete / non-job pages to the LLM.
+If ingestion skips or fails a job, remove it from `crawl_job_states` so the crawler can fetch it again on the next run.
 
-### Current strategy
+## Summary Requirements
 
-1. Structural-first validation
-   - detect known primary job-content containers (for Alma/Capybara templates)
-   - if container exists and container text passes min chars/words, page is accepted
+Ingestion summaries must contain:
 
-2. Fallback heuristic validation
-   - use broader keyword/noise heuristics on unknown templates when no known container is found
+- `searchSpaceId`
+- `mongoDbName`
+- totals and rates
+- skipped/failed audit arrays
+- cleaner/extractor/total LLM stats
 
-### Why this matters
+## Important Runtime Fields
 
-This avoids false negatives on custom employer pages where valid job content exists but cookie/legal/footer content distorts whole-page heuristics.
+Env:
 
-## Run Modes
-
-### 1. Batch CLI (`src/app.ts`)
-
-Use when you want to process a local folder directly.
-
-Outputs:
-
-- JSON file (`OUTPUT_JSON_PATH`)
-- optional Mongo writes
-- run summary (optional Mongo)
-
-### 2. Fastify trigger API (`src/server.ts`)
-
-Use when crawler should hand off a completed `crawlRunId`.
-
-Properties:
-
-- idempotent by `source + crawlRunId`
-- trigger request lifecycle persisted in Mongo (`ingestion_trigger_requests`)
-- background run execution
-- `/health` endpoint for readiness checks
-
-## MongoDB Responsibilities
-
-### `normalized_job_ads`
-
-Stores normalized structured job documents (`UnifiedJobAd`).
-
-Traceability:
-
-- top-level `crawlRunId` is stored when known (trigger mode or inferred from local run-folder path)
-- `crawlRunId` may be `null` in generic CLI batch mode
-
-### `ingestion_run_summaries`
-
-Stores one summary doc per ingestion run with:
-
-- counts and rates
-- token/cost metrics
-- skipped and failed job audit arrays
-- parser/model metadata
-
-### `ingestion_trigger_requests`
-
-Stores idempotent trigger state:
-
-- `pending`, `running`, `succeeded`, `completed_with_errors`, `failed`
-- attempts, timestamps, compact result metrics
-
-### `crawl_job_states` (cleanup responsibility only)
-
-Current MVP consistency rule:
-
-- if a job is skipped/failed during ingestion, remove it from `crawl_job_states`
-- also supports one-off alignment command to remove orphaned crawl-state docs not present in `normalized_job_ads`
-
-This ensures future crawler runs retry jobs that did not become usable normalized documents.
-
-## Named Run Profiles (MVP Convention)
-
-Use the same collection names in different Mongo databases.
-
-- `prod_full`
-  - `MONGODB_DB_NAME=jobCompass`
-  - used with crawler-triggered full runs
-- `dev_sample`
-  - `MONGODB_DB_NAME=job-compass-dev`
-  - used for sample/debug runs and integration tests
-
-## Run Summary Semantics (`ingestion_run_summaries`)
-
-Important fields:
-
-- `jobsTotal = jobsProcessed + jobsSkippedIncomplete + jobsFailed`
-- `jobsNonSuccess = jobsSkippedIncomplete + jobsFailed`
-- rate fields in `[0, 1]`
-- `llmCleanerStats`, `llmExtractorStats`, `llmTotalStats` provide per-node and overall token/cost/duration metrics
-- `skippedIncompleteJobs[]` and `failedJobs[]` are audit payloads, not just counts
-
-### `skippedIncompleteJobs[]`
-
-Contains:
-
-- listing metadata (`listing`)
-- `sourceId`, source
-- file references (`htmlDetailPageKey`, `detailHtmlPath`)
-- skip reason
-- quality signals (including structural completeness signals)
-
-### `failedJobs[]`
-
-Contains:
-
-- listing metadata (`listing`)
-- file references
-- `errorName`, `errorMessage`
-
-## Idempotency Rules (Trigger API)
-
-Key: `source + crawlRunId`
-
-Expected behavior:
-
-- first request: claim and start run
-- duplicate while running: return existing running state (deduplicated)
-- duplicate after completion: return existing trigger doc (deduplicated)
-- failed trigger doc can be retried by calling the same endpoint again
-
-## Environment Variables
-
-Defined in `src/app.ts` (`envSchema`).
-
-Key groups:
-
-- logging (`LOG_LEVEL`, `LOG_PRETTY`)
-- local input/handoff (`INPUT_ROOT_DIR`, `CRAWL_RUNS_SUBDIR`, `INPUT_RECORDS_DIR_NAME`)
-- concurrency/sampling (`INGESTION_CONCURRENCY`, `INGESTION_SAMPLE_SIZE`)
-- LLM provider + prompt config (`GEMINI_*`, `LLM_*`)
-- completeness tuning (`DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS`)
-- costs (`GEMINI_INPUT_PRICE_USD_PER_1M_TOKENS`, `GEMINI_OUTPUT_PRICE_USD_PER_1M_TOKENS`)
-- Fastify host/port (`INGESTION_API_HOST`, `INGESTION_API_PORT`)
-- Mongo (`MONGODB_*` collections)
-- parser metadata (`PARSER_VERSION`)
-
-## Operational Constraints / Failure Modes
-
-### Port already in use (`EADDRINUSE`)
-
-- server startup now fails fast
-- operator should change `INGESTION_API_PORT` or stop existing listener
-
-### Missing crawl run directory
-
-Trigger API marks request as failed if the resolved local run folder does not exist.
-
-### Incomplete page false negatives
-
-Handled by structural-first completeness gate; still possible on unknown templates. Diagnose via:
-
-- `ingestion_run_summaries.skippedIncompleteJobs[]`
-- `detailHtmlPath`
-- `qualitySignals`
-
-### LLM dependency failures
-
-Examples:
-
-- missing `GEMINI_API_KEY`
-- missing `LANGSMITH_API_KEY`
-- prompt pull errors
-- model invocation errors
-
-These appear in:
-
-- trigger request status (`ingestion_trigger_requests`)
-- run summary (`jobsFailed`, `failedJobs[]`)
-- logs
-
-## Maintenance / Recovery Commands
-
-### Align crawler state with normalized output
-
-```bash
-pnpm -C apps/jobs-ingestion-service build
-pnpm -C apps/jobs-ingestion-service run align-crawl-state
-```
-
-Use when historical runs left `crawl_job_states` out of sync with `normalized_job_ads`.
-
-## Evolution Path (Intentional Simplicity First)
-
-Current MVP uses local filesystem handoff for speed and simplicity.
-
-Future evolution (not implemented here) can replace local run-folder resolution with an artifact manifest / bucket URI while preserving the trigger contract (`source + crawlRunId`).
+- `JOB_COMPASS_DB_PREFIX`
+- `SEARCH_SPACE_ID`
+- `MONGODB_DB_NAME`
+- `ENABLE_MONGO_WRITE`
+- `MONGODB_URI`
+- `MONGODB_JOBS_COLLECTION`
+- `MONGODB_CRAWL_JOBS_COLLECTION`
+- `MONGODB_RUN_SUMMARIES_COLLECTION`
+- `MONGODB_INGESTION_TRIGGERS_COLLECTION`
+- `INPUT_ROOT_DIR`
+- `CRAWL_RUNS_SUBDIR`
+- `INGESTION_API_PORT`

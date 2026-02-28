@@ -5,6 +5,11 @@ import { z } from 'zod';
 import { PlaywrightCrawler, Dataset, createPlaywrightRouter, log, type LogLevel } from 'crawlee';
 import { Actor, type ProxyConfigurationOptions } from 'apify';
 import { MongoClient } from 'mongodb';
+import {
+  actorRuntimeInputSchema,
+  deriveMongoDbName,
+  type ActorRuntimeInput,
+} from '@repo/job-search-spaces';
 import { envs } from './env-setup.js';
 import {
   CrawlStateRepository,
@@ -26,21 +31,6 @@ import {
 import { extractListingFromCard } from './listing-card-parser.js';
 
 // ------------------ 1. Definition of Schemas & Types ------------------ //
-
-const actorInputSchema = z.object({
-  startUrls: z
-    .array(
-      z.object({
-        url: z.string().url(),
-      }),
-    )
-    .default([{ url: 'https://www.jobs.cz/prace/' }]),
-  maxItems: z.coerce.number().int().positive(),
-  maxConcurrency: z.coerce.number().int().positive().default(1),
-  maxRequestsPerMinute: z.coerce.number().int().positive().default(30),
-  proxyConfiguration: z.custom<ProxyConfigurationOptions>().optional(),
-  debugLog: z.boolean().optional().default(false),
-});
 
 // Output Schema (Zod) for Validation
 const internalJobAdSchema = z.object({
@@ -143,10 +133,6 @@ function parseListingResultsCount(input: string): { rawText: string; count: numb
     rawText,
     count,
   };
-}
-
-function normalizeUrlForComparison(value: string): string {
-  return new URL(value).toString();
 }
 
 type SeedListSummary = {
@@ -287,7 +273,7 @@ async function upsertRunSummaryToMongoBestEffort(
 
 async function triggerIngestionStartBestEffort(
   config: IngestionTriggerConfig,
-  payload: { source: string; crawlRunId: string },
+  payload: { source: string; crawlRunId: string; searchSpaceId: string; mongoDbName: string },
 ): Promise<IngestionTriggerResult> {
   if (!config.enabled) {
     return {
@@ -342,6 +328,8 @@ async function triggerIngestionStartBestEffort(
       log.info('Triggered ingestion service after crawl completion', {
         source: payload.source,
         crawlRunId: payload.crawlRunId,
+        searchSpaceId: payload.searchSpaceId,
+        mongoDbName: payload.mongoDbName,
         ingestionTriggerUrl: config.url,
         responseStatus: response.status,
         accepted: result.accepted,
@@ -351,6 +339,8 @@ async function triggerIngestionStartBestEffort(
       log.warning('Ingestion trigger request returned non-OK response (best effort)', {
         source: payload.source,
         crawlRunId: payload.crawlRunId,
+        searchSpaceId: payload.searchSpaceId,
+        mongoDbName: payload.mongoDbName,
         ingestionTriggerUrl: config.url,
         responseStatus: response.status,
         responseBody,
@@ -363,6 +353,8 @@ async function triggerIngestionStartBestEffort(
     log.warning('Failed to trigger ingestion service after crawl completion (best effort)', {
       source: payload.source,
       crawlRunId: payload.crawlRunId,
+      searchSpaceId: payload.searchSpaceId,
+      mongoDbName: payload.mongoDbName,
       ingestionTriggerUrl: config.url,
       timeoutMs: config.timeoutMs,
       error,
@@ -711,39 +703,17 @@ if (!rawInput) {
     ].join(' '),
   );
 }
-const input = actorInputSchema.parse(rawInput);
-if (envs.MVP_ENFORCE_FIXED_START_URL_SCOPE) {
-  if (input.startUrls.length !== 1) {
-    throw new Error(
-      [
-        'MVP fixed crawl scope is enforced and requires exactly one start URL.',
-        `Configured fixed URL: ${envs.MVP_FIXED_START_URL}`,
-        `Received startUrls count: ${input.startUrls.length}`,
-      ].join(' '),
-    );
-  }
-
-  const providedStartUrl = input.startUrls[0]?.url;
-  if (!providedStartUrl) {
-    throw new Error('MVP fixed crawl scope is enforced but the provided start URL is missing.');
-  }
-
-  const normalizedProvidedStartUrl = normalizeUrlForComparison(providedStartUrl);
-  const normalizedFixedStartUrl = normalizeUrlForComparison(envs.MVP_FIXED_START_URL);
-
-  if (normalizedProvidedStartUrl !== normalizedFixedStartUrl) {
-    throw new Error(
-      [
-        'MVP fixed crawl scope is enforced and the provided start URL does not match.',
-        `Expected: ${normalizedFixedStartUrl}`,
-        `Received: ${normalizedProvidedStartUrl}`,
-      ].join(' '),
-    );
-  }
-}
+const input = actorRuntimeInputSchema.parse(rawInput) as ActorRuntimeInput & {
+  proxyConfiguration?: ProxyConfigurationOptions;
+};
 
 const crawlRunId = randomUUID();
 const startUrls = input.startUrls;
+const mongoDbName = deriveMongoDbName({
+  dbPrefix: envs.JOB_COMPASS_DB_PREFIX,
+  searchSpaceId: input.searchSpaceId,
+  explicitDbName: envs.MONGODB_DB_NAME,
+});
 const runStartedAt = new Date();
 const runStartedAtMs = Date.now();
 const appRootDir = actorAppRootDir;
@@ -752,7 +722,7 @@ sharedRunOutputPaths = buildSharedRunOutputPaths(localSharedScrapedJobsDir, craw
 const mongoRunSummaryConfig: CrawlRunSummaryMongoConfig = {
   enabled: envs.ENABLE_MONGO_RUN_SUMMARY_WRITE,
   mongoUri: envs.MONGODB_URI,
-  dbName: envs.MONGODB_DB_NAME,
+  dbName: mongoDbName,
   collectionName: envs.MONGODB_CRAWL_RUN_SUMMARIES_COLLECTION,
 };
 const ingestionTriggerConfig: IngestionTriggerConfig = {
@@ -767,7 +737,7 @@ if (!envs.MONGODB_URI) {
 }
 const crawlStateRepo = new CrawlStateRepository({
   mongoUri: envs.MONGODB_URI,
-  dbName: envs.MONGODB_DB_NAME,
+  dbName: mongoDbName,
   collectionName: envs.MONGODB_CRAWL_JOBS_COLLECTION,
 });
 
@@ -846,18 +816,23 @@ await upsertRunSummaryToMongoBestEffort(
   crawlRunId,
   {
     source: 'jobs.cz',
+    searchSpaceId: input.searchSpaceId,
+    mongoDbName,
     status: 'running',
     startedAt: runStartedAt.toISOString(),
     input: {
+      searchSpaceId: input.searchSpaceId,
       startUrlsCount: startUrls.length,
-      startUrls: startUrls.map((item) => item.url),
+      startUrls: startUrls.map((item: ActorRuntimeInput['startUrls'][number]) => item.url),
       maxItems: input.maxItems,
       maxRequestsPerCrawlSafetyCap: Math.max(input.maxItems * 5, 50),
       maxConcurrency: input.maxConcurrency,
       maxRequestsPerMinute: input.maxRequestsPerMinute,
       debugLog: input.debugLog ?? false,
+      allowInactiveMarkingOnPartialRuns: input.allowInactiveMarkingOnPartialRuns,
       proxyConfigured: Boolean(input.proxyConfiguration),
       localSharedScrapedJobsDir,
+      mongoDbName,
     },
   },
   'start',
@@ -867,11 +842,11 @@ let crawlerRunError: unknown = null;
 let listPhaseCompleted = false;
 let detailPhaseStarted = false;
 let detailPhaseCompleted = false;
-let partialListScanGuardTriggered = false;
+let partialRunInactiveMarkingBlocked = false;
 try {
   const listCrawler = createCrawler(Math.max(input.maxItems * 5, 50));
   await listCrawler.run(
-    startUrls.map((req) => ({
+    startUrls.map((req: ActorRuntimeInput['startUrls'][number]) => ({
       ...req,
       label: 'LIST',
       userData: {
@@ -881,22 +856,8 @@ try {
     })),
   );
   listPhaseCompleted = true;
-
-  const isUsingProdCrawlStateDb = envs.MONGODB_DB_NAME === envs.PROD_CRAWL_STATE_DB_NAME;
-  if (
-    envs.ENFORCE_FULL_SCAN_FOR_PROD_CRAWL_STATE &&
-    isUsingProdCrawlStateDb &&
-    maxItemsEnqueueGuardTriggered
-  ) {
-    partialListScanGuardTriggered = true;
-    throw new Error(
-      [
-        `Refusing to reconcile a partial list scan into production crawl-state DB "${envs.MONGODB_DB_NAME}".`,
-        'The list phase stopped early because maxItems was reached while collecting listings.',
-        `Use a dev DB for sample runs (for example MONGODB_DB_NAME=job-compass-dev), or run a full scan with the fixed MVP URL (${envs.MVP_FIXED_START_URL}).`,
-      ].join(' '),
-    );
-  }
+  partialRunInactiveMarkingBlocked =
+    maxItemsEnqueueGuardTriggered && !input.allowInactiveMarkingOnPartialRuns;
 
   const reconcileObservedAtIso = new Date().toISOString();
   const reconcileResult = await crawlStateRepo.reconcileListings({
@@ -904,8 +865,13 @@ try {
     crawlRunId,
     observedAtIso: reconcileObservedAtIso,
     listings: Array.from(collectedListingsBySourceId.values()),
-    forceSkipInactiveMarking: failedListRequests > 0,
-    forceSkipInactiveMarkingReason: failedListRequests > 0 ? 'failed_list_requests' : undefined,
+    forceSkipInactiveMarking: failedListRequests > 0 || partialRunInactiveMarkingBlocked,
+    forceSkipInactiveMarkingReason:
+      failedListRequests > 0
+        ? 'failed_list_requests'
+        : partialRunInactiveMarkingBlocked
+          ? 'partial_list_scan'
+          : undefined,
     massInactivationGuardMinActiveCount: envs.CRAWL_INACTIVE_GUARD_MIN_ACTIVE_COUNT,
     massInactivationGuardMinSeenRatio: envs.CRAWL_INACTIVE_GUARD_MIN_SEEN_RATIO,
   });
@@ -928,7 +894,8 @@ try {
     inactiveMarkingSkipped,
     inactiveMarkingSkipReason,
     failedListRequests,
-    mongoDbName: envs.MONGODB_DB_NAME,
+    searchSpaceId: input.searchSpaceId,
+    mongoDbName,
     mongoCollection: envs.MONGODB_CRAWL_JOBS_COLLECTION,
   });
 
@@ -1016,6 +983,8 @@ const ingestionTrigger = shouldTriggerIngestion
   ? await triggerIngestionStartBestEffort(ingestionTriggerConfig, {
       source: 'jobs.cz',
       crawlRunId,
+      searchSpaceId: input.searchSpaceId,
+      mongoDbName,
     })
   : ({
       enabled: ingestionTriggerConfig.enabled,
@@ -1026,26 +995,31 @@ const ingestionTrigger = shouldTriggerIngestion
 const runSummary = {
   crawlRunId,
   source: 'jobs.cz',
+  searchSpaceId: input.searchSpaceId,
+  mongoDbName,
   status: runStatus,
   startedAt: runStartedAt.toISOString(),
   finishedAt: runEndedAt.toISOString(),
   runDurationSeconds: Number((runDurationMs / 1000).toFixed(3)),
   input: {
+    searchSpaceId: input.searchSpaceId,
     startUrlsCount: startUrls.length,
-    startUrls: startUrls.map((item) => item.url),
+    startUrls: startUrls.map((item: ActorRuntimeInput['startUrls'][number]) => item.url),
     maxItems: input.maxItems,
     maxRequestsPerCrawlSafetyCap: Math.max(input.maxItems * 5, 50),
     maxConcurrency: input.maxConcurrency,
     maxRequestsPerMinute: input.maxRequestsPerMinute,
     debugLog: input.debugLog ?? false,
+    allowInactiveMarkingOnPartialRuns: input.allowInactiveMarkingOnPartialRuns,
     proxyConfigured: Boolean(input.proxyConfiguration),
+    mongoDbName,
   },
   outcome: {
     stopReason: runStopReason,
     listPhaseCompleted,
     detailPhaseStarted,
     detailPhaseCompleted,
-    partialListScanGuardTriggered,
+    partialRunInactiveMarkingBlocked,
     maxItemsAbortTriggered,
     maxItemsEnqueueGuardTriggered,
     failedRequests,
@@ -1100,9 +1074,8 @@ const runSummary = {
   },
   ingestionTrigger,
   crawlState: {
-    mongoDbName: envs.MONGODB_DB_NAME,
-    isProdCrawlStateDb: envs.MONGODB_DB_NAME === envs.PROD_CRAWL_STATE_DB_NAME,
-    prodCrawlStateDbName: envs.PROD_CRAWL_STATE_DB_NAME,
+    searchSpaceId: input.searchSpaceId,
+    mongoDbName,
     mongoCollection: envs.MONGODB_CRAWL_JOBS_COLLECTION,
   },
   failedRequestUrls,
@@ -1117,6 +1090,8 @@ await upsertRunSummaryToMongoBestEffort(
   crawlRunId,
   {
     source: 'jobs.cz',
+    searchSpaceId: input.searchSpaceId,
+    mongoDbName,
     status: runStatus,
     startedAt: runSummary.startedAt,
     finishedAt: runSummary.finishedAt,

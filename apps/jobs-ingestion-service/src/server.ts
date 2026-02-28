@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import Fastify from 'fastify';
 import { MongoClient } from 'mongodb';
+import { searchSpaceIdSchema } from '@repo/job-search-spaces';
 import { z } from 'zod';
 
 import { appRootDir, envs, inputRootDir, logger, runIngestionWorkflow } from './app.js';
@@ -10,6 +11,8 @@ import { appRootDir, envs, inputRootDir, logger, runIngestionWorkflow } from './
 const triggerRequestSchema = z.object({
   source: z.string().min(1),
   crawlRunId: z.string().min(1),
+  searchSpaceId: searchSpaceIdSchema,
+  mongoDbName: z.string().min(1),
 });
 
 type TriggerRequest = z.infer<typeof triggerRequestSchema>;
@@ -25,6 +28,8 @@ type IngestionTriggerDoc = {
   id: string;
   source: string;
   crawlRunId: string;
+  searchSpaceId: string;
+  mongoDbName: string;
   status: IngestionTriggerStatus;
   requestedAt: string;
   startedAt?: string;
@@ -49,7 +54,8 @@ type IngestionTriggerDoc = {
 
 const runningTriggers = new Map<string, Promise<void>>();
 
-const triggerDocId = (source: string, crawlRunId: string): string => `${source}:${crawlRunId}`;
+const triggerDocId = (source: string, crawlRunId: string, searchSpaceId: string): string =>
+  `${source}:${searchSpaceId}:${crawlRunId}`;
 
 const resolveTriggerInputRunDir = (crawlRunId: string): string =>
   path.join(inputRootDir, envs.CRAWL_RUNS_SUBDIR, crawlRunId);
@@ -73,11 +79,10 @@ const getRequiredMongoUri = (): string => {
 
 const ensureTriggerIndexes = async (
   mongoClient: MongoClient,
+  dbName: string,
   collectionName: string,
 ): Promise<void> => {
-  const collection = mongoClient
-    .db(envs.MONGODB_DB_NAME)
-    .collection<IngestionTriggerDoc>(collectionName);
+  const collection = mongoClient.db(dbName).collection<IngestionTriggerDoc>(collectionName);
   await collection.createIndex(
     { source: 1, crawlRunId: 1 },
     { unique: true, name: 'source_crawlRunId_unique' },
@@ -85,15 +90,15 @@ const ensureTriggerIndexes = async (
   await collection.createIndex({ status: 1, updatedAt: -1 }, { name: 'status_updatedAt' });
 };
 
-const getTriggerCollection = (mongoClient: MongoClient) =>
+const getTriggerCollection = (mongoClient: MongoClient, dbName: string) =>
   mongoClient
-    .db(envs.MONGODB_DB_NAME)
+    .db(dbName)
     .collection<IngestionTriggerDoc>(envs.MONGODB_INGESTION_TRIGGERS_COLLECTION);
 
 const seedTriggerDoc = async (mongoClient: MongoClient, trigger: TriggerRequest): Promise<void> => {
   const nowIso = new Date().toISOString();
-  const id = triggerDocId(trigger.source, trigger.crawlRunId);
-  const collection = getTriggerCollection(mongoClient);
+  const id = triggerDocId(trigger.source, trigger.crawlRunId, trigger.searchSpaceId);
+  const collection = getTriggerCollection(mongoClient, trigger.mongoDbName);
 
   await collection.updateOne(
     { id },
@@ -102,6 +107,8 @@ const seedTriggerDoc = async (mongoClient: MongoClient, trigger: TriggerRequest)
         id,
         source: trigger.source,
         crawlRunId: trigger.crawlRunId,
+        searchSpaceId: trigger.searchSpaceId,
+        mongoDbName: trigger.mongoDbName,
         status: 'pending' satisfies IngestionTriggerStatus,
         requestedAt: nowIso,
         updatedAt: nowIso,
@@ -119,8 +126,8 @@ const claimTrigger = async (
   { claimed: true; doc: IngestionTriggerDoc } | { claimed: false; doc: IngestionTriggerDoc | null }
 > => {
   const nowIso = new Date().toISOString();
-  const id = triggerDocId(trigger.source, trigger.crawlRunId);
-  const collection = getTriggerCollection(mongoClient);
+  const id = triggerDocId(trigger.source, trigger.crawlRunId, trigger.searchSpaceId);
+  const collection = getTriggerCollection(mongoClient, trigger.mongoDbName);
 
   await seedTriggerDoc(mongoClient, trigger);
 
@@ -158,9 +165,9 @@ const updateTriggerSuccess = async (
   outputJsonPath: string,
   result: Awaited<ReturnType<typeof runIngestionWorkflow>>,
 ): Promise<void> => {
-  const collection = getTriggerCollection(mongoClient);
+  const collection = getTriggerCollection(mongoClient, trigger.mongoDbName);
   const nowIso = new Date().toISOString();
-  const id = triggerDocId(trigger.source, trigger.crawlRunId);
+  const id = triggerDocId(trigger.source, trigger.crawlRunId, trigger.searchSpaceId);
 
   await collection.updateOne(
     { id },
@@ -196,9 +203,9 @@ const updateTriggerFailure = async (
   inputRunDir: string,
   error: unknown,
 ): Promise<void> => {
-  const collection = getTriggerCollection(mongoClient);
+  const collection = getTriggerCollection(mongoClient, trigger.mongoDbName);
   const nowIso = new Date().toISOString();
-  const id = triggerDocId(trigger.source, trigger.crawlRunId);
+  const id = triggerDocId(trigger.source, trigger.crawlRunId, trigger.searchSpaceId);
   const normalizedError = error instanceof Error ? error : new Error(String(error));
 
   await collection.updateOne(
@@ -228,6 +235,8 @@ const runTriggerInBackground = async (
     component: 'IngestionApiTrigger',
     source: trigger.source,
     crawlRunId: trigger.crawlRunId,
+    searchSpaceId: trigger.searchSpaceId,
+    mongoDbName: trigger.mongoDbName,
   });
 
   try {
@@ -241,6 +250,8 @@ const runTriggerInBackground = async (
   triggerLogger.info({ inputRunDir, outputPath }, 'Starting ingestion run for crawl trigger');
   const result = await runIngestionWorkflow({
     crawlRunId: trigger.crawlRunId,
+    searchSpaceId: trigger.searchSpaceId,
+    mongoDbNameOverride: trigger.mongoDbName,
     inputRootDirOverride: inputRunDir,
     recordsDirNameOverride: envs.INPUT_RECORDS_DIR_NAME,
     sampleSizeOverride: null,
@@ -272,7 +283,6 @@ async function main(): Promise<void> {
   try {
     await mongoClient.connect();
     mongoConnected = true;
-    await ensureTriggerIndexes(mongoClient, envs.MONGODB_INGESTION_TRIGGERS_COLLECTION);
 
     server.get('/health', async () => ({ ok: true }));
 
@@ -288,15 +298,24 @@ async function main(): Promise<void> {
       }
 
       const trigger = parsed.data;
-      const id = triggerDocId(trigger.source, trigger.crawlRunId);
+      await ensureTriggerIndexes(
+        mongoClient,
+        trigger.mongoDbName,
+        envs.MONGODB_INGESTION_TRIGGERS_COLLECTION,
+      );
+      const id = triggerDocId(trigger.source, trigger.crawlRunId, trigger.searchSpaceId);
       const triggerLogger = apiLogger.child({
         source: trigger.source,
         crawlRunId: trigger.crawlRunId,
+        searchSpaceId: trigger.searchSpaceId,
+        mongoDbName: trigger.mongoDbName,
       });
 
       const runningPromise = runningTriggers.get(id);
       if (runningPromise) {
-        const existing = await getTriggerCollection(mongoClient).findOne({ id });
+        const existing = await getTriggerCollection(mongoClient, trigger.mongoDbName).findOne({
+          id,
+        });
         reply.code(202);
         return {
           ok: true,
@@ -354,7 +373,7 @@ async function main(): Promise<void> {
         host: envs.INGESTION_API_HOST,
         port: envs.INGESTION_API_PORT,
         crawlRunsSubdir: envs.CRAWL_RUNS_SUBDIR,
-        mongoDbName: envs.MONGODB_DB_NAME,
+        mongoDbNameDefault: envs.MONGODB_DB_NAME,
         mongoTriggersCollection: envs.MONGODB_INGESTION_TRIGGERS_COLLECTION,
       },
       'Ingestion Fastify API listening',

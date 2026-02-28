@@ -4,6 +4,7 @@ import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { loadEnv } from '@repo/env-config';
+import { deriveMongoDbName, searchSpaceIdSchema } from '@repo/job-search-spaces';
 import { z } from 'zod';
 
 import { GeminiDetailTextCleaner, GeminiJobDetailExtractor } from './extraction.js';
@@ -58,6 +59,13 @@ const thinkingLevelSchema = z.preprocess(
 );
 
 const logLevelSchema = z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']);
+const toOptionalString = z.preprocess((value) => {
+  if (typeof value === 'string' && value.trim() === '') {
+    return undefined;
+  }
+
+  return value;
+}, z.string().optional());
 
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -84,8 +92,10 @@ export const envSchema = z.object({
   INGESTION_API_HOST: z.string().default('127.0.0.1'),
   INGESTION_API_PORT: z.coerce.number().int().min(1).max(65_535).default(3010),
   ENABLE_MONGO_WRITE: toBoolean.default(false),
+  JOB_COMPASS_DB_PREFIX: z.string().trim().min(1).default('job-compass'),
+  SEARCH_SPACE_ID: searchSpaceIdSchema.default('default'),
   MONGODB_URI: z.string().optional(),
-  MONGODB_DB_NAME: z.string().default('jobCompass'),
+  MONGODB_DB_NAME: toOptionalString,
   MONGODB_JOBS_COLLECTION: z.string().default('normalized_job_ads'),
   MONGODB_CRAWL_JOBS_COLLECTION: z.string().default('crawl_job_states'),
   MONGODB_RUN_SUMMARIES_COLLECTION: z.string().default('ingestion_run_summaries'),
@@ -93,7 +103,10 @@ export const envSchema = z.object({
   PARSER_VERSION: z.string().default('jobs-ingestion-service-v0.9.0'),
 });
 
-export type EnvSchema = z.infer<typeof envSchema>;
+type ParsedEnvSchema = z.infer<typeof envSchema>;
+export type EnvSchema = Omit<ParsedEnvSchema, 'MONGODB_DB_NAME'> & {
+  MONGODB_DB_NAME: string;
+};
 
 type ParseRunStats = {
   avgTimeToProcssSeconds: number;
@@ -186,6 +199,8 @@ const llmRunStatsSchema = z.object({
 const ingestionRunSummarySchema = z.object({
   id: z.string(),
   runId: z.string(),
+  searchSpaceId: z.string(),
+  mongoDbName: z.string(),
   startedAt: z.iso.datetime(),
   completedAt: z.iso.datetime(),
   runDurationSeconds: z.number().nonnegative(),
@@ -226,7 +241,15 @@ const ingestionRunSummarySchema = z.object({
 
 type IngestionRunSummary = z.infer<typeof ingestionRunSummarySchema>;
 
-export const envs: EnvSchema = loadEnv(envSchema, import.meta.url);
+const parsedEnv = loadEnv(envSchema, import.meta.url);
+export const envs: EnvSchema = {
+  ...parsedEnv,
+  MONGODB_DB_NAME: deriveMongoDbName({
+    dbPrefix: parsedEnv.JOB_COMPASS_DB_PREFIX,
+    searchSpaceId: parsedEnv.SEARCH_SPACE_ID,
+    explicitDbName: parsedEnv.MONGODB_DB_NAME,
+  }),
+};
 export const logger = createLogger(envs.LOG_LEVEL, { pretty: envs.LOG_PRETTY });
 const llmExtractorPromptName = envs.LLM_EXTRACTOR_PROMPT_NAME;
 const llmCleanerPromptName = envs.LLM_CLEANER_PROMPT_NAME;
@@ -378,6 +401,8 @@ const buildRunStats = (parsed: UnifiedJobAd[]): ParseRunStats => {
 
 const buildRunSummaryDocument = (input: {
   runId: string;
+  searchSpaceId: string;
+  mongoDbName: string;
   startedAtIso: string;
   completedAtIso: string;
   runDurationSeconds: number;
@@ -399,6 +424,8 @@ const buildRunSummaryDocument = (input: {
     return ingestionRunSummarySchema.parse({
       id: input.runId,
       runId: input.runId,
+      searchSpaceId: input.searchSpaceId,
+      mongoDbName: input.mongoDbName,
       startedAt: input.startedAtIso,
       completedAt: input.completedAtIso,
       runDurationSeconds: input.runDurationSeconds,
@@ -681,6 +708,8 @@ export type IngestionRunStatus = 'succeeded' | 'completed_with_errors';
 export type RunIngestionWorkflowOptions = {
   runId?: string;
   crawlRunId?: string | null;
+  searchSpaceId?: string | null;
+  mongoDbNameOverride?: string | null;
   inputRootDirOverride?: string;
   recordsDirNameOverride?: string;
   sampleSizeOverride?: number | null;
@@ -690,6 +719,8 @@ export type RunIngestionWorkflowOptions = {
 export type RunIngestionWorkflowResult = {
   runId: string;
   crawlRunId: string | null;
+  searchSpaceId: string;
+  mongoDbName: string;
   status: IngestionRunStatus;
   runSummaryDocument: IngestionRunSummary;
   structuredParsed: UnifiedJobAd[];
@@ -716,6 +747,16 @@ const inferCrawlRunIdFromInputRootDir = (resolvedInputRootDir: string): string |
   return null;
 };
 
+const resolveIngestionMongoDbName = (input: {
+  searchSpaceId?: string | null;
+  mongoDbNameOverride?: string | null;
+}): string =>
+  deriveMongoDbName({
+    dbPrefix: envs.JOB_COMPASS_DB_PREFIX,
+    searchSpaceId: input.searchSpaceId ?? envs.SEARCH_SPACE_ID,
+    explicitDbName: input.mongoDbNameOverride ?? envs.MONGODB_DB_NAME,
+  });
+
 export const runIngestionWorkflow = async (
   options: RunIngestionWorkflowOptions = {},
 ): Promise<RunIngestionWorkflowResult> => {
@@ -736,15 +777,21 @@ export const runIngestionWorkflow = async (
     options.crawlRunId !== undefined
       ? options.crawlRunId
       : inferCrawlRunIdFromInputRootDir(resolvedInputRootDir);
+  const resolvedSearchSpaceId = options.searchSpaceId ?? envs.SEARCH_SPACE_ID;
+  const resolvedMongoDbName = resolveIngestionMongoDbName({
+    searchSpaceId: resolvedSearchSpaceId,
+    mongoDbNameOverride: options.mongoDbNameOverride,
+  });
 
   logger.info(
     {
       runId,
       crawlRunId: resolvedCrawlRunId,
+      searchSpaceId: resolvedSearchSpaceId,
       inputRootDir: resolvedInputRootDir,
       outputJsonPath: resolvedOutputJsonPath,
       enableMongoWrite: envs.ENABLE_MONGO_WRITE,
-      mongoDbName: envs.MONGODB_DB_NAME,
+      mongoDbName: resolvedMongoDbName,
       mongoCollectionStructured: envs.MONGODB_JOBS_COLLECTION,
       mongoCollectionCrawlJobs: envs.MONGODB_CRAWL_JOBS_COLLECTION,
       mongoCollectionRunSummaries: envs.MONGODB_RUN_SUMMARIES_COLLECTION,
@@ -792,7 +839,7 @@ export const runIngestionWorkflow = async (
     mongoWrittenStructured = await writeOutputToMongo(
       {
         mongoUri: envs.MONGODB_URI,
-        dbName: envs.MONGODB_DB_NAME,
+        dbName: resolvedMongoDbName,
         collectionName: envs.MONGODB_JOBS_COLLECTION,
       },
       structuredParsed,
@@ -802,7 +849,7 @@ export const runIngestionWorkflow = async (
     mongoPrunedCrawlStateNonSuccess = await pruneCrawlStateByDocIds(
       {
         mongoUri: envs.MONGODB_URI,
-        dbName: envs.MONGODB_DB_NAME,
+        dbName: resolvedMongoDbName,
         crawlJobsCollectionName: envs.MONGODB_CRAWL_JOBS_COLLECTION,
       },
       [
@@ -817,6 +864,8 @@ export const runIngestionWorkflow = async (
   const runDurationSeconds = (performance.now() - startedAt) / 1_000;
   const runSummaryDocument = buildRunSummaryDocument({
     runId,
+    searchSpaceId: resolvedSearchSpaceId,
+    mongoDbName: resolvedMongoDbName,
     startedAtIso: runStartedAtIso,
     completedAtIso: runCompletedAtIso,
     runDurationSeconds,
@@ -835,7 +884,7 @@ export const runIngestionWorkflow = async (
     mongoWrittenRunSummary = await writeOutputToMongo(
       {
         mongoUri: envs.MONGODB_URI,
-        dbName: envs.MONGODB_DB_NAME,
+        dbName: resolvedMongoDbName,
         collectionName: envs.MONGODB_RUN_SUMMARIES_COLLECTION,
       },
       [runSummaryDocument],
@@ -898,6 +947,8 @@ export const runIngestionWorkflow = async (
   return {
     runId,
     crawlRunId: resolvedCrawlRunId,
+    searchSpaceId: resolvedSearchSpaceId,
+    mongoDbName: resolvedMongoDbName,
     status: failed > 0 || skippedIncomplete > 0 ? 'completed_with_errors' : 'succeeded',
     runSummaryDocument,
     structuredParsed,

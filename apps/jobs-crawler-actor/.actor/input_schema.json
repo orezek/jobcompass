@@ -3,12 +3,19 @@
   "type": "object",
   "schemaVersion": 1,
   "properties": {
+    "searchSpaceId": {
+      "title": "Search Space ID",
+      "type": "string",
+      "description": "Logical search-space identifier used for DB derivation and run traceability. In local mode this is usually generated from search-space config.",
+      "default": "default",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
     "startUrls": {
       "title": "Start URLs",
       "type": "array",
-      "description": "Optional list of URLs from jobs.cz search results to start scraping from. If omitted, the actor starts from the default Jobs.cz search page.",
+      "description": "List of Jobs.cz search-result URLs to crawl. In local mode this is usually generated from a checked-in search-space JSON file.",
       "editor": "requestListSources",
-      "prefill": [{ "url": "https://www.jobs.cz/prace/?field%5B%5D=200900012" }]
+      "prefill": [{ "url": "https://www.jobs.cz/prace/" }]
     },
     "maxItems": {
       "title": "Max Items",
@@ -43,7 +50,13 @@
       "type": "boolean",
       "description": "Turn on verbose logging for debugging.",
       "default": false
+    },
+    "allowInactiveMarkingOnPartialRuns": {
+      "title": "Allow Inactive Marking On Partial Runs",
+      "type": "boolean",
+      "description": "If false, a partial list scan must not mark missing jobs inactive during reconciliation. Recommended default is false.",
+      "default": false
     }
   },
-  "required": ["maxItems"]
+  "required": ["maxItems", "startUrls"]
 }

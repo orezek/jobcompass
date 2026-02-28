@@ -43,22 +43,20 @@ These instructions are app-local extensions of the repository root rules.
   - optionally triggering `jobs-ingestion-service` via Fastify.
 - It is **not** responsible for LLM parsing/normalization of job ads (that belongs to `jobs-ingestion-service`).
 
-## Fixed MVP Crawl Scope (Important)
+## Search-Space Driven Scope (Important)
 
-- MVP uses a **fixed jobs.cz start URL** (Praha + selected categories + 0 km radius).
-- This is intentional and forms the stable dataset for ETL reliability, analytics, RAG/CAG experiments, and UI/dashboard development.
-- The fixed scope currently means:
-  - locality: Praha
-  - radius: `0 km`
-  - categories:
-    - `IS/IT: Správa systémů a HW`
-    - `IS/IT: Vývoj aplikací a systémů`
-    - `IS/IT: Konzultace, analýzy a projektové řízení`
-    - `Technika a vývoj`
-- The actor now supports enforcing this scope with env vars:
-  - `MVP_ENFORCE_FIXED_START_URL_SCOPE=true`
-  - `MVP_FIXED_START_URL=<fixed jobs.cz URL>`
-- Do not relax or replace this behavior unless explicitly requested.
+- The crawler is generic for `jobs.cz` search URLs.
+- Human-maintained crawl scope is defined through checked-in search spaces:
+  - `search-spaces/*.json`
+- Each search space owns:
+  - `searchSpaceId`
+  - `startUrls`
+  - crawl defaults
+  - reconciliation policy
+- Current known search spaces include:
+  - `default`
+  - `prague-tech-jobs`
+- Do not hardcode fixed-scope behavior in runtime logic when a search-space config can express it.
 
 ## Incremental Crawl State Semantics
 
@@ -67,29 +65,16 @@ These instructions are app-local extensions of the repository root rules.
 - Detail scraping selection is based on **existence of `(source, sourceId)` in `crawl_job_states`**, not `isActive`.
 - `isActive` is currently used for active/inactive bookkeeping and reporting, not for detail-fetch dedupe.
 
-## Production vs Dev Run Policy (Critical)
+## Reconciliation Policy (Critical)
 
-- Partial/sample runs can corrupt production crawl state when inactive marking is enabled.
-- For this reason, the actor now supports a guard that blocks partial list scans from reconciling into the production crawl-state DB:
-  - `ENFORCE_FULL_SCAN_FOR_PROD_CRAWL_STATE=true`
-  - `PROD_CRAWL_STATE_DB_NAME=jobCompass`
-- If a run stops early at list-collection time because `maxItems` was reached (`maxItemsEnqueueGuardTriggered=true`), the actor **fails before reconciliation** when using the production crawl-state DB.
-
-### Named Run Profiles (MVP Convention)
-
-- `prod_full`
-  - `MONGODB_DB_NAME=jobCompass`
-  - full list scan only (no `maxItems`-limited partial runs)
-  - `ENABLE_INGESTION_TRIGGER=true` when running the end-to-end local pipeline
-- `dev_sample`
-  - `MONGODB_DB_NAME=job-compass-dev`
-  - sample/partial runs allowed for debugging (`maxItems` in actor input)
-  - `ENABLE_INGESTION_TRIGGER=false` unless explicitly testing handoff/ingestion
-
-### Operational Rule (MVP)
-
-- Production state runs (`prod_full`) must be full scans.
-- Sample/dev runs (`dev_sample`) must use a separate DB (same collection names are fine).
+- Partial runs can corrupt crawl state if they mark unseen jobs inactive.
+- This must be controlled explicitly per search space:
+  - `reconciliation.allowInactiveMarkingOnPartialRuns`
+- Recommended default is `false`.
+- Behavior:
+  - full run: inactive marking allowed
+  - partial run: missing jobs must not be marked inactive unless explicitly allowed
+- Do not infer this safety rule from DB naming.
 
 ## Local Shared Output Contract (Crawler -> Ingestion)
 
@@ -106,8 +91,11 @@ These instructions are app-local extensions of the repository root rules.
 - When enabled, the actor calls `jobs-ingestion-service` after crawl finalization:
   - `ENABLE_INGESTION_TRIGGER=true`
   - `INGESTION_TRIGGER_URL=http://127.0.0.1:<port>/ingestion/start`
-- Trigger payload is minimal:
-  - `{ source: "jobs.cz", crawlRunId: "<uuid>" }`
+- Trigger payload must include:
+  - `source`
+  - `crawlRunId`
+  - `searchSpaceId`
+  - `mongoDbName`
 - The ingestion service is expected to be idempotent.
 
 ## Run Summary Expectations
@@ -123,8 +111,11 @@ These instructions are app-local extensions of the repository root rules.
 
 - Preserve local Apify `INPUT.json` for developer runs:
   - `storage/key_value_stores/default/INPUT.json`
+- Treat that file as a generated runtime artifact in local mode, not the primary human config surface.
+- Prefer maintaining `search-spaces/*.json` and generating local input with:
+  - `pnpm -C apps/jobs-crawler-actor prepare:input -- --search-space <id>`
 - For automated tests / ad-hoc verification:
   - prefer `CRAWLEE_STORAGE_DIR=$(mktemp -d ...)`
   - disable ingestion trigger unless needed
-  - use a temporary/dev DB (`MONGODB_DB_NAME=job-compass-dev-*`)
-- Avoid running sample tests against production crawl-state DB (`jobCompass`).
+  - prefer a dedicated search space or explicit `MONGODB_DB_NAME` override
+- Avoid relying on implicit DB semantics when search-space-derived DB naming is available.

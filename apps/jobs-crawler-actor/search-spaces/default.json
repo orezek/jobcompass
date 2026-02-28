@@ -1,0 +1,20 @@
+{
+  "searchSpaceId": "default",
+  "description": "Generic Jobs.cz crawl starting from the site-wide jobs listing.",
+  "startUrls": ["https://www.jobs.cz/prace/"],
+  "crawlDefaults": {
+    "maxItems": 100,
+    "maxConcurrency": 1,
+    "maxRequestsPerMinute": 30,
+    "debugLog": false,
+    "proxyConfiguration": {
+      "useApifyProxy": false
+    }
+  },
+  "reconciliation": {
+    "allowInactiveMarkingOnPartialRuns": false
+  },
+  "ingestion": {
+    "triggerEnabledByDefault": false
+  }
+}

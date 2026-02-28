@@ -24,6 +24,7 @@
     "@langchain/google-genai": "catalog:",
     "@langchain/langgraph": "catalog:",
     "@repo/env-config": "workspace:*",
+    "@repo/job-search-spaces": "workspace:*",
     "cheerio": "catalog:",
     "fastify": "catalog:",
     "langchain": "catalog:",
