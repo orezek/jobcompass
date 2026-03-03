@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
   buildArtifactRunLayout,
-  getArtifactDestinationRootLabel,
+  getManagedStorageRootLabel,
   publishBrokerEvent,
   type BrokerTransportConfig,
   writeDatasetMetadata,
@@ -96,6 +96,33 @@ function hasMongoSink(manifest: RunManifest): boolean {
   );
 }
 
+function resolveConnectionUri(value: string | undefined): string {
+  if (!value || value.trim().length === 0) {
+    return env.MONGODB_URI ?? '';
+  }
+
+  if (!value.startsWith('env:')) {
+    return value;
+  }
+
+  const envKey = value.slice('env:'.length).trim();
+  if (envKey.length === 0) {
+    return env.MONGODB_URI ?? '';
+  }
+
+  return process.env[envKey]?.trim() || '';
+}
+
+function getMongoConnectionUri(manifest: RunManifest): string {
+  const mongoDestination = manifest.structuredOutputDestinationSnapshots.find(
+    (destination) => destination.type === 'mongodb',
+  );
+
+  return mongoDestination?.type === 'mongodb'
+    ? resolveConnectionUri(mongoDestination.config.connectionUri)
+    : (env.MONGODB_URI ?? '');
+}
+
 function parseEnvValue(raw: string, key: string): string | null {
   const prefix = `${key}=`;
   let resolved: string | null = null;
@@ -182,20 +209,20 @@ export function buildCrawlerWorkerEnvOverrides(
   }
 
   if (
-    input.manifest.artifactDestinationSnapshot.type === 'local_filesystem' &&
-    'basePath' in input.manifest.artifactDestinationSnapshot.config
+    input.manifest.artifactStorageSnapshot.type === 'local_filesystem' &&
+    'basePath' in input.manifest.artifactStorageSnapshot.config
   ) {
     baseEnv.JOB_COMPASS_ARTIFACT_STORE_TYPE = 'local_filesystem';
     baseEnv.LOCAL_SHARED_SCRAPED_JOBS_DIR = path.resolve(
-      input.manifest.artifactDestinationSnapshot.config.basePath,
+      input.manifest.artifactStorageSnapshot.config.basePath,
     );
   } else if (
-    input.manifest.artifactDestinationSnapshot.type === 'gcs' &&
-    'bucket' in input.manifest.artifactDestinationSnapshot.config
+    input.manifest.artifactStorageSnapshot.type === 'gcs' &&
+    'bucket' in input.manifest.artifactStorageSnapshot.config
   ) {
     baseEnv.JOB_COMPASS_ARTIFACT_STORE_TYPE = 'gcs';
-    baseEnv.JOB_COMPASS_GCS_BUCKET = input.manifest.artifactDestinationSnapshot.config.bucket;
-    baseEnv.JOB_COMPASS_GCS_PREFIX = input.manifest.artifactDestinationSnapshot.config.prefix ?? '';
+    baseEnv.JOB_COMPASS_GCS_BUCKET = input.manifest.artifactStorageSnapshot.config.bucket;
+    baseEnv.JOB_COMPASS_GCS_PREFIX = input.manifest.artifactStorageSnapshot.config.prefix ?? '';
     if (env.CONTROL_PLANE_GCP_PROJECT_ID) {
       baseEnv.JOB_COMPASS_GCP_PROJECT_ID = env.CONTROL_PLANE_GCP_PROJECT_ID;
     }
@@ -211,7 +238,7 @@ export function buildIngestionWorkerEnvOverrides(
     NODE_ENV: process.env.NODE_ENV ?? 'development',
     JOB_COMPASS_DB_PREFIX: env.JOB_COMPASS_DB_PREFIX,
     SEARCH_SPACE_ID: input.manifest.searchSpaceSnapshot.id,
-    MONGODB_URI: env.MONGODB_URI ?? '',
+    MONGODB_URI: getMongoConnectionUri(input.manifest),
     ENABLE_MONGO_WRITE: hasMongoSink(input.manifest) ? 'true' : 'false',
     MONGODB_DB_NAME: input.mongoDbName,
     LOCAL_BROKER_DIR: controlPlaneBrokerRootDir,
@@ -283,10 +310,7 @@ export async function writeGeneratedActorInput(
 
 async function simulateFixtureExecution({ run, manifest }: ExecuteRunInput): Promise<void> {
   const brokerTransport = getBrokerTransportConfig();
-  const artifactLayout = buildArtifactRunLayout(
-    manifest.artifactDestinationSnapshot,
-    manifest.runId,
-  );
+  const artifactLayout = buildArtifactRunLayout(manifest.artifactStorageSnapshot, manifest.runId);
 
   const listingRecord: SourceListingRecord = {
     sourceId: 'fixture-001',
@@ -302,7 +326,7 @@ async function simulateFixtureExecution({ run, manifest }: ExecuteRunInput): Pro
   };
   const detailHtml = `<!doctype html><html><body><main><h1>${listingRecord.jobTitle}</h1><p>Fixture detail for control-plane testing.</p></main></body></html>`;
   const htmlArtifact = await writeHtmlArtifact({
-    destination: manifest.artifactDestinationSnapshot,
+    destination: manifest.artifactStorageSnapshot,
     crawlRunId: manifest.runId,
     sourceId: listingRecord.sourceId,
     html: detailHtml,
@@ -311,7 +335,7 @@ async function simulateFixtureExecution({ run, manifest }: ExecuteRunInput): Pro
     projectId: env.CONTROL_PLANE_GCP_PROJECT_ID,
   });
   const artifactDatasetPath = await writeDatasetMetadata({
-    destination: manifest.artifactDestinationSnapshot,
+    destination: manifest.artifactStorageSnapshot,
     crawlRunId: manifest.runId,
     datasetRecords: [listingRecord],
     projectId: env.CONTROL_PLANE_GCP_PROJECT_ID,
@@ -397,9 +421,7 @@ async function simulateFixtureExecution({ run, manifest }: ExecuteRunInput): Pro
 
     await Promise.all(
       manifest.structuredOutputDestinationSnapshots
-        .filter(
-          (destination) => destination.type === 'local_json' || destination.type === 'gcs_json',
-        )
+        .filter((destination) => destination.type === 'downloadable_json')
         .map((destination) =>
           writeStructuredJsonDocument({
             destination,
@@ -464,7 +486,7 @@ function spawnWorker(input: {
 }
 
 async function startLocalCliExecution({ run, manifest }: ExecuteRunInput): Promise<void> {
-  const artifactRoot = getArtifactDestinationRootLabel(manifest.artifactDestinationSnapshot);
+  const artifactRoot = getManagedStorageRootLabel(manifest.artifactStorageSnapshot);
   const mongoDbName = getMongoDbName(manifest);
   const crawlerLogPath = buildRunWorkerLogPath(run.runId, 'crawler');
   const ingestionLogPath = buildRunWorkerLogPath(run.runId, 'ingestion');

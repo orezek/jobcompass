@@ -1,4 +1,4 @@
-import type { ArtifactDestinationSnapshot } from '@repo/control-plane-contracts';
+import type { ArtifactStorageSnapshot } from '@repo/control-plane-contracts';
 import {
   buildArtifactRunLayout,
   ensureArtifactRunReady,
@@ -8,12 +8,12 @@ import {
 
 export type SharedRunOutputPaths = ReturnType<typeof buildArtifactRunLayout> & {
   crawlRunId: string;
-  destination: ArtifactDestinationSnapshot;
+  destination: ArtifactStorageSnapshot;
   gcpProjectId?: string;
 };
 
 export const buildSharedRunOutputPaths = (
-  destination: ArtifactDestinationSnapshot,
+  destination: ArtifactStorageSnapshot,
   crawlRunId: string,
   gcpProjectId?: string,
 ): SharedRunOutputPaths => ({

@@ -2,23 +2,19 @@
 
 import { revalidatePath } from 'next/cache';
 import {
-  archiveArtifactDestination,
   archivePipeline,
   archiveRuntimeProfile,
   archiveSearchSpace,
   archiveStructuredOutputDestination,
-  createArtifactDestination,
   createPipeline,
   createRuntimeProfile,
   createSearchSpace,
   createStructuredOutputDestination,
-  deleteArtifactDestination,
   deletePipeline,
   deleteRuntimeProfile,
   deleteSearchSpace,
   deleteStructuredOutputDestination,
   startRun,
-  updateArtifactDestination,
   updatePipeline,
   updateRuntimeProfile,
   updateSearchSpace,
@@ -64,13 +60,10 @@ function parseMultilineUrls(value: string): string[] {
     .filter((item) => item.length > 0);
 }
 
-function parseStructuredOutputIds(value: string | undefined): string[] {
-  if (!value) {
-    return [];
-  }
-
-  return value
-    .split(',')
+function parseStructuredOutputIds(formData: FormData): string[] {
+  return formData
+    .getAll('structuredOutputDestinationIds')
+    .flatMap((value) => (typeof value === 'string' ? value.split(',') : []))
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
 }
@@ -101,32 +94,6 @@ function buildRuntimeProfileInput(formData: FormData) {
   };
 }
 
-function buildArtifactDestinationInput(formData: FormData) {
-  const type = getRequiredString(formData, 'type');
-  if (type === 'gcs') {
-    return {
-      id: getOptionalString(formData, 'id'),
-      name: getRequiredString(formData, 'name'),
-      type: 'gcs' as const,
-      config: {
-        bucket: getRequiredString(formData, 'bucket'),
-        prefix: getOptionalString(formData, 'prefix') ?? '',
-      },
-      status: 'active' as const,
-    };
-  }
-
-  return {
-    id: getOptionalString(formData, 'id'),
-    name: getRequiredString(formData, 'name'),
-    type: 'local_filesystem' as const,
-    config: {
-      basePath: getRequiredString(formData, 'basePath'),
-    },
-    status: 'active' as const,
-  };
-}
-
 function buildStructuredOutputDestinationInput(formData: FormData) {
   const type = getRequiredString(formData, 'type');
   if (type === 'mongodb') {
@@ -135,21 +102,7 @@ function buildStructuredOutputDestinationInput(formData: FormData) {
       name: getRequiredString(formData, 'name'),
       type: 'mongodb' as const,
       config: {
-        connectionRef: getOptionalString(formData, 'connectionRef'),
-        collectionName: getOptionalString(formData, 'collectionName') ?? 'normalized_job_ads',
-      },
-      status: 'active' as const,
-    };
-  }
-
-  if (type === 'gcs_json') {
-    return {
-      id: getOptionalString(formData, 'id'),
-      name: getRequiredString(formData, 'name'),
-      type: 'gcs_json' as const,
-      config: {
-        bucket: getRequiredString(formData, 'bucket'),
-        prefix: getOptionalString(formData, 'prefix') ?? '',
+        connectionUri: getOptionalString(formData, 'connectionUri') ?? 'env:MONGODB_URI',
       },
       status: 'active' as const,
     };
@@ -158,10 +111,8 @@ function buildStructuredOutputDestinationInput(formData: FormData) {
   return {
     id: getOptionalString(formData, 'id'),
     name: getRequiredString(formData, 'name'),
-    type: 'local_json' as const,
-    config: {
-      basePath: getRequiredString(formData, 'basePath'),
-    },
+    type: 'downloadable_json' as const,
+    config: {} as Record<string, never>,
     status: 'active' as const,
   };
 }
@@ -175,10 +126,7 @@ function buildPipelineInput(formData: FormData) {
     name: getRequiredString(formData, 'name'),
     searchSpaceId: getRequiredString(formData, 'searchSpaceId'),
     runtimeProfileId: getRequiredString(formData, 'runtimeProfileId'),
-    artifactDestinationId: getRequiredString(formData, 'artifactDestinationId'),
-    structuredOutputDestinationIds: parseStructuredOutputIds(
-      getOptionalString(formData, 'structuredOutputDestinationIds'),
-    ),
+    structuredOutputDestinationIds: parseStructuredOutputIds(formData),
     mode,
     status: 'active' as const,
   };
@@ -223,30 +171,6 @@ export async function archiveRuntimeProfileAction(formData: FormData): Promise<v
 
 export async function deleteRuntimeProfileAction(formData: FormData): Promise<void> {
   await deleteRuntimeProfile(getRequiredString(formData, 'id'));
-  revalidatePath('/control-plane');
-}
-
-export async function createArtifactDestinationAction(formData: FormData): Promise<void> {
-  await createArtifactDestination(buildArtifactDestinationInput(formData));
-
-  revalidatePath('/control-plane');
-}
-
-export async function updateArtifactDestinationAction(formData: FormData): Promise<void> {
-  await updateArtifactDestination(
-    getRequiredString(formData, 'id'),
-    buildArtifactDestinationInput(formData),
-  );
-  revalidatePath('/control-plane');
-}
-
-export async function archiveArtifactDestinationAction(formData: FormData): Promise<void> {
-  await archiveArtifactDestination(getRequiredString(formData, 'id'));
-  revalidatePath('/control-plane');
-}
-
-export async function deleteArtifactDestinationAction(formData: FormData): Promise<void> {
-  await deleteArtifactDestination(getRequiredString(formData, 'id'));
   revalidatePath('/control-plane');
 }
 

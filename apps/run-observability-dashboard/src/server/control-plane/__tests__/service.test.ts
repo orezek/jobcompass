@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let tempRootDir: string;
 
@@ -15,6 +15,8 @@ beforeEach(async () => {
   process.env.CONTROL_PLANE_DEFAULT_ARTIFACT_DIR = path.join(tempRootDir, 'artifacts');
   process.env.CONTROL_PLANE_DEFAULT_JSON_OUTPUT_DIR = path.join(tempRootDir, 'json-output');
   process.env.CONTROL_PLANE_EXECUTION_MODE = 'fixture';
+  process.env.CONTROL_PLANE_ARTIFACT_STORAGE_BACKEND = 'local_filesystem';
+  process.env.CONTROL_PLANE_DOWNLOADABLE_OUTPUT_BACKEND = 'local_filesystem';
   vi.resetModules();
 });
 
@@ -32,11 +34,13 @@ describe('control-plane service', () => {
       true,
     );
     expect(
-      overview.artifactDestinations.some((destination) => destination.id === 'local-shared-html'),
+      overview.structuredOutputDestinations.some(
+        (destination) => destination.id === 'downloadable-json',
+      ),
     ).toBe(true);
     expect(
       overview.structuredOutputDestinations.some(
-        (destination) => destination.id === 'local-json-output',
+        (destination) => destination.id === 'mongo-normalized-jobs',
       ),
     ).toBe(true);
   });
@@ -48,16 +52,14 @@ describe('control-plane service', () => {
     const overview = await getControlPlaneOverview();
     const searchSpace = overview.searchSpaces[0]!;
     const runtimeProfile = overview.runtimeProfiles[0]!;
-    const artifactDestination = overview.artifactDestinations[0]!;
     const jsonOutputDestination = overview.structuredOutputDestinations.find(
-      (destination) => destination.type === 'local_json',
+      (destination) => destination.type === 'downloadable_json',
     )!;
 
     const pipeline = await createPipeline({
       name: 'Fixture integration pipeline',
       searchSpaceId: searchSpace.id,
       runtimeProfileId: runtimeProfile.id,
-      artifactDestinationId: artifactDestination.id,
       structuredOutputDestinationIds: [jsonOutputDestination.id],
       mode: 'crawl_and_ingest',
       status: 'active',
@@ -105,16 +107,14 @@ describe('control-plane service', () => {
     const overview = await getControlPlaneOverview();
     const searchSpace = overview.searchSpaces[0]!;
     const runtimeProfile = overview.runtimeProfiles[0]!;
-    const artifactDestination = overview.artifactDestinations[0]!;
     const jsonOutputDestination = overview.structuredOutputDestinations.find(
-      (destination) => destination.type === 'local_json',
+      (destination) => destination.type === 'downloadable_json',
     )!;
 
     const pipeline = await createPipeline({
       name: 'Fixture detail pipeline',
       searchSpaceId: searchSpace.id,
       runtimeProfileId: runtimeProfile.id,
-      artifactDestinationId: artifactDestination.id,
       structuredOutputDestinationIds: [jsonOutputDestination.id],
       mode: 'crawl_and_ingest',
       status: 'active',
@@ -134,6 +134,7 @@ describe('control-plane service', () => {
     expect(detail?.artifactCaptures).toHaveLength(1);
     expect(detail?.artifactCaptures[0]?.sourceId).toBe('fixture-001');
     expect(detail?.artifactCaptures[0]?.artifactPath).toContain('job-html-fixture-001.html');
+    expect(detail?.runView.manifest?.artifactStorageSnapshot.type).toBe('local_filesystem');
   });
 
   it('returns the existing active run for a pipeline instead of creating a duplicate', async () => {
@@ -144,13 +145,11 @@ describe('control-plane service', () => {
     const overview = await getControlPlaneOverview();
     const searchSpace = overview.searchSpaces[0]!;
     const runtimeProfile = overview.runtimeProfiles[0]!;
-    const artifactDestination = overview.artifactDestinations[0]!;
 
     const pipeline = await createPipeline({
       name: 'Active run guard pipeline',
       searchSpaceId: searchSpace.id,
       runtimeProfileId: runtimeProfile.id,
-      artifactDestinationId: artifactDestination.id,
       structuredOutputDestinationIds: [],
       mode: 'crawl_only',
       status: 'active',
@@ -194,16 +193,14 @@ describe('control-plane service', () => {
     const overview = await getControlPlaneOverview();
     const searchSpace = overview.searchSpaces[0]!;
     const runtimeProfile = overview.runtimeProfiles[0]!;
-    const artifactDestination = overview.artifactDestinations[0]!;
     const jsonOutputDestination = overview.structuredOutputDestinations.find(
-      (destination) => destination.type === 'local_json',
+      (destination) => destination.type === 'downloadable_json',
     )!;
 
     const pipeline = await createPipeline({
       name: 'Ingest preflight pipeline',
       searchSpaceId: searchSpace.id,
       runtimeProfileId: runtimeProfile.id,
-      artifactDestinationId: artifactDestination.id,
       structuredOutputDestinationIds: [jsonOutputDestination.id],
       mode: 'crawl_and_ingest',
       status: 'active',
@@ -251,13 +248,11 @@ describe('control-plane service', () => {
     const overview = await getControlPlaneOverview();
     const searchSpace = overview.searchSpaces[0]!;
     const runtimeProfile = overview.runtimeProfiles[0]!;
-    const artifactDestination = overview.artifactDestinations[0]!;
 
     await createPipeline({
       name: 'Deletion guard pipeline',
       searchSpaceId: searchSpace.id,
       runtimeProfileId: runtimeProfile.id,
-      artifactDestinationId: artifactDestination.id,
       structuredOutputDestinationIds: [],
       mode: 'crawl_only',
       status: 'active',

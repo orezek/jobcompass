@@ -402,6 +402,44 @@ ul {
   grid-column: span 2;
 }
 
+.control-form__fieldset {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(138, 127, 106, 0.36);
+  padding: 12px;
+  margin: 0;
+}
+
+.control-form__fieldset legend {
+  padding: 0 6px;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.control-form__choice-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.control-form__checkbox {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(138, 127, 106, 0.24);
+  background: rgba(242, 226, 177, 0.14);
+  padding: 10px 12px;
+}
+
+.control-form__checkbox input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
 .control-form--inline {
   display: flex;
   align-items: end;

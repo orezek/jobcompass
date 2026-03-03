@@ -14,19 +14,11 @@ type StructuredOutputSectionProps = {
 };
 
 function describeStructuredOutputConfig(destination: StructuredOutputDestination): string {
-  if (destination.type === 'local_json' && 'basePath' in destination.config) {
-    return destination.config.basePath;
+  if (destination.type === 'downloadable_json') {
+    return 'Managed dashboard download';
   }
 
-  if (destination.type === 'mongodb' && 'collectionName' in destination.config) {
-    return destination.config.collectionName;
-  }
-
-  if (destination.type === 'gcs_json' && 'bucket' in destination.config) {
-    return `${destination.config.bucket}/${destination.config.prefix ?? ''}`;
-  }
-
-  return destination.id;
+  return destination.config.connectionUri || 'env:MONGODB_URI';
 }
 
 export function StructuredOutputSection({
@@ -36,8 +28,8 @@ export function StructuredOutputSection({
     <section className="panel">
       <SectionHeading
         eyebrow="Outputs"
-        title="Structured sinks"
-        description="V1 keeps MongoDB and local JSON as direct ingestion worker sinks."
+        title="Structured outputs"
+        description="Choose operator-facing delivery targets. Storage backends stay managed by the platform."
         detail={`${structuredOutputDestinations.length} total`}
       />
       <div className="table-wrap">
@@ -65,8 +57,8 @@ export function StructuredOutputSection({
 
       {structuredOutputDestinations.length > 0 ? (
         <DisclosurePanel
-          title="Manage structured sinks"
-          description="Expand to edit delivery targets for normalized output."
+          title="Manage structured outputs"
+          description="Expand to edit reusable output choices for normalized results."
         >
           <div className="resource-edit-grid">
             {structuredOutputDestinations.map((destination) => (
@@ -81,60 +73,26 @@ export function StructuredOutputSection({
                   <label>
                     <span>TYPE</span>
                     <select name="type" defaultValue={destination.type}>
-                      <option value="local_json">local_json</option>
+                      <option value="downloadable_json">downloadable_json</option>
                       <option value="mongodb">mongodb</option>
-                      <option value="gcs_json">gcs_json</option>
                     </select>
                   </label>
                   <label>
-                    <span>BASE PATH</span>
+                    <span>MONGODB CONNECTION URI</span>
                     <input
-                      name="basePath"
+                      name="connectionUri"
                       defaultValue={
-                        'basePath' in destination.config ? destination.config.basePath : ''
+                        destination.type === 'mongodb'
+                          ? (destination.config.connectionUri ?? 'env:MONGODB_URI')
+                          : 'env:MONGODB_URI'
                       }
                     />
                   </label>
-                  <div className="control-form__row">
-                    <label>
-                      <span>COLLECTION</span>
-                      <input
-                        name="collectionName"
-                        defaultValue={
-                          'collectionName' in destination.config
-                            ? destination.config.collectionName
-                            : 'normalized_job_ads'
-                        }
-                      />
-                    </label>
-                    <label>
-                      <span>CONNECTION REF</span>
-                      <input
-                        name="connectionRef"
-                        defaultValue={
-                          'connectionRef' in destination.config
-                            ? (destination.config.connectionRef ?? '')
-                            : ''
-                        }
-                      />
-                    </label>
-                    <label>
-                      <span>BUCKET</span>
-                      <input
-                        name="bucket"
-                        defaultValue={
-                          'bucket' in destination.config ? destination.config.bucket : ''
-                        }
-                      />
-                    </label>
-                  </div>
-                  <label>
-                    <span>PREFIX</span>
-                    <input
-                      name="prefix"
-                      defaultValue={'prefix' in destination.config ? destination.config.prefix : ''}
-                    />
-                  </label>
+                  <p className="empty-copy">
+                    Downloadable JSON uses the managed platform store and is accessed through the
+                    dashboard. MongoDB keeps the current automatic per-search-space database naming
+                    and collection layout.
+                  </p>
                   <button type="submit">Save structured output</button>
                 </form>
                 <ResourceLifecycleActions
@@ -149,44 +107,29 @@ export function StructuredOutputSection({
       ) : null}
 
       <DisclosurePanel
-        title="Create structured sink"
-        description="Register MongoDB, local JSON, or GCS JSON as a reusable normalized output target."
+        title="Create structured output"
+        description="Register reusable output choices without exposing bucket, prefix, or local path settings in the operator UI."
       >
         <form action={createStructuredOutputDestinationAction} className="control-form">
           <label>
             <span>NAME</span>
-            <input name="name" placeholder="Local normalized JSON" required />
+            <input name="name" placeholder="Downloadable JSON" required />
           </label>
           <label>
             <span>TYPE</span>
-            <select name="type" defaultValue="local_json">
-              <option value="local_json">local_json</option>
+            <select name="type" defaultValue="downloadable_json">
+              <option value="downloadable_json">downloadable_json</option>
               <option value="mongodb">mongodb</option>
-              <option value="gcs_json">gcs_json</option>
             </select>
           </label>
           <label>
-            <span>BASE PATH</span>
-            <input name="basePath" defaultValue="../jobs-ingestion-service/output/control-plane" />
+            <span>MONGODB CONNECTION URI</span>
+            <input name="connectionUri" defaultValue="env:MONGODB_URI" />
           </label>
-          <label>
-            <span>COLLECTION</span>
-            <input name="collectionName" defaultValue="normalized_job_ads" />
-          </label>
-          <label>
-            <span>CONNECTION REF</span>
-            <input name="connectionRef" defaultValue="env:MONGODB_URI" />
-          </label>
-          <div className="control-form__row">
-            <label>
-              <span>BUCKET</span>
-              <input name="bucket" placeholder="jobcompass-output" />
-            </label>
-            <label className="control-form__wide">
-              <span>PREFIX</span>
-              <input name="prefix" placeholder="output/dev" />
-            </label>
-          </div>
+          <p className="empty-copy">
+            Downloadable JSON is stored in a managed backend and surfaced through dashboard browse
+            and download flows.
+          </p>
           <button type="submit">Create structured output</button>
         </form>
       </DisclosurePanel>

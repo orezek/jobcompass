@@ -4,6 +4,7 @@ import { z } from 'zod';
 const dataModeSchema = z.enum(['mongo', 'fixture']);
 const executionModeSchema = z.enum(['fixture', 'local_cli']);
 const brokerBackendSchema = z.enum(['local', 'gcp_pubsub']);
+const managedStorageBackendSchema = z.enum(['local_filesystem', 'gcs']);
 const timeRangeSchema = z.enum(['24h', '7d', '30d']);
 const optionalStringSchema = z.preprocess((value) => {
   if (typeof value === 'string' && value.trim() === '') {
@@ -33,6 +34,13 @@ const envSchema = z.object({
   CONTROL_PLANE_DEFAULT_JSON_OUTPUT_DIR: z
     .string()
     .default('../jobs-ingestion-service/output/control-plane'),
+  CONTROL_PLANE_ARTIFACT_STORAGE_BACKEND: managedStorageBackendSchema.default('local_filesystem'),
+  CONTROL_PLANE_ARTIFACT_STORAGE_GCS_BUCKET: optionalStringSchema,
+  CONTROL_PLANE_ARTIFACT_STORAGE_GCS_PREFIX: z.string().default(''),
+  CONTROL_PLANE_DOWNLOADABLE_OUTPUT_BACKEND:
+    managedStorageBackendSchema.default('local_filesystem'),
+  CONTROL_PLANE_DOWNLOADABLE_OUTPUT_GCS_BUCKET: optionalStringSchema,
+  CONTROL_PLANE_DOWNLOADABLE_OUTPUT_GCS_PREFIX: z.string().default(''),
   CONTROL_PLANE_EXECUTION_MODE: executionModeSchema.default('fixture'),
   CONTROL_PLANE_BROKER_BACKEND: brokerBackendSchema.default('local'),
   CONTROL_PLANE_GCP_PROJECT_ID: optionalStringSchema,

@@ -139,7 +139,7 @@ async function publishLifecycleEvent(
   });
 }
 
-async function writeLocalJsonSinks(input: {
+async function writeDownloadableJsonSinks(input: {
   manifest: RunManifest;
   sourceId: string;
   structuredParsed: unknown[];
@@ -151,7 +151,7 @@ async function writeLocalJsonSinks(input: {
 
   await Promise.all(
     input.manifest.structuredOutputDestinationSnapshots
-      .filter((destination) => destination.type === 'local_json' || destination.type === 'gcs_json')
+      .filter((destination) => destination.type === 'downloadable_json')
       .map(async (destination) =>
         writeStructuredJsonDocument({
           destination,
@@ -207,7 +207,7 @@ async function processDetailCapturedEvent(input: {
 
   const gcpProjectId =
     input.brokerTransport.type === 'gcp_pubsub' ? input.brokerTransport.projectId : undefined;
-  await writeLocalJsonSinks({
+  await writeDownloadableJsonSinks({
     manifest: input.manifest,
     sourceId: input.event.payload.sourceId,
     structuredParsed: result.structuredParsed,
@@ -242,13 +242,11 @@ async function processDetailCapturedEvent(input: {
       sinkResults: input.manifest.structuredOutputDestinationSnapshots.map((destination) => ({
         sinkType: destination.type,
         targetRef:
-          destination.type === 'local_json' && 'basePath' in destination.config
-            ? destination.config.basePath
-            : destination.type === 'mongodb' && 'collectionName' in destination.config
-              ? destination.config.collectionName
-              : destination.type === 'gcs_json' && 'bucket' in destination.config
-                ? destination.config.bucket
-                : destination.id,
+          destination.type === 'downloadable_json'
+            ? destination.config.storageType === 'local_filesystem'
+              ? destination.config.basePath
+              : destination.config.bucket
+            : destination.config.connectionUri || 'env:MONGODB_URI',
         writeMode: destination.type === 'mongodb' ? 'upsert' : 'overwrite',
       })),
       error:

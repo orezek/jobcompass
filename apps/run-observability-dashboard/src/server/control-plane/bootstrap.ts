@@ -1,36 +1,27 @@
 import { readdir, readFile } from 'node:fs/promises';
 import {
-  artifactDestinationSchema,
   nowIso,
   runtimeProfileSchema,
   searchSpaceSchema,
   structuredOutputDestinationSchema,
-  type ArtifactDestination,
   type RuntimeProfile,
   type SearchSpace,
   type StructuredOutputDestination,
 } from '@repo/control-plane-contracts';
 import { searchSpaceConfigSchema } from '@repo/job-search-spaces';
-import {
-  bootstrapSearchSpacesDir,
-  defaultArtifactRootDir,
-  defaultJsonOutputRootDir,
-} from '@/server/control-plane/paths';
+import { bootstrapSearchSpacesDir } from '@/server/control-plane/paths';
 import {
   ensureControlPlaneStorage,
-  getArtifactDestination,
   getRuntimeProfile,
   getStructuredOutputDestination,
   listSearchSpaces,
-  writeArtifactDestination,
   writeRuntimeProfile,
   writeSearchSpace,
   writeStructuredOutputDestination,
 } from '@/server/control-plane/store';
 
 const DEFAULT_RUNTIME_PROFILE_ID = 'default-local-runtime';
-const DEFAULT_ARTIFACT_DESTINATION_ID = 'local-shared-html';
-const DEFAULT_JSON_OUTPUT_DESTINATION_ID = 'local-json-output';
+const DEFAULT_DOWNLOADABLE_JSON_DESTINATION_ID = 'downloadable-json';
 const DEFAULT_MONGO_OUTPUT_DESTINATION_ID = 'mongo-normalized-jobs';
 
 function toSearchSpaceRecord(input: {
@@ -72,30 +63,13 @@ function buildDefaultRuntimeProfile(): RuntimeProfile {
   });
 }
 
-function buildDefaultArtifactDestination(): ArtifactDestination {
-  const timestamp = nowIso();
-  return artifactDestinationSchema.parse({
-    id: DEFAULT_ARTIFACT_DESTINATION_ID,
-    name: 'Local shared HTML',
-    type: 'local_filesystem',
-    config: {
-      basePath: defaultArtifactRootDir,
-    },
-    status: 'active',
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  });
-}
-
-function buildDefaultJsonOutputDestination(): StructuredOutputDestination {
+function buildDefaultDownloadableJsonOutputDestination(): StructuredOutputDestination {
   const timestamp = nowIso();
   return structuredOutputDestinationSchema.parse({
-    id: DEFAULT_JSON_OUTPUT_DESTINATION_ID,
-    name: 'Local normalized JSON',
-    type: 'local_json',
-    config: {
-      basePath: defaultJsonOutputRootDir,
-    },
+    id: DEFAULT_DOWNLOADABLE_JSON_DESTINATION_ID,
+    name: 'Downloadable JSON',
+    type: 'downloadable_json',
+    config: {},
     status: 'active',
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -109,8 +83,7 @@ function buildDefaultMongoOutputDestination(): StructuredOutputDestination {
     name: 'Mongo normalized jobs',
     type: 'mongodb',
     config: {
-      connectionRef: 'env:MONGODB_URI',
-      collectionName: 'normalized_job_ads',
+      connectionUri: 'env:MONGODB_URI',
     },
     status: 'active',
     createdAt: timestamp,
@@ -166,17 +139,12 @@ async function ensureDefaultRuntimeProfile(): Promise<void> {
   }
 }
 
-async function ensureDefaultArtifactDestination(): Promise<void> {
-  const existing = await getArtifactDestination(DEFAULT_ARTIFACT_DESTINATION_ID);
-  if (!existing) {
-    await writeArtifactDestination(buildDefaultArtifactDestination());
-  }
-}
-
 async function ensureDefaultStructuredOutputs(): Promise<void> {
-  const localJson = await getStructuredOutputDestination(DEFAULT_JSON_OUTPUT_DESTINATION_ID);
-  if (!localJson) {
-    await writeStructuredOutputDestination(buildDefaultJsonOutputDestination());
+  const downloadableJson = await getStructuredOutputDestination(
+    DEFAULT_DOWNLOADABLE_JSON_DESTINATION_ID,
+  );
+  if (!downloadableJson) {
+    await writeStructuredOutputDestination(buildDefaultDownloadableJsonOutputDestination());
   }
 
   const mongo = await getStructuredOutputDestination(DEFAULT_MONGO_OUTPUT_DESTINATION_ID);
@@ -189,13 +157,11 @@ export async function ensureControlPlaneBootstrap(): Promise<void> {
   await ensureControlPlaneStorage();
   await bootstrapSearchSpaces();
   await ensureDefaultRuntimeProfile();
-  await ensureDefaultArtifactDestination();
   await ensureDefaultStructuredOutputs();
 }
 
 export const defaultControlPlaneIds = {
   runtimeProfileId: DEFAULT_RUNTIME_PROFILE_ID,
-  artifactDestinationId: DEFAULT_ARTIFACT_DESTINATION_ID,
-  jsonOutputDestinationId: DEFAULT_JSON_OUTPUT_DESTINATION_ID,
+  jsonOutputDestinationId: DEFAULT_DOWNLOADABLE_JSON_DESTINATION_ID,
   mongoOutputDestinationId: DEFAULT_MONGO_OUTPUT_DESTINATION_ID,
 } as const;

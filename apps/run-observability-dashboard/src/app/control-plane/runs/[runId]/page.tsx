@@ -111,8 +111,7 @@ export default async function ControlPlaneRunDetailPage({
                 RUNTIME PROFILE: {detail.runView.manifest?.runtimeProfileSnapshot.id ?? 'N/A'}
               </li>
               <li>
-                ARTIFACT DESTINATION:{' '}
-                {detail.runView.manifest?.artifactDestinationSnapshot.id ?? 'N/A'}
+                ARTIFACT STORAGE: {detail.runView.manifest?.artifactStorageSnapshot.type ?? 'N/A'}
               </li>
               <li>SOURCE TYPE: {detail.runView.manifest?.sourceType ?? 'N/A'}</li>
             </ul>

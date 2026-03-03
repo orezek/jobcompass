@@ -4,11 +4,9 @@ import path from 'node:path';
 import { PubSub, type Subscription } from '@google-cloud/pubsub';
 import { Storage } from '@google-cloud/storage';
 import type {
-  ArtifactDestination,
-  ArtifactDestinationSnapshot,
+  ArtifactStorageSnapshot,
   BrokerEvent,
   StoredArtifactRef,
-  StructuredOutputDestination,
   StructuredOutputDestinationSnapshot,
 } from '@repo/control-plane-contracts';
 import {
@@ -23,10 +21,8 @@ import {
   writeBrokerEvent,
 } from '@repo/control-plane-contracts';
 
-type ArtifactDestinationLike = ArtifactDestination | ArtifactDestinationSnapshot;
-type StructuredOutputDestinationLike =
-  | StructuredOutputDestination
-  | StructuredOutputDestinationSnapshot;
+type ArtifactStorageLike = ArtifactStorageSnapshot;
+type StructuredOutputDestinationLike = StructuredOutputDestinationSnapshot;
 
 export type BrokerTransportConfig =
   | {
@@ -202,7 +198,7 @@ async function pollPubSubSubscription(
   });
 }
 
-export function getArtifactDestinationRootLabel(destination: ArtifactDestinationLike): string {
+export function getManagedStorageRootLabel(destination: ArtifactStorageLike): string {
   if (destination.type === 'local_filesystem' && 'basePath' in destination.config) {
     return path.resolve(destination.config.basePath);
   }
@@ -214,11 +210,11 @@ export function getArtifactDestinationRootLabel(destination: ArtifactDestination
       : `gs://${destination.config.bucket}`;
   }
 
-  throw new Error(`Unsupported artifact destination type "${destination.type}".`);
+  throw new Error(`Unsupported artifact storage type "${destination.type}".`);
 }
 
 export function buildArtifactRunLayout(
-  destination: ArtifactDestinationLike,
+  destination: ArtifactStorageLike,
   crawlRunId: string,
 ): {
   rootLabel: string;
@@ -237,7 +233,7 @@ export function buildArtifactRunLayout(
   }
 
   if (destination.type === 'gcs' && 'bucket' in destination.config) {
-    const rootLabel = getArtifactDestinationRootLabel(destination);
+    const rootLabel = getManagedStorageRootLabel(destination);
     const relativeRunDir = path.posix.join('runs', crawlRunId);
     const runDir = buildGsUri(
       destination.config.bucket,
@@ -251,11 +247,11 @@ export function buildArtifactRunLayout(
     };
   }
 
-  throw new Error(`Unsupported artifact destination type "${destination.type}".`);
+  throw new Error(`Unsupported artifact storage type "${destination.type}".`);
 }
 
 export async function ensureArtifactRunReady(input: {
-  destination: ArtifactDestinationLike;
+  destination: ArtifactStorageLike;
   crawlRunId: string;
   projectId?: string;
 }): Promise<ReturnType<typeof buildArtifactRunLayout>> {
@@ -272,7 +268,7 @@ export async function ensureArtifactRunReady(input: {
 }
 
 export async function writeHtmlArtifact(input: {
-  destination: ArtifactDestinationLike;
+  destination: ArtifactStorageLike;
   crawlRunId: string;
   sourceId: string;
   html: string;
@@ -318,11 +314,11 @@ export async function writeHtmlArtifact(input: {
     };
   }
 
-  throw new Error('Unsupported artifact destination type.');
+  throw new Error('Unsupported artifact storage type.');
 }
 
 export async function writeDatasetMetadata(input: {
-  destination: ArtifactDestinationLike;
+  destination: ArtifactStorageLike;
   crawlRunId: string;
   datasetRecords: unknown[];
   projectId?: string;
@@ -352,11 +348,11 @@ export async function writeDatasetMetadata(input: {
     return buildGsUri(input.destination.config.bucket, objectPath);
   }
 
-  throw new Error('Unsupported artifact destination type.');
+  throw new Error('Unsupported artifact storage type.');
 }
 
 export function assertArtifactStoragePathForRun(input: {
-  destination: ArtifactDestinationLike;
+  destination: ArtifactStorageLike;
   crawlRunId: string;
   storagePath: string;
 }): string {
@@ -392,7 +388,7 @@ export function assertArtifactStoragePathForRun(input: {
     return input.storagePath;
   }
 
-  throw new Error('Unsupported artifact destination type.');
+  throw new Error('Unsupported artifact storage type.');
 }
 
 export async function readStoredArtifactPreview(input: {
@@ -448,7 +444,10 @@ export async function writeStructuredJsonDocument(input: {
 }): Promise<{ targetRef: string; writeMode: 'overwrite' }> {
   const raw = `${JSON.stringify(input.document, null, 2)}\n`;
 
-  if (input.destination.type === 'local_json' && 'basePath' in input.destination.config) {
+  if (
+    input.destination.type === 'downloadable_json' &&
+    input.destination.config.storageType === 'local_filesystem'
+  ) {
     const runDir = buildStructuredRunDir(
       path.resolve(input.destination.config.basePath),
       input.crawlRunId,
@@ -462,7 +461,10 @@ export async function writeStructuredJsonDocument(input: {
     };
   }
 
-  if (input.destination.type === 'gcs_json' && 'bucket' in input.destination.config) {
+  if (
+    input.destination.type === 'downloadable_json' &&
+    input.destination.config.storageType === 'gcs'
+  ) {
     const storage = getStorageClient(input.projectId);
     const objectPath = buildGcsObjectPath(
       input.destination.config.prefix,
@@ -485,7 +487,7 @@ export async function writeStructuredJsonDocument(input: {
   }
 
   throw new Error(
-    `Structured JSON adapter only supports local_json and gcs_json destinations, received "${input.destination.type}".`,
+    `Structured JSON adapter only supports downloadable_json destinations, received "${input.destination.type}".`,
   );
 }
 

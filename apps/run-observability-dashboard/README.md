@@ -66,11 +66,22 @@ Broker adapter modes:
 
 Operator-facing artifact access:
 
-- artifacts stay in the configured backend adapter
+- artifacts stay in the managed backend adapter
 - operators browse and download them through the dashboard
 - local filesystem paths are treated as backend references, not the primary operator workflow
 - GCS-backed artifacts are previewed/downloaded through the same route when Google credentials are
   available to the dashboard process
+
+Managed storage backends:
+
+- `CONTROL_PLANE_ARTIFACT_STORAGE_BACKEND`
+  - controls the raw HTML artifact backend
+- `CONTROL_PLANE_DOWNLOADABLE_OUTPUT_BACKEND`
+  - controls where `downloadable_json` structured outputs are written
+- both support:
+  - `local_filesystem`
+  - `gcs`
+- operators do not configure bucket, prefix, or local path details in the control-plane UI
 
 Database selection:
 

@@ -14,9 +14,8 @@ const optionalStringSchema = z.preprocess((value) => {
 }, z.string().trim().min(1).optional());
 
 export const sourceTypeSchema = z.enum(['jobs_cz']);
-
-export const artifactDestinationTypeSchema = z.enum(['local_filesystem', 'gcs']);
-export const structuredOutputDestinationTypeSchema = z.enum(['mongodb', 'local_json', 'gcs_json']);
+export const managedStorageTypeSchema = z.enum(['local_filesystem', 'gcs']);
+export const structuredOutputDestinationTypeSchema = z.enum(['mongodb', 'downloadable_json']);
 export const pipelineModeSchema = z.enum(['crawl_only', 'crawl_and_ingest']);
 export const recordStatusSchema = z.enum(['draft', 'active', 'archived']);
 export const runStatusSchema = z.enum([
@@ -77,71 +76,31 @@ export const createRuntimeProfileInputSchema = z.object({
   status: z.enum(['active', 'archived']).default('active'),
 });
 
-export const localFilesystemArtifactConfigSchema = z.object({
+export const localFilesystemStorageConfigSchema = z.object({
   basePath: nonEmptyStringSchema,
 });
 
-export const gcsArtifactConfigSchema = z.object({
+export const gcsStorageConfigSchema = z.object({
   bucket: nonEmptyStringSchema,
   prefix: optionalStringSchema.default(''),
 });
 
-const artifactDestinationBaseShape = {
-  id: nonEmptyStringSchema,
-  name: nonEmptyStringSchema,
-  status: z.enum(['active', 'archived']).default('active'),
-  createdAt: isoDateTimeSchema,
-  updatedAt: isoDateTimeSchema,
-} as const;
-
-const localFilesystemArtifactDestinationSchema = z.object({
-  ...artifactDestinationBaseShape,
-  type: z.literal('local_filesystem'),
-  config: localFilesystemArtifactConfigSchema,
-});
-
-const gcsArtifactDestinationSchema = z.object({
-  ...artifactDestinationBaseShape,
-  type: z.literal('gcs'),
-  config: gcsArtifactConfigSchema,
-});
-
-export const artifactDestinationSchema = z.discriminatedUnion('type', [
-  localFilesystemArtifactDestinationSchema,
-  gcsArtifactDestinationSchema,
-]);
-
-export const createArtifactDestinationInputSchema = z.discriminatedUnion('type', [
+export const artifactStorageSnapshotSchema = z.discriminatedUnion('type', [
   z.object({
-    id: optionalStringSchema,
-    name: nonEmptyStringSchema,
     type: z.literal('local_filesystem'),
-    config: localFilesystemArtifactConfigSchema,
-    status: z.enum(['active', 'archived']).default('active'),
+    config: localFilesystemStorageConfigSchema,
   }),
   z.object({
-    id: optionalStringSchema,
-    name: nonEmptyStringSchema,
     type: z.literal('gcs'),
-    config: gcsArtifactConfigSchema,
-    status: z.enum(['active', 'archived']).default('active'),
+    config: gcsStorageConfigSchema,
   }),
 ]);
 
 export const mongoStructuredOutputConfigSchema = z.object({
-  connectionRef: optionalStringSchema,
-  databaseName: optionalStringSchema,
-  collectionName: nonEmptyStringSchema.default('normalized_job_ads'),
+  connectionUri: optionalStringSchema.default('env:MONGODB_URI'),
 });
 
-export const localJsonStructuredOutputConfigSchema = z.object({
-  basePath: nonEmptyStringSchema,
-});
-
-export const gcsJsonStructuredOutputConfigSchema = z.object({
-  bucket: nonEmptyStringSchema,
-  prefix: optionalStringSchema.default(''),
-});
+export const downloadableJsonStructuredOutputConfigSchema = z.object({}).default({});
 
 const structuredOutputDestinationBaseShape = {
   id: optionalStringSchema,
@@ -158,24 +117,16 @@ const mongoStructuredOutputDestinationSchema = z.object({
   config: mongoStructuredOutputConfigSchema,
 });
 
-const localJsonStructuredOutputDestinationSchema = z.object({
+const downloadableJsonStructuredOutputDestinationSchema = z.object({
   ...structuredOutputDestinationBaseShape,
   id: nonEmptyStringSchema,
-  type: z.literal('local_json'),
-  config: localJsonStructuredOutputConfigSchema,
-});
-
-const gcsJsonStructuredOutputDestinationSchema = z.object({
-  ...structuredOutputDestinationBaseShape,
-  id: nonEmptyStringSchema,
-  type: z.literal('gcs_json'),
-  config: gcsJsonStructuredOutputConfigSchema,
+  type: z.literal('downloadable_json'),
+  config: downloadableJsonStructuredOutputConfigSchema,
 });
 
 export const structuredOutputDestinationSchema = z.discriminatedUnion('type', [
   mongoStructuredOutputDestinationSchema,
-  localJsonStructuredOutputDestinationSchema,
-  gcsJsonStructuredOutputDestinationSchema,
+  downloadableJsonStructuredOutputDestinationSchema,
 ]);
 
 export const createStructuredOutputDestinationInputSchema = z.discriminatedUnion('type', [
@@ -183,23 +134,34 @@ export const createStructuredOutputDestinationInputSchema = z.discriminatedUnion
     id: optionalStringSchema,
     name: nonEmptyStringSchema,
     type: z.literal('mongodb'),
-    config: mongoStructuredOutputConfigSchema,
+    config: mongoStructuredOutputConfigSchema.default({
+      connectionUri: 'env:MONGODB_URI',
+    }),
     status: z.enum(['active', 'archived']).default('active'),
   }),
   z.object({
     id: optionalStringSchema,
     name: nonEmptyStringSchema,
-    type: z.literal('local_json'),
-    config: localJsonStructuredOutputConfigSchema,
+    type: z.literal('downloadable_json'),
+    config: downloadableJsonStructuredOutputConfigSchema.optional().default({}),
     status: z.enum(['active', 'archived']).default('active'),
   }),
-  z.object({
-    id: optionalStringSchema,
-    name: nonEmptyStringSchema,
-    type: z.literal('gcs_json'),
-    config: gcsJsonStructuredOutputConfigSchema,
-    status: z.enum(['active', 'archived']).default('active'),
-  }),
+]);
+
+export const localFilesystemDownloadableJsonDeliveryConfigSchema = z.object({
+  storageType: z.literal('local_filesystem'),
+  basePath: nonEmptyStringSchema,
+});
+
+export const gcsDownloadableJsonDeliveryConfigSchema = z.object({
+  storageType: z.literal('gcs'),
+  bucket: nonEmptyStringSchema,
+  prefix: optionalStringSchema.default(''),
+});
+
+export const downloadableJsonDeliveryConfigSchema = z.discriminatedUnion('storageType', [
+  localFilesystemDownloadableJsonDeliveryConfigSchema,
+  gcsDownloadableJsonDeliveryConfigSchema,
 ]);
 
 export const pipelineSchema = z.object({
@@ -207,7 +169,6 @@ export const pipelineSchema = z.object({
   name: nonEmptyStringSchema,
   searchSpaceId: nonEmptyStringSchema,
   runtimeProfileId: nonEmptyStringSchema,
-  artifactDestinationId: nonEmptyStringSchema,
   structuredOutputDestinationIds: z.array(nonEmptyStringSchema).default([]),
   mode: pipelineModeSchema,
   status: recordStatusSchema.default('draft'),
@@ -221,7 +182,6 @@ export const createPipelineInputSchema = z.object({
   name: nonEmptyStringSchema,
   searchSpaceId: nonEmptyStringSchema,
   runtimeProfileId: nonEmptyStringSchema,
-  artifactDestinationId: nonEmptyStringSchema,
   structuredOutputDestinationIds: z.array(nonEmptyStringSchema).default([]),
   mode: pipelineModeSchema,
   status: recordStatusSchema.default('active'),
@@ -247,21 +207,6 @@ export const runtimeProfileSnapshotSchema = runtimeProfileSchema.pick({
   debugLog: true,
 });
 
-export const artifactDestinationSnapshotSchema = z.discriminatedUnion('type', [
-  localFilesystemArtifactDestinationSchema.pick({
-    id: true,
-    name: true,
-    type: true,
-    config: true,
-  }),
-  gcsArtifactDestinationSchema.pick({
-    id: true,
-    name: true,
-    type: true,
-    config: true,
-  }),
-]);
-
 export const structuredOutputDestinationSnapshotSchema = z.discriminatedUnion('type', [
   mongoStructuredOutputDestinationSchema.pick({
     id: true,
@@ -269,17 +214,11 @@ export const structuredOutputDestinationSnapshotSchema = z.discriminatedUnion('t
     type: true,
     config: true,
   }),
-  localJsonStructuredOutputDestinationSchema.pick({
-    id: true,
-    name: true,
-    type: true,
-    config: true,
-  }),
-  gcsJsonStructuredOutputDestinationSchema.pick({
-    id: true,
-    name: true,
-    type: true,
-    config: true,
+  z.object({
+    id: nonEmptyStringSchema,
+    name: nonEmptyStringSchema,
+    type: z.literal('downloadable_json'),
+    config: downloadableJsonDeliveryConfigSchema,
   }),
 ]);
 
@@ -291,7 +230,7 @@ export const runManifestSchema = z.object({
   mode: pipelineModeSchema,
   searchSpaceSnapshot: searchSpaceSnapshotSchema,
   runtimeProfileSnapshot: runtimeProfileSnapshotSchema,
-  artifactDestinationSnapshot: artifactDestinationSnapshotSchema,
+  artifactStorageSnapshot: artifactStorageSnapshotSchema,
   structuredOutputDestinationSnapshots: z
     .array(structuredOutputDestinationSnapshotSchema)
     .default([]),
@@ -446,15 +385,14 @@ export type SearchSpace = z.infer<typeof searchSpaceSchema>;
 export type CreateSearchSpaceInput = z.infer<typeof createSearchSpaceInputSchema>;
 export type RuntimeProfile = z.infer<typeof runtimeProfileSchema>;
 export type CreateRuntimeProfileInput = z.infer<typeof createRuntimeProfileInputSchema>;
-export type ArtifactDestination = z.infer<typeof artifactDestinationSchema>;
-export type CreateArtifactDestinationInput = z.infer<typeof createArtifactDestinationInputSchema>;
 export type StructuredOutputDestination = z.infer<typeof structuredOutputDestinationSchema>;
 export type CreateStructuredOutputDestinationInput = z.infer<
   typeof createStructuredOutputDestinationInputSchema
 >;
 export type SearchSpaceSnapshot = z.infer<typeof searchSpaceSnapshotSchema>;
 export type RuntimeProfileSnapshot = z.infer<typeof runtimeProfileSnapshotSchema>;
-export type ArtifactDestinationSnapshot = z.infer<typeof artifactDestinationSnapshotSchema>;
+export type ArtifactStorageSnapshot = z.infer<typeof artifactStorageSnapshotSchema>;
+export type DownloadableJsonDeliveryConfig = z.infer<typeof downloadableJsonDeliveryConfigSchema>;
 export type StructuredOutputDestinationSnapshot = z.infer<
   typeof structuredOutputDestinationSnapshotSchema
 >;

@@ -8,7 +8,7 @@ import { PlaywrightCrawler, Dataset, createPlaywrightRouter, log, type LogLevel 
 import { Actor, type ProxyConfigurationOptions } from 'apify';
 import { MongoClient } from 'mongodb';
 import {
-  type ArtifactDestinationSnapshot,
+  type ArtifactStorageSnapshot,
   buildCrawlerDetailCapturedEvent,
   buildCrawlerRunFinishedEvent,
 } from '@repo/control-plane-contracts';
@@ -245,15 +245,13 @@ function serializeErrorForSummary(error: unknown): {
   };
 }
 
-function buildArtifactDestinationFromEnv(): ArtifactDestinationSnapshot {
+function buildArtifactStorageFromEnv(): ArtifactStorageSnapshot {
   if (envs.JOB_COMPASS_ARTIFACT_STORE_TYPE === 'gcs') {
     if (!envs.JOB_COMPASS_GCS_BUCKET) {
       throw new Error('JOB_COMPASS_ARTIFACT_STORE_TYPE=gcs requires JOB_COMPASS_GCS_BUCKET.');
     }
 
     return {
-      id: 'worker-artifact-gcs',
-      name: 'Worker artifact GCS',
       type: 'gcs',
       config: {
         bucket: envs.JOB_COMPASS_GCS_BUCKET,
@@ -263,8 +261,6 @@ function buildArtifactDestinationFromEnv(): ArtifactDestinationSnapshot {
   }
 
   return {
-    id: 'worker-artifact-local',
-    name: 'Worker artifact local filesystem',
     type: 'local_filesystem',
     config: {
       basePath: envs.LOCAL_SHARED_SCRAPED_JOBS_DIR,
@@ -973,7 +969,7 @@ const mongoDbName = deriveMongoDbName({
 });
 const runStartedAt = new Date();
 const runStartedAtMs = Date.now();
-const artifactDestination = buildArtifactDestinationFromEnv();
+const artifactDestination = buildArtifactStorageFromEnv();
 sharedRunOutputPaths = buildSharedRunOutputPaths(
   artifactDestination,
   crawlRunId,

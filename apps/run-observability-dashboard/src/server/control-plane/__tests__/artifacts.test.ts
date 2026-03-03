@@ -15,6 +15,8 @@ beforeEach(async () => {
   process.env.CONTROL_PLANE_DEFAULT_ARTIFACT_DIR = path.join(tempRootDir, 'artifacts');
   process.env.CONTROL_PLANE_DEFAULT_JSON_OUTPUT_DIR = path.join(tempRootDir, 'json-output');
   process.env.CONTROL_PLANE_EXECUTION_MODE = 'fixture';
+  process.env.CONTROL_PLANE_ARTIFACT_STORAGE_BACKEND = 'local_filesystem';
+  process.env.CONTROL_PLANE_DOWNLOADABLE_OUTPUT_BACKEND = 'local_filesystem';
   vi.resetModules();
 });
 
@@ -32,16 +34,14 @@ describe('control-plane artifact access', () => {
     const overview = await getControlPlaneOverview();
     const searchSpace = overview.searchSpaces[0]!;
     const runtimeProfile = overview.runtimeProfiles[0]!;
-    const artifactDestination = overview.artifactDestinations[0]!;
     const jsonOutputDestination = overview.structuredOutputDestinations.find(
-      (destination) => destination.type === 'local_json',
+      (destination) => destination.type === 'downloadable_json',
     )!;
 
     const pipeline = await createPipeline({
       name: 'Artifact preview pipeline',
       searchSpaceId: searchSpace.id,
       runtimeProfileId: runtimeProfile.id,
-      artifactDestinationId: artifactDestination.id,
       structuredOutputDestinationIds: [jsonOutputDestination.id],
       mode: 'crawl_and_ingest',
       status: 'active',

@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm } from 'node:fs/promises';
 import type {
-  ArtifactDestination,
   BrokerEvent,
   ControlPlaneRun,
-  CreateArtifactDestinationInput,
   CreatePipelineInput,
   CreateRuntimeProfileInput,
   CreateSearchSpaceInput,
@@ -18,7 +16,6 @@ import type {
 } from '@repo/control-plane-contracts';
 import {
   buildRecordId,
-  createArtifactDestinationInputSchema,
   createPipelineInputSchema,
   createRuntimeProfileInputSchema,
   createSearchSpaceInputSchema,
@@ -55,9 +52,12 @@ import {
   writeGeneratedActorInput,
 } from '@/server/control-plane/execution';
 import {
+  buildManagedArtifactStorageSnapshot,
+  buildManagedDownloadableJsonDeliveryConfig,
+} from '@/server/control-plane/managed-storage';
+import {
   type WorkerRuntime,
   deleteCollectionRecord,
-  getArtifactDestination,
   getPipeline,
   getRunManifest,
   getRunRecord,
@@ -65,14 +65,12 @@ import {
   getSearchSpace,
   getStructuredOutputDestination,
   getWorkerRuntime,
-  listArtifactDestinations,
   listPipelines,
   listRunManifests,
   listRunRecords,
   listRuntimeProfiles,
   listSearchSpaces,
   listStructuredOutputDestinations,
-  writeArtifactDestination,
   writePipeline,
   writeRunManifest,
   writeRunRecord,
@@ -103,7 +101,6 @@ export type ControlPlaneRunDetail = {
 export type ControlPlaneOverview = {
   searchSpaces: SearchSpace[];
   runtimeProfiles: RuntimeProfile[];
-  artifactDestinations: ArtifactDestination[];
   structuredOutputDestinations: StructuredOutputDestination[];
   pipelines: Pipeline[];
   runs: ControlPlaneRunView[];
@@ -146,6 +143,15 @@ function assertRecordIsActive(
 ): void {
   if (record.status !== 'active') {
     throw new Error(`${label} "${record.id}" is not active.`);
+  }
+}
+
+function assertPipelineOutputModeConsistency(input: {
+  mode: Pipeline['mode'];
+  structuredOutputDestinationIds: string[];
+}): void {
+  if (input.mode === 'crawl_and_ingest' && input.structuredOutputDestinationIds.length === 0) {
+    throw new Error('crawl_and_ingest pipelines must select at least one structured output.');
   }
 }
 
@@ -198,20 +204,17 @@ function deriveComputedStatus(input: {
 async function getPipelineDependencies(pipeline: Pipeline): Promise<{
   searchSpace: SearchSpace;
   runtimeProfile: RuntimeProfile;
-  artifactDestination: ArtifactDestination;
   structuredOutputDestinations: StructuredOutputDestination[];
 }> {
-  const [searchSpace, runtimeProfile, artifactDestination, structuredOutputDestinations] =
-    await Promise.all([
-      getSearchSpace(pipeline.searchSpaceId),
-      getRuntimeProfile(pipeline.runtimeProfileId),
-      getArtifactDestination(pipeline.artifactDestinationId),
-      Promise.all(
-        pipeline.structuredOutputDestinationIds.map((destinationId) =>
-          getStructuredOutputDestination(destinationId),
-        ),
+  const [searchSpace, runtimeProfile, structuredOutputDestinations] = await Promise.all([
+    getSearchSpace(pipeline.searchSpaceId),
+    getRuntimeProfile(pipeline.runtimeProfileId),
+    Promise.all(
+      pipeline.structuredOutputDestinationIds.map((destinationId) =>
+        getStructuredOutputDestination(destinationId),
       ),
-    ]);
+    ),
+  ]);
 
   if (!searchSpace) {
     throw new Error(`Unknown search space "${pipeline.searchSpaceId}".`);
@@ -222,11 +225,6 @@ async function getPipelineDependencies(pipeline: Pipeline): Promise<{
     throw new Error(`Unknown runtime profile "${pipeline.runtimeProfileId}".`);
   }
   assertRecordIsActive(runtimeProfile, 'Runtime profile');
-
-  if (!artifactDestination) {
-    throw new Error(`Unknown artifact destination "${pipeline.artifactDestinationId}".`);
-  }
-  assertRecordIsActive(artifactDestination, 'Artifact destination');
 
   const missingStructuredOutput = structuredOutputDestinations.find((item) => item === null);
   if (missingStructuredOutput) {
@@ -242,7 +240,6 @@ async function getPipelineDependencies(pipeline: Pipeline): Promise<{
   return {
     searchSpace,
     runtimeProfile,
-    artifactDestination,
     structuredOutputDestinations: structuredOutputDestinations.filter(
       (item): item is StructuredOutputDestination => item !== null,
     ),
@@ -254,7 +251,6 @@ function buildRunManifest(input: {
   pipeline: Pipeline;
   searchSpace: SearchSpace;
   runtimeProfile: RuntimeProfile;
-  artifactDestination: ArtifactDestination;
   structuredOutputDestinations: StructuredOutputDestination[];
   createdBy: string;
 }): RunManifest {
@@ -282,18 +278,22 @@ function buildRunManifest(input: {
       ingestionEnabled: input.runtimeProfile.ingestionEnabled,
       debugLog: input.runtimeProfile.debugLog,
     },
-    artifactDestinationSnapshot: {
-      id: input.artifactDestination.id,
-      name: input.artifactDestination.name,
-      type: input.artifactDestination.type,
-      config: input.artifactDestination.config,
-    },
-    structuredOutputDestinationSnapshots: input.structuredOutputDestinations.map((destination) => ({
-      id: destination.id,
-      name: destination.name,
-      type: destination.type,
-      config: destination.config,
-    })),
+    artifactStorageSnapshot: buildManagedArtifactStorageSnapshot(),
+    structuredOutputDestinationSnapshots: input.structuredOutputDestinations.map((destination) =>
+      destination.type === 'downloadable_json'
+        ? {
+            id: destination.id,
+            name: destination.name,
+            type: 'downloadable_json' as const,
+            config: buildManagedDownloadableJsonDeliveryConfig(),
+          }
+        : {
+            id: destination.id,
+            name: destination.name,
+            type: 'mongodb' as const,
+            config: destination.config,
+          },
+    ),
     createdAt: nowIso(),
     createdBy: input.createdBy,
   });
@@ -409,19 +409,6 @@ async function assertRuntimeProfileDeleteAllowed(id: string): Promise<void> {
   }
 }
 
-async function assertArtifactDestinationDeleteAllowed(id: string): Promise<void> {
-  const [pipelines, manifests] = await Promise.all([listPipelines(), listRunManifests()]);
-  if (pipelines.some((pipeline) => pipeline.artifactDestinationId === id)) {
-    throw new Error(`Artifact destination "${id}" is still referenced by one or more pipelines.`);
-  }
-
-  if (manifests.some((manifest) => manifest.artifactDestinationSnapshot.id === id)) {
-    throw new Error(
-      `Artifact destination "${id}" is referenced by historical runs and must be archived.`,
-    );
-  }
-}
-
 async function assertStructuredOutputDestinationDeleteAllowed(id: string): Promise<void> {
   const [pipelines, manifests] = await Promise.all([listPipelines(), listRunManifests()]);
   if (
@@ -454,30 +441,20 @@ async function assertPipelineDeleteAllowed(id: string): Promise<void> {
 
 export async function getControlPlaneOverview(): Promise<ControlPlaneOverview> {
   await ensureControlPlaneBootstrap();
-  const [
-    searchSpaces,
-    runtimeProfiles,
-    artifactDestinations,
-    structuredOutputDestinations,
-    pipelines,
-    runs,
-  ] = await Promise.all([
-    listSearchSpaces(),
-    listRuntimeProfiles(),
-    listArtifactDestinations(),
-    listStructuredOutputDestinations(),
-    listPipelines(),
-    listRunRecords(),
-  ]);
+  const [searchSpaces, runtimeProfiles, structuredOutputDestinations, pipelines, runs] =
+    await Promise.all([
+      listSearchSpaces(),
+      listRuntimeProfiles(),
+      listStructuredOutputDestinations(),
+      listPipelines(),
+      listRunRecords(),
+    ]);
 
   const runViews = await Promise.all(runs.map((run) => buildRunView(run)));
 
   return {
     searchSpaces: searchSpaces.sort((left, right) => left.name.localeCompare(right.name)),
     runtimeProfiles: runtimeProfiles.sort((left, right) => left.name.localeCompare(right.name)),
-    artifactDestinations: artifactDestinations.sort((left, right) =>
-      left.name.localeCompare(right.name),
-    ),
     structuredOutputDestinations: structuredOutputDestinations.sort((left, right) =>
       left.name.localeCompare(right.name),
     ),
@@ -658,98 +635,6 @@ export async function deleteRuntimeProfile(id: string): Promise<void> {
   await deleteCollectionRecord('runtimeProfiles', id);
 }
 
-export async function createArtifactDestination(
-  rawInput: CreateArtifactDestinationInput,
-): Promise<ArtifactDestination> {
-  await ensureControlPlaneBootstrap();
-  const input = createArtifactDestinationInputSchema.parse(rawInput);
-  const timestamp = nowIso();
-  const id = buildRecordId(input.id ?? input.name);
-
-  if (input.type === 'local_filesystem') {
-    return writeArtifactDestination({
-      id,
-      name: input.name,
-      type: 'local_filesystem',
-      config: input.config,
-      status: input.status,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
-  }
-
-  return writeArtifactDestination({
-    id,
-    name: input.name,
-    type: 'gcs',
-    config: input.config,
-    status: input.status,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  });
-}
-
-export async function updateArtifactDestination(
-  id: string,
-  rawInput: CreateArtifactDestinationInput,
-): Promise<ArtifactDestination> {
-  await ensureControlPlaneBootstrap();
-  const existing = await getArtifactDestination(id);
-  if (!existing) {
-    throw new Error(`Unknown artifact destination "${id}".`);
-  }
-
-  const input = createArtifactDestinationInputSchema.parse(rawInput);
-  const timestamp = nowIso();
-
-  if (input.type === 'local_filesystem') {
-    return writeArtifactDestination({
-      id: existing.id,
-      name: input.name,
-      type: 'local_filesystem',
-      config: input.config,
-      status: existing.status,
-      createdAt: existing.createdAt,
-      updatedAt: timestamp,
-    });
-  }
-
-  return writeArtifactDestination({
-    id: existing.id,
-    name: input.name,
-    type: 'gcs',
-    config: input.config,
-    status: existing.status,
-    createdAt: existing.createdAt,
-    updatedAt: timestamp,
-  });
-}
-
-export async function archiveArtifactDestination(id: string): Promise<ArtifactDestination> {
-  await ensureControlPlaneBootstrap();
-  const existing = await getArtifactDestination(id);
-  if (!existing) {
-    throw new Error(`Unknown artifact destination "${id}".`);
-  }
-
-  return writeArtifactDestination({
-    ...existing,
-    status: 'archived',
-    updatedAt: nowIso(),
-  });
-}
-
-export async function deleteArtifactDestination(id: string): Promise<void> {
-  await ensureControlPlaneBootstrap();
-  const existing = await getArtifactDestination(id);
-  if (!existing) {
-    throw new Error(`Unknown artifact destination "${id}".`);
-  }
-
-  await assertArtifactDestinationDeleteAllowed(id);
-  await deleteCollectionRecord('artifactDestinations', id);
-}
-
 export async function createStructuredOutputDestination(
   rawInput: CreateStructuredOutputDestinationInput,
 ): Promise<StructuredOutputDestination> {
@@ -770,22 +655,10 @@ export async function createStructuredOutputDestination(
     });
   }
 
-  if (input.type === 'local_json') {
-    return writeStructuredOutputDestination({
-      id,
-      name: input.name,
-      type: 'local_json',
-      config: input.config,
-      status: input.status,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
-  }
-
   return writeStructuredOutputDestination({
     id,
     name: input.name,
-    type: 'gcs_json',
+    type: 'downloadable_json',
     config: input.config,
     status: input.status,
     createdAt: timestamp,
@@ -818,22 +691,10 @@ export async function updateStructuredOutputDestination(
     });
   }
 
-  if (input.type === 'local_json') {
-    return writeStructuredOutputDestination({
-      id: existing.id,
-      name: input.name,
-      type: 'local_json',
-      config: input.config,
-      status: existing.status,
-      createdAt: existing.createdAt,
-      updatedAt: timestamp,
-    });
-  }
-
   return writeStructuredOutputDestination({
     id: existing.id,
     name: input.name,
-    type: 'gcs_json',
+    type: 'downloadable_json',
     config: input.config,
     status: existing.status,
     createdAt: existing.createdAt,
@@ -871,10 +732,10 @@ export async function deleteStructuredOutputDestination(id: string): Promise<voi
 export async function createPipeline(rawInput: CreatePipelineInput): Promise<Pipeline> {
   await ensureControlPlaneBootstrap();
   const input = createPipelineInputSchema.parse(rawInput);
-  const [searchSpace, runtimeProfile, artifactDestination] = await Promise.all([
+  assertPipelineOutputModeConsistency(input);
+  const [searchSpace, runtimeProfile] = await Promise.all([
     getSearchSpace(input.searchSpaceId),
     getRuntimeProfile(input.runtimeProfileId),
-    getArtifactDestination(input.artifactDestinationId),
   ]);
 
   if (!searchSpace) {
@@ -886,11 +747,6 @@ export async function createPipeline(rawInput: CreatePipelineInput): Promise<Pip
     throw new Error(`Unknown runtime profile "${input.runtimeProfileId}".`);
   }
   assertRecordIsActive(runtimeProfile, 'Runtime profile');
-
-  if (!artifactDestination) {
-    throw new Error(`Unknown artifact destination "${input.artifactDestinationId}".`);
-  }
-  assertRecordIsActive(artifactDestination, 'Artifact destination');
 
   const structuredOutputDestinations = await Promise.all(
     input.structuredOutputDestinationIds.map((destinationId) =>
@@ -915,7 +771,6 @@ export async function createPipeline(rawInput: CreatePipelineInput): Promise<Pip
       name: input.name,
       searchSpaceId: input.searchSpaceId,
       runtimeProfileId: input.runtimeProfileId,
-      artifactDestinationId: input.artifactDestinationId,
       structuredOutputDestinationIds: input.structuredOutputDestinationIds,
       mode: input.mode,
       status: input.status,
@@ -934,10 +789,10 @@ export async function updatePipeline(id: string, rawInput: CreatePipelineInput):
   }
 
   const input = createPipelineInputSchema.parse(rawInput);
-  const [searchSpace, runtimeProfile, artifactDestination] = await Promise.all([
+  assertPipelineOutputModeConsistency(input);
+  const [searchSpace, runtimeProfile] = await Promise.all([
     getSearchSpace(input.searchSpaceId),
     getRuntimeProfile(input.runtimeProfileId),
-    getArtifactDestination(input.artifactDestinationId),
   ]);
 
   if (!searchSpace) {
@@ -949,11 +804,6 @@ export async function updatePipeline(id: string, rawInput: CreatePipelineInput):
     throw new Error(`Unknown runtime profile "${input.runtimeProfileId}".`);
   }
   assertRecordIsActive(runtimeProfile, 'Runtime profile');
-
-  if (!artifactDestination) {
-    throw new Error(`Unknown artifact destination "${input.artifactDestinationId}".`);
-  }
-  assertRecordIsActive(artifactDestination, 'Artifact destination');
 
   const structuredOutputDestinations = await Promise.all(
     input.structuredOutputDestinationIds.map((destinationId) =>
@@ -977,7 +827,6 @@ export async function updatePipeline(id: string, rawInput: CreatePipelineInput):
       name: input.name,
       searchSpaceId: input.searchSpaceId,
       runtimeProfileId: input.runtimeProfileId,
-      artifactDestinationId: input.artifactDestinationId,
       structuredOutputDestinationIds: input.structuredOutputDestinationIds,
       mode: input.mode,
       version: existing.version + 1,
@@ -1034,7 +883,6 @@ export async function startRun(rawInput: StartRunRequest): Promise<ControlPlaneR
       pipeline,
       searchSpace: dependencies.searchSpace,
       runtimeProfile: dependencies.runtimeProfile,
-      artifactDestination: dependencies.artifactDestination,
       structuredOutputDestinations: dependencies.structuredOutputDestinations,
       createdBy: input.createdBy,
     });

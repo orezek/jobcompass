@@ -28,7 +28,6 @@ test('control plane can create a pipeline and run it in fixture mode', async ({ 
   await expect(page.getByText('Manage source definitions')).toBeVisible();
 
   await page.getByTestId('pipeline-name-input').fill(pipelineName);
-  await page.getByRole('textbox', { name: 'STRUCTURED OUTPUT IDS' }).fill('local-json-output');
   await page.getByTestId('create-pipeline-submit').click();
 
   await expect(page.getByTestId('start-run-pipeline')).toContainText(pipelineName);

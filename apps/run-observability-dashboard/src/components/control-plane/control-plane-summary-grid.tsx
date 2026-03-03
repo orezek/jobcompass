@@ -4,14 +4,12 @@ import { formatNumber } from '@/server/lib/formatting';
 export function ControlPlaneSummaryGrid({
   searchSpaces,
   runtimeProfiles,
-  artifactDestinations,
   structuredOutputs,
   pipelines,
   activeRuns,
 }: {
   searchSpaces: number;
   runtimeProfiles: number;
-  artifactDestinations: number;
   structuredOutputs: number;
   pipelines: number;
   activeRuns: number;
@@ -31,9 +29,9 @@ export function ControlPlaneSummaryGrid({
         hint="Crawler and ingestion throughput"
       />
       <KpiCard
-        label="DESTINATIONS"
-        value={formatNumber(artifactDestinations + structuredOutputs)}
-        hint="Artifacts and structured outputs"
+        label="OUTPUTS"
+        value={formatNumber(structuredOutputs)}
+        hint="Downloadable JSON and MongoDB"
       />
     </section>
   );

@@ -5,7 +5,6 @@ import { ControlPlaneCommandDeck } from '@/components/control-plane/control-plan
 import { ControlPlaneRunsSection } from '@/components/control-plane/control-plane-runs-section';
 import { SearchSpaceSection } from '@/components/control-plane/search-space-section';
 import { RuntimeProfileSection } from '@/components/control-plane/runtime-profile-section';
-import { ArtifactDestinationSection } from '@/components/control-plane/artifact-destination-section';
 import { StructuredOutputSection } from '@/components/control-plane/structured-output-section';
 import { PipelineSection } from '@/components/control-plane/pipeline-section';
 import { env } from '@/server/env';
@@ -35,7 +34,6 @@ export default async function ControlPlanePage() {
       <ControlPlaneSummaryGrid
         searchSpaces={overview.searchSpaces.length}
         runtimeProfiles={overview.runtimeProfiles.length}
-        artifactDestinations={overview.artifactDestinations.length}
         structuredOutputs={overview.structuredOutputDestinations.length}
         pipelines={overview.pipelines.length}
         activeRuns={activeRuns}
@@ -63,7 +61,6 @@ export default async function ControlPlanePage() {
       </section>
 
       <section className="control-grid">
-        <ArtifactDestinationSection artifactDestinations={overview.artifactDestinations} />
         <StructuredOutputSection
           structuredOutputDestinations={overview.structuredOutputDestinations}
         />
@@ -73,7 +70,7 @@ export default async function ControlPlanePage() {
         pipelines={overview.pipelines}
         searchSpaces={overview.searchSpaces}
         runtimeProfiles={overview.runtimeProfiles}
-        artifactDestinations={overview.artifactDestinations}
+        structuredOutputDestinations={overview.structuredOutputDestinations}
       />
     </AppShell>
   );

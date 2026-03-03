@@ -77,7 +77,7 @@ async function assertRunArtifactStoragePath(
   capture: ControlPlaneArtifactCapture,
 ): Promise<string> {
   return assertArtifactStoragePathForRun({
-    destination: manifest.artifactDestinationSnapshot,
+    destination: manifest.artifactStorageSnapshot,
     crawlRunId: runId,
     storagePath: capture.artifactPath,
   });

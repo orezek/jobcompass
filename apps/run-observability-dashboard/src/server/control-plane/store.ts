@@ -2,7 +2,6 @@ import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import type {
-  ArtifactDestination,
   ControlPlaneRun,
   Pipeline,
   RunManifest,
@@ -11,7 +10,6 @@ import type {
   RuntimeProfile,
 } from '@repo/control-plane-contracts';
 import {
-  artifactDestinationSchema,
   controlPlaneRunSchema,
   pipelineSchema,
   runManifestSchema,
@@ -46,7 +44,6 @@ export type WorkerRuntime = z.infer<typeof workerRuntimeSchema>;
 const collectionSchemas = {
   searchSpaces: searchSpaceSchema,
   runtimeProfiles: runtimeProfileSchema,
-  artifactDestinations: artifactDestinationSchema,
   structuredOutputDestinations: structuredOutputDestinationSchema,
   pipelines: pipelineSchema,
 } as const;
@@ -62,6 +59,10 @@ async function readJsonFile<T>(filePath: string, schema: z.ZodType<T>): Promise<
     const raw = await readFile(filePath, 'utf8');
     return schema.parse(JSON.parse(raw) as unknown);
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      return null;
+    }
+
     if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
       return null;
     }
@@ -151,24 +152,6 @@ export async function writeRuntimeProfile(record: RuntimeProfile): Promise<Runti
 
 export async function getRuntimeProfile(id: string): Promise<RuntimeProfile | null> {
   return getCollectionRecord('runtimeProfiles', collectionSchemas.runtimeProfiles, id);
-}
-
-export async function listArtifactDestinations(): Promise<ArtifactDestination[]> {
-  return listCollectionRecords('artifactDestinations', collectionSchemas.artifactDestinations);
-}
-
-export async function writeArtifactDestination(
-  record: ArtifactDestination,
-): Promise<ArtifactDestination> {
-  return writeCollectionRecord(
-    'artifactDestinations',
-    collectionSchemas.artifactDestinations,
-    record,
-  );
-}
-
-export async function getArtifactDestination(id: string): Promise<ArtifactDestination | null> {
-  return getCollectionRecord('artifactDestinations', collectionSchemas.artifactDestinations, id);
 }
 
 export async function listStructuredOutputDestinations(): Promise<StructuredOutputDestination[]> {

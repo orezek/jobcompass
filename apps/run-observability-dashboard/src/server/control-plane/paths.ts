@@ -37,7 +37,6 @@ export const ingestionAppRootDir = path.join(repoRootDir, 'apps', 'jobs-ingestio
 export const controlPlaneCollectionDirs = {
   searchSpaces: path.join(controlPlaneDataRootDir, 'search-spaces'),
   runtimeProfiles: path.join(controlPlaneDataRootDir, 'runtime-profiles'),
-  artifactDestinations: path.join(controlPlaneDataRootDir, 'artifact-destinations'),
   structuredOutputDestinations: path.join(
     controlPlaneDataRootDir,
     'structured-output-destinations',

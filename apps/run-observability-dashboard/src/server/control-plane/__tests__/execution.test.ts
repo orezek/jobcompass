@@ -5,6 +5,44 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let tempRootDir: string;
 
+function buildManifest(overrides: Record<string, unknown> = {}) {
+  return {
+    runId: 'crawl-run-test',
+    pipelineId: 'pipeline-test',
+    pipelineVersion: 1,
+    sourceType: 'jobs_cz' as const,
+    mode: 'crawl_only' as const,
+    searchSpaceSnapshot: {
+      id: 'prague-tech-jobs',
+      name: 'Prague tech jobs',
+      sourceType: 'jobs_cz' as const,
+      startUrls: ['https://www.jobs.cz/prace/praha/'],
+      maxItemsDefault: 1,
+      allowInactiveMarkingOnPartialRuns: false,
+      version: 1,
+    },
+    runtimeProfileSnapshot: {
+      id: 'runtime-test',
+      name: 'Runtime test',
+      crawlerMaxConcurrency: 1,
+      crawlerMaxRequestsPerMinute: 30,
+      ingestionConcurrency: 1,
+      ingestionEnabled: false,
+      debugLog: false,
+    },
+    artifactStorageSnapshot: {
+      type: 'local_filesystem' as const,
+      config: {
+        basePath: '/tmp/jobcompass-control-plane-execution-test/artifacts',
+      },
+    },
+    structuredOutputDestinationSnapshots: [],
+    createdAt: '2026-03-03T00:00:00.000Z',
+    createdBy: 'vitest',
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   Object.assign(process.env, {
     DASHBOARD_DATA_MODE: 'fixture',
@@ -16,6 +54,8 @@ beforeEach(() => {
     CONTROL_PLANE_DEFAULT_ARTIFACT_DIR: '/tmp/jobcompass-control-plane-execution-test/artifacts',
     CONTROL_PLANE_DEFAULT_JSON_OUTPUT_DIR:
       '/tmp/jobcompass-control-plane-execution-test/json-output',
+    CONTROL_PLANE_ARTIFACT_STORAGE_BACKEND: 'local_filesystem',
+    CONTROL_PLANE_DOWNLOADABLE_OUTPUT_BACKEND: 'local_filesystem',
     CONTROL_PLANE_BROKER_BACKEND: 'local',
     CONTROL_PLANE_GCP_PUBSUB_TOPIC: 'jobcompass-control-plane-events',
     CONTROL_PLANE_GCP_PUBSUB_SUBSCRIPTION_PREFIX: 'jobcompass-control-plane-run',
@@ -38,42 +78,7 @@ describe('control-plane local_cli env overrides', () => {
     const { buildCrawlerWorkerEnvOverrides } = await import('@/server/control-plane/execution');
 
     const envOverrides = buildCrawlerWorkerEnvOverrides({
-      manifest: {
-        runId: 'crawl-run-test',
-        pipelineId: 'pipeline-test',
-        pipelineVersion: 1,
-        sourceType: 'jobs_cz',
-        mode: 'crawl_only',
-        searchSpaceSnapshot: {
-          id: 'prague-tech-jobs',
-          name: 'Prague tech jobs',
-          sourceType: 'jobs_cz',
-          startUrls: ['https://www.jobs.cz/prace/praha/'],
-          maxItemsDefault: 1,
-          allowInactiveMarkingOnPartialRuns: false,
-          version: 1,
-        },
-        runtimeProfileSnapshot: {
-          id: 'runtime-test',
-          name: 'Runtime test',
-          crawlerMaxConcurrency: 1,
-          crawlerMaxRequestsPerMinute: 30,
-          ingestionConcurrency: 1,
-          ingestionEnabled: false,
-          debugLog: false,
-        },
-        artifactDestinationSnapshot: {
-          id: 'artifact-test',
-          name: 'Artifact test',
-          type: 'local_filesystem',
-          config: {
-            basePath: '/tmp/jobcompass-control-plane-execution-test/artifacts',
-          },
-        },
-        structuredOutputDestinationSnapshots: [],
-        createdAt: '2026-03-03T00:00:00.000Z',
-        createdBy: 'vitest',
-      },
+      manifest: buildManifest(),
       runId: 'crawl-run-test',
       mongoDbName: 'job-compass-prague-tech-jobs',
       crawlerSummaryPath:
@@ -92,21 +97,7 @@ describe('control-plane local_cli env overrides', () => {
     const { buildCrawlerWorkerEnvOverrides } = await import('@/server/control-plane/execution');
 
     const envOverrides = buildCrawlerWorkerEnvOverrides({
-      manifest: {
-        runId: 'crawl-run-test',
-        pipelineId: 'pipeline-test',
-        pipelineVersion: 1,
-        sourceType: 'jobs_cz',
-        mode: 'crawl_only',
-        searchSpaceSnapshot: {
-          id: 'prague-tech-jobs',
-          name: 'Prague tech jobs',
-          sourceType: 'jobs_cz',
-          startUrls: ['https://www.jobs.cz/prace/praha/'],
-          maxItemsDefault: 1,
-          allowInactiveMarkingOnPartialRuns: false,
-          version: 1,
-        },
+      manifest: buildManifest({
         runtimeProfileSnapshot: {
           id: 'runtime-test',
           name: 'Runtime test',
@@ -116,18 +107,7 @@ describe('control-plane local_cli env overrides', () => {
           ingestionEnabled: false,
           debugLog: true,
         },
-        artifactDestinationSnapshot: {
-          id: 'artifact-test',
-          name: 'Artifact test',
-          type: 'local_filesystem',
-          config: {
-            basePath: '/tmp/jobcompass-control-plane-execution-test/artifacts',
-          },
-        },
-        structuredOutputDestinationSnapshots: [],
-        createdAt: '2026-03-03T00:00:00.000Z',
-        createdBy: 'vitest',
-      },
+      }),
       runId: 'crawl-run-test',
       mongoDbName: 'job-compass-prague-tech-jobs',
       crawlerSummaryPath:
@@ -137,7 +117,7 @@ describe('control-plane local_cli env overrides', () => {
     expect(envOverrides.CRAWLEE_LOG_LEVEL).toBe('DEBUG');
   });
 
-  it('maps GCS artifacts and Pub/Sub broker settings into worker env overrides', async () => {
+  it('maps GCS artifacts, Pub/Sub broker settings, and managed downloadable JSON into worker env overrides', async () => {
     Object.assign(process.env, {
       CONTROL_PLANE_BROKER_BACKEND: 'gcp_pubsub',
       CONTROL_PLANE_GCP_PROJECT_ID: 'jobcompass-test',
@@ -149,21 +129,8 @@ describe('control-plane local_cli env overrides', () => {
     const { buildCrawlerWorkerEnvOverrides, buildIngestionWorkerEnvOverrides } =
       await import('@/server/control-plane/execution');
 
-    const manifest = {
-      runId: 'crawl-run-test',
-      pipelineId: 'pipeline-test',
-      pipelineVersion: 1,
-      sourceType: 'jobs_cz' as const,
-      mode: 'crawl_and_ingest' as const,
-      searchSpaceSnapshot: {
-        id: 'prague-tech-jobs',
-        name: 'Prague tech jobs',
-        sourceType: 'jobs_cz' as const,
-        startUrls: ['https://www.jobs.cz/prace/praha/'],
-        maxItemsDefault: 1,
-        allowInactiveMarkingOnPartialRuns: false,
-        version: 1,
-      },
+    const manifest = buildManifest({
+      mode: 'crawl_and_ingest',
       runtimeProfileSnapshot: {
         id: 'runtime-test',
         name: 'Runtime test',
@@ -173,9 +140,7 @@ describe('control-plane local_cli env overrides', () => {
         ingestionEnabled: true,
         debugLog: false,
       },
-      artifactDestinationSnapshot: {
-        id: 'artifact-gcs',
-        name: 'Artifact GCS',
+      artifactStorageSnapshot: {
         type: 'gcs' as const,
         config: {
           bucket: 'jobcompass-artifacts-test',
@@ -184,18 +149,25 @@ describe('control-plane local_cli env overrides', () => {
       },
       structuredOutputDestinationSnapshots: [
         {
-          id: 'json-gcs',
-          name: 'JSON GCS',
-          type: 'gcs_json' as const,
+          id: 'json-download',
+          name: 'Downloadable JSON',
+          type: 'downloadable_json' as const,
           config: {
+            storageType: 'gcs' as const,
             bucket: 'jobcompass-json-test',
             prefix: 'normalized',
           },
         },
+        {
+          id: 'mongo-primary',
+          name: 'Mongo primary',
+          type: 'mongodb' as const,
+          config: {
+            connectionUri: 'env:MONGODB_URI',
+          },
+        },
       ],
-      createdAt: '2026-03-03T00:00:00.000Z',
-      createdBy: 'vitest',
-    };
+    });
 
     const crawlerEnv = buildCrawlerWorkerEnvOverrides({
       manifest,
@@ -214,6 +186,7 @@ describe('control-plane local_cli env overrides', () => {
     expect(crawlerEnv.JOB_COMPASS_GCS_BUCKET).toBe('jobcompass-artifacts-test');
     expect(crawlerEnv.JOB_COMPASS_BROKER_BACKEND).toBe('gcp_pubsub');
     expect(crawlerEnv.JOB_COMPASS_GCP_PROJECT_ID).toBe('jobcompass-test');
+    expect(ingestionEnv.MONGODB_URI).toBe('mongodb://127.0.0.1:27027');
     expect(ingestionEnv.JOB_COMPASS_BROKER_BACKEND).toBe('gcp_pubsub');
     expect(ingestionEnv.JOB_COMPASS_GCP_PUBSUB_TOPIC).toBe('jobcompass-control-plane-events');
   });
@@ -224,7 +197,7 @@ describe('control-plane local_cli env overrides', () => {
 
     await writeFile(
       path.join(tempRootDir, '.env.local'),
-      'GEMINI_API_KEY=test-gemini-key\\n',
+      'GEMINI_API_KEY=test-gemini-key\n',
       'utf8',
     );
 

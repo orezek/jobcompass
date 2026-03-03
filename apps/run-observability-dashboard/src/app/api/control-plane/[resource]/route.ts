@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import type {
-  CreateArtifactDestinationInput,
   CreatePipelineInput,
   CreateRuntimeProfileInput,
   CreateSearchSpaceInput,
@@ -9,24 +8,20 @@ import type {
   StartRunRequest,
 } from '@repo/control-plane-contracts';
 import {
-  archiveArtifactDestination,
   archivePipeline,
   archiveRuntimeProfile,
   archiveSearchSpace,
   archiveStructuredOutputDestination,
-  createArtifactDestination,
   createPipeline,
   createRuntimeProfile,
   createSearchSpace,
   createStructuredOutputDestination,
-  deleteArtifactDestination,
   deletePipeline,
   deleteRuntimeProfile,
   deleteSearchSpace,
   deleteStructuredOutputDestination,
   getControlPlaneOverview,
   startRun,
-  updateArtifactDestination,
   updatePipeline,
   updateRuntimeProfile,
   updateSearchSpace,
@@ -37,7 +32,6 @@ const resourceSchema = z.enum([
   'overview',
   'search-spaces',
   'runtime-profiles',
-  'artifact-destinations',
   'structured-output-destinations',
   'pipelines',
   'runs',
@@ -67,8 +61,6 @@ export async function GET(_request: Request, context: RouteContext) {
       return NextResponse.json({ ok: true, data: overview.searchSpaces });
     case 'runtime-profiles':
       return NextResponse.json({ ok: true, data: overview.runtimeProfiles });
-    case 'artifact-destinations':
-      return NextResponse.json({ ok: true, data: overview.artifactDestinations });
     case 'structured-output-destinations':
       return NextResponse.json({ ok: true, data: overview.structuredOutputDestinations });
     case 'pipelines':
@@ -101,11 +93,6 @@ export async function POST(request: Request, context: RouteContext) {
         return NextResponse.json({
           ok: true,
           data: await createRuntimeProfile(body as CreateRuntimeProfileInput),
-        });
-      case 'artifact-destinations':
-        return NextResponse.json({
-          ok: true,
-          data: await createArtifactDestination(body as CreateArtifactDestinationInput),
         });
       case 'structured-output-destinations':
         return NextResponse.json({
@@ -176,14 +163,6 @@ export async function PATCH(request: Request, context: RouteContext) {
               ? await archiveRuntimeProfile(id)
               : await updateRuntimeProfile(id, body as CreateRuntimeProfileInput),
         });
-      case 'artifact-destinations':
-        return NextResponse.json({
-          ok: true,
-          data:
-            action === 'archive'
-              ? await archiveArtifactDestination(id)
-              : await updateArtifactDestination(id, body as CreateArtifactDestinationInput),
-        });
       case 'structured-output-destinations':
         return NextResponse.json({
           ok: true,
@@ -244,9 +223,6 @@ export async function DELETE(request: Request, context: RouteContext) {
         break;
       case 'runtime-profiles':
         await deleteRuntimeProfile(id);
-        break;
-      case 'artifact-destinations':
-        await deleteArtifactDestination(id);
         break;
       case 'structured-output-destinations':
         await deleteStructuredOutputDestination(id);
