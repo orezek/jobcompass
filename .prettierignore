@@ -6,6 +6,9 @@ coverage
 .next
 .turbo
 node_modules
+apps/run-observability-dashboard/.playwright-control-plane
+apps/run-observability-dashboard/test-results
+apps/run-observability-dashboard/storage
 
 # Ignore package managers:
 pnpm-lock.yaml

@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 const dataModeSchema = z.enum(['mongo', 'fixture']);
 const executionModeSchema = z.enum(['fixture', 'local_cli']);
+const brokerBackendSchema = z.enum(['local', 'gcp_pubsub']);
 const timeRangeSchema = z.enum(['24h', '7d', '30d']);
 const optionalStringSchema = z.preprocess((value) => {
   if (typeof value === 'string' && value.trim() === '') {
@@ -33,6 +34,10 @@ const envSchema = z.object({
     .string()
     .default('../jobs-ingestion-service/output/control-plane'),
   CONTROL_PLANE_EXECUTION_MODE: executionModeSchema.default('fixture'),
+  CONTROL_PLANE_BROKER_BACKEND: brokerBackendSchema.default('local'),
+  CONTROL_PLANE_GCP_PROJECT_ID: optionalStringSchema,
+  CONTROL_PLANE_GCP_PUBSUB_TOPIC: z.string().default('jobcompass-control-plane-events'),
+  CONTROL_PLANE_GCP_PUBSUB_SUBSCRIPTION_PREFIX: z.string().default('jobcompass-control-plane-run'),
   CONTROL_PLANE_PNPM_BIN: z.string().default('pnpm'),
 });
 

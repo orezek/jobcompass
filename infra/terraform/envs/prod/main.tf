@@ -1,14 +1,35 @@
 provider "google" {
-  project = "gen-lang-client-0639699940"
-  region  = "europe-west3" # Frankfurt
+  project = var.project_id
+  region  = var.region
 }
 
-# A simple test resource to verify the CI/CD pipeline works
-resource "google_storage_bucket" "test_deployment_bucket" {
-  # Note: Bucket names must be globally unique across all of GCP,
-  # so feel free to change "998877" to some random numbers!
-  name          = "jobcompass-prod-test-bucket-998878"
-  # Keep data strictly in Frankfurt
-  location      = "europe-west3"
-  force_destroy = true
+locals {
+  labels = {
+    app         = "jobcompass"
+    environment = "prod"
+    managed_by  = "terraform"
+  }
+}
+
+resource "google_storage_bucket" "artifacts" {
+  name          = var.artifact_bucket_name
+  location      = var.bucket_location
+  force_destroy = var.force_destroy_buckets
+  labels        = local.labels
+
+  uniform_bucket_level_access = true
+}
+
+resource "google_storage_bucket" "structured_output" {
+  name          = var.structured_output_bucket_name
+  location      = var.bucket_location
+  force_destroy = var.force_destroy_buckets
+  labels        = local.labels
+
+  uniform_bucket_level_access = true
+}
+
+resource "google_pubsub_topic" "control_plane_events" {
+  name   = var.control_plane_pubsub_topic_name
+  labels = local.labels
 }

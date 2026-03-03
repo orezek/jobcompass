@@ -1,13 +1,14 @@
-import path from 'node:path';
-import { readFile } from 'node:fs/promises';
-import type { BrokerEvent, RunManifest } from '@repo/control-plane-contracts';
-import { buildArtifactRunDir, readBrokerEvents } from '@repo/control-plane-contracts';
-import { controlPlaneBrokerRootDir } from '@/server/control-plane/paths';
-import { getRunManifest, getRunRecord } from '@/server/control-plane/store';
 import {
-  readTextPreview,
-  type ControlPlaneFilePreview,
-} from '@/server/control-plane/file-previews';
+  downloadStoredArtifact,
+  readStoredArtifactPreview,
+  assertArtifactStoragePathForRun,
+} from '@repo/control-plane-adapters';
+import type { BrokerEvent, RunManifest } from '@repo/control-plane-contracts';
+import { readBrokerEvents } from '@repo/control-plane-contracts';
+import { controlPlaneBrokerRootDir } from '@/server/control-plane/paths';
+import { env } from '@/server/env';
+import { getRunManifest, getRunRecord } from '@/server/control-plane/store';
+import { type ControlPlaneFilePreview } from '@/server/control-plane/file-previews';
 
 export type ControlPlaneArtifactCapture = {
   eventId: string;
@@ -70,39 +71,16 @@ async function getRunArtifactCaptures(runId: string): Promise<ControlPlaneArtifa
   return buildArtifactCaptures(events);
 }
 
-async function resolveLocalArtifactPath(
+async function assertRunArtifactStoragePath(
   runId: string,
   manifest: RunManifest,
   capture: ControlPlaneArtifactCapture,
 ): Promise<string> {
-  if (capture.artifactStorageType !== 'local_filesystem') {
-    throw new Error(
-      `Artifact "${capture.sourceId}" uses "${capture.artifactStorageType}" storage. Browser preview and download for that adapter will be added when the cloud adapter slice is implemented.`,
-    );
-  }
-
-  if (
-    manifest.artifactDestinationSnapshot.type !== 'local_filesystem' ||
-    !('basePath' in manifest.artifactDestinationSnapshot.config)
-  ) {
-    throw new Error(
-      `Run "${runId}" does not use a local filesystem artifact destination and cannot be read locally.`,
-    );
-  }
-
-  const expectedRunDir = path.resolve(
-    buildArtifactRunDir(manifest.artifactDestinationSnapshot.config.basePath, runId),
-  );
-  const resolvedArtifactPath = path.resolve(capture.artifactPath);
-  const expectedPrefix = `${expectedRunDir}${path.sep}`;
-
-  if (resolvedArtifactPath !== expectedRunDir && !resolvedArtifactPath.startsWith(expectedPrefix)) {
-    throw new Error(
-      `Artifact "${capture.sourceId}" resolved outside the run artifact directory and cannot be served.`,
-    );
-  }
-
-  return resolvedArtifactPath;
+  return assertArtifactStoragePathForRun({
+    destination: manifest.artifactDestinationSnapshot,
+    crawlRunId: runId,
+    storagePath: capture.artifactPath,
+  });
 }
 
 async function getRunArtifactCapture(input: {
@@ -132,11 +110,23 @@ export async function getControlPlaneRunArtifactPreview(input: {
   maxChars?: number;
 }): Promise<ControlPlaneArtifactPreview> {
   const { capture, manifest } = await getRunArtifactCapture(input);
-  const resolvedArtifactPath = await resolveLocalArtifactPath(input.runId, manifest, capture);
+  const resolvedArtifactPath = await assertRunArtifactStoragePath(input.runId, manifest, capture);
+  const preview = await readStoredArtifactPreview({
+    storageType: capture.artifactStorageType,
+    storagePath: resolvedArtifactPath,
+    maxChars: input.maxChars ?? 24_000,
+    projectId: env.CONTROL_PLANE_GCP_PROJECT_ID,
+  });
 
   return {
     capture,
-    preview: await readTextPreview(resolvedArtifactPath, input.maxChars ?? 24_000),
+    preview: {
+      path: capture.artifactPath,
+      contents: preview.exists ? preview.contents : null,
+      exists: preview.exists,
+      truncated: preview.truncated,
+      sizeBytes: capture.artifactSizeBytes,
+    },
   };
 }
 
@@ -145,13 +135,17 @@ export async function getControlPlaneRunArtifactDownload(input: {
   sourceId: string;
 }): Promise<ControlPlaneArtifactDownload> {
   const { capture, manifest } = await getRunArtifactCapture(input);
-  const resolvedArtifactPath = await resolveLocalArtifactPath(input.runId, manifest, capture);
+  const resolvedArtifactPath = await assertRunArtifactStoragePath(input.runId, manifest, capture);
 
   return {
     capture,
     fileName: capture.htmlDetailPageKey,
     filePath: resolvedArtifactPath,
-    contents: await readFile(resolvedArtifactPath),
+    contents: await downloadStoredArtifact({
+      storageType: capture.artifactStorageType,
+      storagePath: resolvedArtifactPath,
+      projectId: env.CONTROL_PLANE_GCP_PROJECT_ID,
+    }),
     contentType: 'text/html; charset=utf-8',
   };
 }

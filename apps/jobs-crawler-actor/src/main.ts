@@ -8,10 +8,11 @@ import { PlaywrightCrawler, Dataset, createPlaywrightRouter, log, type LogLevel 
 import { Actor, type ProxyConfigurationOptions } from 'apify';
 import { MongoClient } from 'mongodb';
 import {
+  type ArtifactDestinationSnapshot,
   buildCrawlerDetailCapturedEvent,
   buildCrawlerRunFinishedEvent,
-  writeBrokerEvent,
 } from '@repo/control-plane-contracts';
+import { publishBrokerEvent, type BrokerTransportConfig } from '@repo/control-plane-adapters';
 import {
   deriveMongoDbName,
   actorOperatorInputSchema,
@@ -220,6 +221,7 @@ type LocalBrokerPublishPayload = {
   sourceId: string;
   listingRecord: IngestionItemTriggerPayload['listingRecord'];
   detailHtmlPath: string;
+  detailHtmlStorageType: 'local_filesystem' | 'gcs';
   detailHtmlSha256: string;
   detailHtmlByteSize: number;
 };
@@ -240,6 +242,66 @@ function serializeErrorForSummary(error: unknown): {
   return {
     name: 'UnknownError',
     message: typeof error === 'string' ? error : JSON.stringify(error),
+  };
+}
+
+function buildArtifactDestinationFromEnv(): ArtifactDestinationSnapshot {
+  if (envs.JOB_COMPASS_ARTIFACT_STORE_TYPE === 'gcs') {
+    if (!envs.JOB_COMPASS_GCS_BUCKET) {
+      throw new Error('JOB_COMPASS_ARTIFACT_STORE_TYPE=gcs requires JOB_COMPASS_GCS_BUCKET.');
+    }
+
+    return {
+      id: 'worker-artifact-gcs',
+      name: 'Worker artifact GCS',
+      type: 'gcs',
+      config: {
+        bucket: envs.JOB_COMPASS_GCS_BUCKET,
+        prefix: envs.JOB_COMPASS_GCS_PREFIX ?? '',
+      },
+    };
+  }
+
+  return {
+    id: 'worker-artifact-local',
+    name: 'Worker artifact local filesystem',
+    type: 'local_filesystem',
+    config: {
+      basePath: envs.LOCAL_SHARED_SCRAPED_JOBS_DIR,
+    },
+  };
+}
+
+function buildBrokerTransportFromEnv(): BrokerTransportConfig | null {
+  if (envs.JOB_COMPASS_BROKER_BACKEND === 'gcp_pubsub') {
+    if (!envs.LOCAL_BROKER_DIR) {
+      throw new Error(
+        'JOB_COMPASS_BROKER_BACKEND=gcp_pubsub requires LOCAL_BROKER_DIR for event archive.',
+      );
+    }
+
+    if (!envs.JOB_COMPASS_GCP_PROJECT_ID || !envs.JOB_COMPASS_GCP_PUBSUB_TOPIC) {
+      throw new Error(
+        'JOB_COMPASS_BROKER_BACKEND=gcp_pubsub requires JOB_COMPASS_GCP_PROJECT_ID and JOB_COMPASS_GCP_PUBSUB_TOPIC.',
+      );
+    }
+
+    return {
+      type: 'gcp_pubsub',
+      archiveRootDir: path.resolve(actorAppRootDir, envs.LOCAL_BROKER_DIR),
+      projectId: envs.JOB_COMPASS_GCP_PROJECT_ID,
+      topicName: envs.JOB_COMPASS_GCP_PUBSUB_TOPIC,
+      subscriptionNamePrefix: envs.JOB_COMPASS_GCP_PUBSUB_SUBSCRIPTION_PREFIX ?? undefined,
+    };
+  }
+
+  if (!envs.LOCAL_BROKER_DIR) {
+    return null;
+  }
+
+  return {
+    type: 'local',
+    archiveRootDir: path.resolve(actorAppRootDir, envs.LOCAL_BROKER_DIR),
   };
 }
 
@@ -416,13 +478,13 @@ async function triggerIngestionItemBestEffort(
 }
 
 async function publishIngestionItemToBrokerBestEffort(
-  brokerRootDir: string,
+  broker: BrokerTransportConfig,
   payload: LocalBrokerPublishPayload,
 ): Promise<IngestionTriggerResult> {
   try {
-    await writeBrokerEvent(
-      brokerRootDir,
-      buildCrawlerDetailCapturedEvent({
+    await publishBrokerEvent({
+      broker,
+      event: buildCrawlerDetailCapturedEvent({
         runId: payload.runId,
         crawlRunId: payload.crawlRunId,
         searchSpaceId: payload.searchSpaceId,
@@ -431,21 +493,22 @@ async function publishIngestionItemToBrokerBestEffort(
         listingRecord: payload.listingRecord,
         artifact: {
           artifactType: 'html',
-          storageType: 'local_filesystem',
+          storageType: payload.detailHtmlStorageType,
           storagePath: payload.detailHtmlPath,
           checksum: payload.detailHtmlSha256,
           sizeBytes: payload.detailHtmlByteSize,
         },
         producer: 'jobs-crawler-actor',
       }),
-    );
+    });
 
-    log.info('Published crawler detail artifact event to local broker', {
+    log.info('Published crawler detail artifact event to broker', {
       source: payload.source,
       sourceId: payload.sourceId,
       crawlRunId: payload.crawlRunId,
       searchSpaceId: payload.searchSpaceId,
-      brokerRootDir,
+      brokerType: broker.type,
+      brokerArchiveRootDir: broker.archiveRootDir,
     });
 
     return {
@@ -457,12 +520,13 @@ async function publishIngestionItemToBrokerBestEffort(
     };
   } catch (error) {
     const normalizedError = serializeErrorForSummary(error);
-    log.warning('Failed to publish crawler detail artifact to local broker (best effort)', {
+    log.warning('Failed to publish crawler detail artifact to broker (best effort)', {
       source: payload.source,
       sourceId: payload.sourceId,
       crawlRunId: payload.crawlRunId,
       searchSpaceId: payload.searchSpaceId,
-      brokerRootDir,
+      brokerType: broker.type,
+      brokerArchiveRootDir: broker.archiveRootDir,
       error,
     });
 
@@ -626,8 +690,10 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
   if (sharedRunOutputPaths) {
     detailHtmlPath = await writeSharedDetailHtml(
       sharedRunOutputPaths,
-      htmlDetailPageKey,
+      String(request.userData.jobId),
       jobDetailHtml,
+      detailHtmlSha256,
+      detailHtmlByteSize,
     );
     localSharedHtmlFilesWritten += 1;
   }
@@ -666,8 +732,8 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
       };
 
       ingestionTriggerAttemptedCount += 1;
-      const triggerResult = localBrokerDir
-        ? await publishIngestionItemToBrokerBestEffort(localBrokerDir, {
+      const triggerResult = brokerTransport
+        ? await publishIngestionItemToBrokerBestEffort(brokerTransport, {
             runId: crawlRunId,
             crawlRunId,
             searchSpaceId: input.searchSpaceId,
@@ -675,6 +741,7 @@ router.addHandler('DETAILS', async ({ request, page, log, crawler }) => {
             sourceId: safeResult.data.sourceId,
             listingRecord,
             detailHtmlPath,
+            detailHtmlStorageType: sharedRunOutputPaths?.destination.type ?? 'local_filesystem',
             detailHtmlSha256: safeResult.data.detailHtmlSha256,
             detailHtmlByteSize: safeResult.data.detailHtmlByteSize,
           })
@@ -906,9 +973,12 @@ const mongoDbName = deriveMongoDbName({
 });
 const runStartedAt = new Date();
 const runStartedAtMs = Date.now();
-const appRootDir = actorAppRootDir;
-const localSharedScrapedJobsDir = path.resolve(appRootDir, envs.LOCAL_SHARED_SCRAPED_JOBS_DIR);
-sharedRunOutputPaths = buildSharedRunOutputPaths(localSharedScrapedJobsDir, crawlRunId);
+const artifactDestination = buildArtifactDestinationFromEnv();
+sharedRunOutputPaths = buildSharedRunOutputPaths(
+  artifactDestination,
+  crawlRunId,
+  envs.JOB_COMPASS_GCP_PROJECT_ID ?? undefined,
+);
 const mongoRunSummaryConfig: CrawlRunSummaryMongoConfig = {
   enabled: envs.ENABLE_MONGO_RUN_SUMMARY_WRITE,
   mongoUri: envs.MONGODB_URI,
@@ -920,9 +990,7 @@ const ingestionTriggerConfig: IngestionTriggerConfig = {
   url: envs.INGESTION_TRIGGER_URL,
   timeoutMs: envs.INGESTION_TRIGGER_TIMEOUT_MS,
 };
-const localBrokerDir = envs.LOCAL_BROKER_DIR
-  ? path.resolve(actorAppRootDir, envs.LOCAL_BROKER_DIR)
-  : null;
+const brokerTransport = buildBrokerTransportFromEnv();
 const crawlRunSummaryFilePath = envs.CRAWL_RUN_SUMMARY_FILE_PATH
   ? path.resolve(actorAppRootDir, envs.CRAWL_RUN_SUMMARY_FILE_PATH)
   : null;
@@ -1027,7 +1095,7 @@ await upsertRunSummaryToMongoBestEffort(
       debugLog: input.debugLog ?? false,
       allowInactiveMarkingOnPartialRuns: input.allowInactiveMarkingOnPartialRuns,
       proxyConfigured: Boolean(input.proxyConfiguration),
-      localSharedScrapedJobsDir,
+      localSharedScrapedJobsDir: sharedRunOutputPaths.rootLabel,
       mongoDbName,
     },
   },
@@ -1172,7 +1240,7 @@ const runStopReason = crawlerRunError
       : 'completed';
 
 const ingestionTrigger = {
-  enabled: ingestionTriggerConfig.enabled || Boolean(localBrokerDir),
+  enabled: ingestionTriggerConfig.enabled || Boolean(brokerTransport),
   attempted: ingestionTriggerAttemptedCount,
   accepted: ingestionTriggerAcceptedCount,
   deduplicated: ingestionTriggerDeduplicatedCount,
@@ -1255,7 +1323,7 @@ const runSummary = {
     totalDetailHtmlBytes,
   },
   localSharedOutput: {
-    baseDir: sharedRunOutputPaths.baseDir,
+    baseDir: sharedRunOutputPaths.rootLabel,
     runDir: sharedRunOutputPaths.runDir,
     recordsDir: sharedRunOutputPaths.recordsDir,
     datasetJsonPath: localSharedDatasetJsonPath,
@@ -1277,10 +1345,10 @@ if (crawlRunSummaryFilePath) {
   await writeFile(crawlRunSummaryFilePath, `${JSON.stringify(runSummary, null, 2)}\n`, 'utf8');
 }
 
-if (localBrokerDir) {
-  await writeBrokerEvent(
-    localBrokerDir,
-    buildCrawlerRunFinishedEvent({
+if (brokerTransport) {
+  await publishBrokerEvent({
+    broker: brokerTransport,
+    event: buildCrawlerRunFinishedEvent({
       runId: crawlRunId,
       crawlRunId,
       searchSpaceId: input.searchSpaceId,
@@ -1292,7 +1360,7 @@ if (localBrokerDir) {
       stopReason: runSummary.outcome.stopReason,
       producer: 'jobs-crawler-actor',
     }),
-  );
+  });
 }
 
 await upsertRunSummaryToMongoBestEffort(

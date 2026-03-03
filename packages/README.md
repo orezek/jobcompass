@@ -6,6 +6,7 @@ Shared packages in `packages/` provide reusable configuration and runtime utilit
 
 | Directory                          | Package Name                    | Purpose                                                  |
 | ---------------------------------- | ------------------------------- | -------------------------------------------------------- |
+| `packages/control-plane-adapters`  | `@repo/control-plane-adapters`  | Shared local/GCP broker and storage adapters.            |
 | `packages/env-config`              | `@repo/env-config`              | Typed environment parsing with `zod`.                    |
 | `packages/eslint-config`           | `@repo/eslint-config`           | Shared ESLint Flat Config presets.                       |
 | `packages/control-plane-contracts` | `@repo/control-plane-contracts` | Shared control-plane manifests and broker event schemas. |

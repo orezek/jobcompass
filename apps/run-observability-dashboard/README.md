@@ -55,11 +55,22 @@ Control-plane execution modes:
 Execution mode is env-driven in v1. The `/control-plane` route shows the active mode in the
 header, but does not provide a runtime selector.
 
+Broker adapter modes:
+
+- `CONTROL_PLANE_BROKER_BACKEND=local`
+  - persist broker events under `CONTROL_PLANE_BROKER_DIR`
+- `CONTROL_PLANE_BROKER_BACKEND=gcp_pubsub`
+  - publish runtime events to Google Cloud Pub/Sub
+  - still archive those events under `CONTROL_PLANE_BROKER_DIR` for run detail and downloads
+  - requires `CONTROL_PLANE_GCP_PROJECT_ID` and `CONTROL_PLANE_GCP_PUBSUB_TOPIC`
+
 Operator-facing artifact access:
 
 - artifacts stay in the configured backend adapter
 - operators browse and download them through the dashboard
 - local filesystem paths are treated as backend references, not the primary operator workflow
+- GCS-backed artifacts are previewed/downloaded through the same route when Google credentials are
+  available to the dashboard process
 
 Database selection:
 

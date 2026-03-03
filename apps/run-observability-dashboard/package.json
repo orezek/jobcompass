@@ -9,7 +9,7 @@
   },
   "packageManager": "pnpm@10.13.1",
   "scripts": {
-    "build:workspace-contracts": "pnpm --dir ../.. --filter @repo/job-search-spaces --filter @repo/control-plane-contracts build",
+    "build:workspace-contracts": "pnpm --dir ../.. --filter @repo/job-search-spaces --filter @repo/control-plane-contracts --filter @repo/control-plane-adapters build",
     "prebuild": "pnpm run build:workspace-contracts",
     "build": "next build",
     "prestart": "pnpm run build:workspace-contracts",
@@ -26,6 +26,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@repo/control-plane-adapters": "workspace:*",
     "@repo/control-plane-contracts": "workspace:*",
     "@repo/env-config": "workspace:*",
     "@repo/job-search-spaces": "workspace:*",

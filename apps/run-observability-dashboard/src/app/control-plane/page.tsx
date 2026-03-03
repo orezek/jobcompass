@@ -45,8 +45,14 @@ export default async function ControlPlanePage() {
         runs={overview.runs}
         pipelines={overview.pipelines}
         executionMode={env.CONTROL_PLANE_EXECUTION_MODE}
+        brokerBackend={env.CONTROL_PLANE_BROKER_BACKEND}
         brokerDir={env.CONTROL_PLANE_BROKER_DIR}
         dataDir={env.CONTROL_PLANE_DATA_DIR}
+        brokerTopic={
+          env.CONTROL_PLANE_BROKER_BACKEND === 'gcp_pubsub'
+            ? env.CONTROL_PLANE_GCP_PUBSUB_TOPIC
+            : undefined
+        }
       />
 
       <ControlPlaneRunsSection runs={overview.runs} pipelines={overview.pipelines} />

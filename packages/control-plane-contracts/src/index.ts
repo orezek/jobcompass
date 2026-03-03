@@ -452,6 +452,12 @@ export type StructuredOutputDestination = z.infer<typeof structuredOutputDestina
 export type CreateStructuredOutputDestinationInput = z.infer<
   typeof createStructuredOutputDestinationInputSchema
 >;
+export type SearchSpaceSnapshot = z.infer<typeof searchSpaceSnapshotSchema>;
+export type RuntimeProfileSnapshot = z.infer<typeof runtimeProfileSnapshotSchema>;
+export type ArtifactDestinationSnapshot = z.infer<typeof artifactDestinationSnapshotSchema>;
+export type StructuredOutputDestinationSnapshot = z.infer<
+  typeof structuredOutputDestinationSnapshotSchema
+>;
 export type Pipeline = z.infer<typeof pipelineSchema>;
 export type CreatePipelineInput = z.infer<typeof createPipelineInputSchema>;
 export type RunManifest = z.infer<typeof runManifestSchema>;

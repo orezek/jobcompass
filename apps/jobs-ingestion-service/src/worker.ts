@@ -1,16 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { parseArgs } from 'node:util';
+import { z } from 'zod';
+import {
+  createBrokerRunConsumer,
+  publishBrokerEvent,
+  type BrokerTransportConfig,
+  writeStructuredJsonDocument,
+} from '@repo/control-plane-adapters';
 import {
   brokerEventSchema,
-  buildStructuredJsonFileName,
-  buildStructuredRunDir,
   nowIso,
-  readBrokerEvents,
   runManifestSchema,
-  writeBrokerEvent,
   type BrokerEvent,
   type RunManifest,
 } from '@repo/control-plane-contracts';
@@ -37,6 +40,14 @@ type RuntimeCounters = {
   itemsSkipped: number;
   crawlerFinished: boolean;
 };
+
+const workerEnvSchema = z.object({
+  JOB_COMPASS_BROKER_BACKEND: z.enum(['local', 'gcp_pubsub']).default('local'),
+  LOCAL_BROKER_DIR: z.string().trim().min(1),
+  JOB_COMPASS_GCP_PROJECT_ID: z.string().trim().min(1).optional(),
+  JOB_COMPASS_GCP_PUBSUB_TOPIC: z.string().trim().min(1).optional(),
+  JOB_COMPASS_GCP_PUBSUB_SUBSCRIPTION_PREFIX: z.string().trim().min(1).optional(),
+});
 
 function buildInitialCounters(runtime: WorkerRuntime | null): RuntimeCounters {
   const counters = runtime?.counters ?? {};
@@ -70,20 +81,44 @@ async function writeWorkerRuntime(runtimePath: string, runtime: WorkerRuntime): 
   await writeFile(runtimePath, `${JSON.stringify(runtime, null, 2)}\n`, 'utf8');
 }
 
-function getLocalJsonSinkRoots(manifest: RunManifest): string[] {
-  return manifest.structuredOutputDestinationSnapshots.flatMap((destination) =>
-    destination.type === 'local_json' && 'basePath' in destination.config
-      ? [path.resolve(destination.config.basePath)]
-      : [],
-  );
-}
-
 function getMongoDbName(manifest: RunManifest): string {
   return deriveMongoDbName({
     dbPrefix: process.env.JOB_COMPASS_DB_PREFIX ?? 'job-compass',
     searchSpaceId: manifest.searchSpaceSnapshot.id,
     explicitDbName: process.env.MONGODB_DB_NAME,
   });
+}
+
+function getBrokerTransportFromEnv(): BrokerTransportConfig {
+  const parsedEnv = workerEnvSchema.parse({
+    JOB_COMPASS_BROKER_BACKEND: process.env.JOB_COMPASS_BROKER_BACKEND,
+    LOCAL_BROKER_DIR: process.env.LOCAL_BROKER_DIR,
+    JOB_COMPASS_GCP_PROJECT_ID: process.env.JOB_COMPASS_GCP_PROJECT_ID,
+    JOB_COMPASS_GCP_PUBSUB_TOPIC: process.env.JOB_COMPASS_GCP_PUBSUB_TOPIC,
+    JOB_COMPASS_GCP_PUBSUB_SUBSCRIPTION_PREFIX:
+      process.env.JOB_COMPASS_GCP_PUBSUB_SUBSCRIPTION_PREFIX,
+  });
+
+  if (parsedEnv.JOB_COMPASS_BROKER_BACKEND === 'gcp_pubsub') {
+    if (!parsedEnv.JOB_COMPASS_GCP_PROJECT_ID || !parsedEnv.JOB_COMPASS_GCP_PUBSUB_TOPIC) {
+      throw new Error(
+        'JOB_COMPASS_BROKER_BACKEND=gcp_pubsub requires JOB_COMPASS_GCP_PROJECT_ID and JOB_COMPASS_GCP_PUBSUB_TOPIC.',
+      );
+    }
+
+    return {
+      type: 'gcp_pubsub',
+      archiveRootDir: path.resolve(parsedEnv.LOCAL_BROKER_DIR),
+      projectId: parsedEnv.JOB_COMPASS_GCP_PROJECT_ID,
+      topicName: parsedEnv.JOB_COMPASS_GCP_PUBSUB_TOPIC,
+      subscriptionNamePrefix: parsedEnv.JOB_COMPASS_GCP_PUBSUB_SUBSCRIPTION_PREFIX ?? undefined,
+    };
+  }
+
+  return {
+    type: 'local',
+    archiveRootDir: path.resolve(parsedEnv.LOCAL_BROKER_DIR),
+  };
 }
 
 function resolveRuntimeStatus(counters: RuntimeCounters): WorkerRuntime['status'] {
@@ -94,40 +129,49 @@ function resolveRuntimeStatus(counters: RuntimeCounters): WorkerRuntime['status'
   return 'succeeded';
 }
 
-async function publishLifecycleEvent(brokerRootDir: string, event: BrokerEvent): Promise<void> {
-  await writeBrokerEvent(brokerRootDir, brokerEventSchema.parse(event));
+async function publishLifecycleEvent(
+  brokerTransport: BrokerTransportConfig,
+  event: BrokerEvent,
+): Promise<void> {
+  await publishBrokerEvent({
+    broker: brokerTransport,
+    event: brokerEventSchema.parse(event),
+  });
 }
 
 async function writeLocalJsonSinks(input: {
   manifest: RunManifest;
   sourceId: string;
   structuredParsed: unknown[];
+  gcpProjectId?: string;
 }): Promise<void> {
   if (input.structuredParsed.length === 0) {
     return;
   }
 
   await Promise.all(
-    getLocalJsonSinkRoots(input.manifest).map(async (rootDir) => {
-      const runDir = buildStructuredRunDir(rootDir, input.manifest.runId);
-      await mkdir(runDir, { recursive: true });
-      await writeFile(
-        path.join(runDir, buildStructuredJsonFileName(input.sourceId)),
-        `${JSON.stringify(input.structuredParsed[0], null, 2)}\n`,
-        'utf8',
-      );
-    }),
+    input.manifest.structuredOutputDestinationSnapshots
+      .filter((destination) => destination.type === 'local_json' || destination.type === 'gcs_json')
+      .map(async (destination) =>
+        writeStructuredJsonDocument({
+          destination,
+          crawlRunId: input.manifest.runId,
+          sourceId: input.sourceId,
+          document: input.structuredParsed[0],
+          projectId: input.gcpProjectId,
+        }),
+      ),
   );
 }
 
 async function processDetailCapturedEvent(input: {
   manifest: RunManifest;
-  brokerRootDir: string;
+  brokerTransport: BrokerTransportConfig;
   event: Extract<BrokerEvent, { eventType: 'crawler.detail.captured' }>;
   counters: RuntimeCounters;
 }): Promise<void> {
   const mongoDbName = getMongoDbName(input.manifest);
-  await publishLifecycleEvent(input.brokerRootDir, {
+  await publishLifecycleEvent(input.brokerTransport, {
     eventId: `evt-${randomUUID()}`,
     eventType: 'ingestion.item.started',
     eventVersion: 'v1',
@@ -161,10 +205,13 @@ async function processDetailCapturedEvent(input: {
   input.counters.itemsSkipped += result.skippedIncomplete;
   input.counters.itemsFailed += result.failed;
 
+  const gcpProjectId =
+    input.brokerTransport.type === 'gcp_pubsub' ? input.brokerTransport.projectId : undefined;
   await writeLocalJsonSinks({
     manifest: input.manifest,
     sourceId: input.event.payload.sourceId,
     structuredParsed: result.structuredParsed,
+    gcpProjectId,
   });
 
   const eventType =
@@ -174,7 +221,7 @@ async function processDetailCapturedEvent(input: {
         ? 'ingestion.item.rejected'
         : 'ingestion.item.succeeded';
 
-  await publishLifecycleEvent(input.brokerRootDir, {
+  await publishLifecycleEvent(input.brokerTransport, {
     eventId: `evt-${randomUUID()}`,
     eventType,
     eventVersion: 'v1',
@@ -235,77 +282,88 @@ async function main(): Promise<void> {
     throw new Error('--run-manifest, --runtime-path, and --broker-dir are required.');
   }
 
+  process.env.LOCAL_BROKER_DIR = path.resolve(brokerRootDir);
+
   const manifest = runManifestSchema.parse(
     JSON.parse(await readFile(path.resolve(runManifestPath), 'utf8')) as unknown,
   );
   const existingRuntime = await readWorkerRuntime(path.resolve(runtimePath));
   const counters = buildInitialCounters(existingRuntime);
-
-  await writeWorkerRuntime(path.resolve(runtimePath), {
-    workerType: 'ingestion',
-    status: 'running',
-    startedAt: existingRuntime?.startedAt ?? nowIso(),
-    lastHeartbeatAt: nowIso(),
-    pid: process.pid,
-    logPath: existingRuntime?.logPath,
-    counters,
+  const brokerTransport = getBrokerTransportFromEnv();
+  const brokerConsumer = await createBrokerRunConsumer({
+    broker: brokerTransport,
+    runId: manifest.runId,
   });
 
-  let idlePollsAfterCrawlerFinished = 0;
+  try {
+    await writeWorkerRuntime(path.resolve(runtimePath), {
+      workerType: 'ingestion',
+      status: 'running',
+      startedAt: existingRuntime?.startedAt ?? nowIso(),
+      lastHeartbeatAt: nowIso(),
+      pid: process.pid,
+      logPath: existingRuntime?.logPath,
+      counters,
+    });
 
-  while (true) {
-    const events = await readBrokerEvents(path.resolve(brokerRootDir), manifest.runId);
-    const unseenEvents = events.filter(
-      (event) => !counters.processedEventIds.includes(event.eventId),
-    );
+    let idlePollsAfterCrawlerFinished = 0;
 
-    for (const event of unseenEvents) {
-      if (event.eventType === 'crawler.detail.captured') {
-        await processDetailCapturedEvent({
-          manifest,
-          brokerRootDir: path.resolve(brokerRootDir),
-          event,
+    while (true) {
+      const events = await brokerConsumer.poll();
+      const unseenEvents = events.filter(
+        (event) => !counters.processedEventIds.includes(event.eventId),
+      );
+
+      for (const event of unseenEvents) {
+        if (event.eventType === 'crawler.detail.captured') {
+          await processDetailCapturedEvent({
+            manifest,
+            brokerTransport,
+            event,
+            counters,
+          });
+        } else if (event.eventType === 'crawler.run.finished') {
+          counters.processedEventIds.push(event.eventId);
+          counters.crawlerFinished = true;
+        }
+
+        await writeWorkerRuntime(path.resolve(runtimePath), {
+          workerType: 'ingestion',
+          status: 'running',
+          startedAt: existingRuntime?.startedAt ?? nowIso(),
+          lastHeartbeatAt: nowIso(),
+          pid: process.pid,
+          logPath: existingRuntime?.logPath,
           counters,
         });
-      } else if (event.eventType === 'crawler.run.finished') {
-        counters.processedEventIds.push(event.eventId);
-        counters.crawlerFinished = true;
       }
 
-      await writeWorkerRuntime(path.resolve(runtimePath), {
-        workerType: 'ingestion',
-        status: 'running',
-        startedAt: existingRuntime?.startedAt ?? nowIso(),
-        lastHeartbeatAt: nowIso(),
-        pid: process.pid,
-        logPath: existingRuntime?.logPath,
-        counters,
-      });
-    }
-
-    if (counters.crawlerFinished && unseenEvents.length === 0) {
-      idlePollsAfterCrawlerFinished += 1;
-      if (idlePollsAfterCrawlerFinished >= 2) {
-        break;
+      if (counters.crawlerFinished && unseenEvents.length === 0) {
+        idlePollsAfterCrawlerFinished += 1;
+        if (idlePollsAfterCrawlerFinished >= 2) {
+          break;
+        }
+      } else {
+        idlePollsAfterCrawlerFinished = 0;
       }
-    } else {
-      idlePollsAfterCrawlerFinished = 0;
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await writeWorkerRuntime(path.resolve(runtimePath), {
+      workerType: 'ingestion',
+      status: resolveRuntimeStatus(counters),
+      startedAt: existingRuntime?.startedAt ?? nowIso(),
+      finishedAt: nowIso(),
+      lastHeartbeatAt: nowIso(),
+      pid: process.pid,
+      logPath: existingRuntime?.logPath,
+      exitCode: 0,
+      counters,
+    });
+  } finally {
+    await brokerConsumer.close();
   }
-
-  await writeWorkerRuntime(path.resolve(runtimePath), {
-    workerType: 'ingestion',
-    status: resolveRuntimeStatus(counters),
-    startedAt: existingRuntime?.startedAt ?? nowIso(),
-    finishedAt: nowIso(),
-    lastHeartbeatAt: nowIso(),
-    pid: process.pid,
-    logPath: existingRuntime?.logPath,
-    exitCode: 0,
-    counters,
-  });
 }
 
 void main().catch(async (error) => {

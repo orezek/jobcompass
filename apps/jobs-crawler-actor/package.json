@@ -30,6 +30,7 @@
     "typescript": "catalog:"
   },
   "dependencies": {
+    "@repo/control-plane-adapters": "workspace:*",
     "@repo/control-plane-contracts": "workspace:*",
     "@repo/env-config": "workspace:*",
     "@repo/job-search-spaces": "workspace:*",

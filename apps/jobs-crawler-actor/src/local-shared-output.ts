@@ -1,52 +1,64 @@
-import { access, mkdir, rm, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import type { ArtifactDestinationSnapshot } from '@repo/control-plane-contracts';
+import {
+  buildArtifactRunLayout,
+  ensureArtifactRunReady,
+  writeDatasetMetadata,
+  writeHtmlArtifact,
+} from '@repo/control-plane-adapters';
 
-export type SharedRunOutputPaths = {
-  baseDir: string;
-  runDir: string;
-  recordsDir: string;
-  datasetJsonPath: string;
+export type SharedRunOutputPaths = ReturnType<typeof buildArtifactRunLayout> & {
+  crawlRunId: string;
+  destination: ArtifactDestinationSnapshot;
+  gcpProjectId?: string;
 };
 
 export const buildSharedRunOutputPaths = (
-  baseDir: string,
+  destination: ArtifactDestinationSnapshot,
   crawlRunId: string,
-): SharedRunOutputPaths => {
-  const absoluteBaseDir = path.resolve(baseDir);
-  const runDir = path.join(absoluteBaseDir, 'runs', crawlRunId);
-  const recordsDir = path.join(runDir, 'records');
-
-  return {
-    baseDir: absoluteBaseDir,
-    runDir,
-    recordsDir,
-    datasetJsonPath: path.join(runDir, 'dataset.json'),
-  };
-};
+  gcpProjectId?: string,
+): SharedRunOutputPaths => ({
+  ...buildArtifactRunLayout(destination, crawlRunId),
+  crawlRunId,
+  destination,
+  gcpProjectId,
+});
 
 export const prepareSharedRunOutput = async (paths: SharedRunOutputPaths): Promise<void> => {
-  await mkdir(paths.recordsDir, { recursive: true });
-
-  await access(paths.runDir);
-  const probePath = path.join(paths.runDir, '.write-probe.tmp');
-  await writeFile(probePath, 'ok\n', 'utf8');
-  await rm(probePath, { force: true });
+  await ensureArtifactRunReady({
+    destination: paths.destination,
+    crawlRunId: paths.crawlRunId,
+    projectId: paths.gcpProjectId,
+  });
 };
 
 export const writeSharedDetailHtml = async (
   paths: SharedRunOutputPaths,
-  htmlDetailPageKey: string,
+  sourceId: string,
   html: string,
+  checksum: string,
+  sizeBytes: number,
 ): Promise<string> => {
-  const targetPath = path.join(paths.recordsDir, htmlDetailPageKey);
-  await writeFile(targetPath, html, 'utf8');
-  return targetPath;
+  const artifact = await writeHtmlArtifact({
+    destination: paths.destination,
+    crawlRunId: paths.crawlRunId,
+    sourceId,
+    html,
+    checksum,
+    sizeBytes,
+    projectId: paths.gcpProjectId,
+  });
+
+  return artifact.storagePath;
 };
 
 export const writeSharedDatasetJson = async (
   paths: SharedRunOutputPaths,
   datasetRecords: unknown[],
 ): Promise<string> => {
-  await writeFile(paths.datasetJsonPath, `${JSON.stringify(datasetRecords, null, 2)}\n`, 'utf8');
-  return paths.datasetJsonPath;
+  return writeDatasetMetadata({
+    destination: paths.destination,
+    crawlRunId: paths.crawlRunId,
+    datasetRecords,
+    projectId: paths.gcpProjectId,
+  });
 };

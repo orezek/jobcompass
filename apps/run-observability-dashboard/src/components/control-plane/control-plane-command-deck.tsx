@@ -8,16 +8,20 @@ type ControlPlaneCommandDeckProps = {
   runs: ControlPlaneOverview['runs'];
   pipelines: ControlPlaneOverview['pipelines'];
   executionMode: string;
+  brokerBackend: string;
   brokerDir: string;
   dataDir: string;
+  brokerTopic?: string;
 };
 
 export function ControlPlaneCommandDeck({
   runs,
   pipelines,
   executionMode,
+  brokerBackend,
   brokerDir,
   dataDir,
+  brokerTopic,
 }: ControlPlaneCommandDeckProps) {
   const pipelineNames = new Map(pipelines.map((pipeline) => [pipeline.id, pipeline.name]));
   const activePipelineRuns: Record<string, { runId: string; status: 'queued' | 'running' }> = {};
@@ -57,7 +61,9 @@ export function ControlPlaneCommandDeck({
         </div>
         <div className="control-plane-toolbar__sidebar">
           <div className="control-plane-toolbar__meta">
-            <div className="meta-chip">BROKER: {brokerDir}</div>
+            <div className="meta-chip">BROKER: {brokerBackend}</div>
+            <div className="meta-chip">ARCHIVE: {brokerDir}</div>
+            {brokerTopic ? <div className="meta-chip">TOPIC: {brokerTopic}</div> : null}
             <div className="meta-chip">STATE: {dataDir}</div>
             <div className="meta-chip">MODE VIA ENV: CONTROL_PLANE_EXECUTION_MODE</div>
             <Link href="/" className="primary-link">

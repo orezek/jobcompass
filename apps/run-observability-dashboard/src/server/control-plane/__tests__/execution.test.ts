@@ -16,6 +16,9 @@ beforeEach(() => {
     CONTROL_PLANE_DEFAULT_ARTIFACT_DIR: '/tmp/jobcompass-control-plane-execution-test/artifacts',
     CONTROL_PLANE_DEFAULT_JSON_OUTPUT_DIR:
       '/tmp/jobcompass-control-plane-execution-test/json-output',
+    CONTROL_PLANE_BROKER_BACKEND: 'local',
+    CONTROL_PLANE_GCP_PUBSUB_TOPIC: 'jobcompass-control-plane-events',
+    CONTROL_PLANE_GCP_PUBSUB_SUBSCRIPTION_PREFIX: 'jobcompass-control-plane-run',
     JOB_COMPASS_DB_PREFIX: 'job-compass',
     MONGODB_URI: 'mongodb://127.0.0.1:27027',
   });
@@ -73,7 +76,6 @@ describe('control-plane local_cli env overrides', () => {
       },
       runId: 'crawl-run-test',
       mongoDbName: 'job-compass-prague-tech-jobs',
-      artifactRoot: '/tmp/jobcompass-control-plane-execution-test/artifacts',
       crawlerSummaryPath:
         '/tmp/jobcompass-control-plane-execution-test/state/runs/crawl-run-test/crawler-run-summary.json',
     });
@@ -82,6 +84,8 @@ describe('control-plane local_cli env overrides', () => {
     expect(envOverrides.MONGODB_URI).toBe('mongodb://127.0.0.1:27027');
     expect(envOverrides.ENABLE_MONGO_RUN_SUMMARY_WRITE).toBe('true');
     expect(envOverrides.ENABLE_INGESTION_TRIGGER).toBe('false');
+    expect(envOverrides.JOB_COMPASS_ARTIFACT_STORE_TYPE).toBe('local_filesystem');
+    expect(envOverrides.JOB_COMPASS_BROKER_BACKEND).toBe('local');
   });
 
   it('enables debug crawler logging when the runtime profile requests it', async () => {
@@ -126,12 +130,92 @@ describe('control-plane local_cli env overrides', () => {
       },
       runId: 'crawl-run-test',
       mongoDbName: 'job-compass-prague-tech-jobs',
-      artifactRoot: '/tmp/jobcompass-control-plane-execution-test/artifacts',
       crawlerSummaryPath:
         '/tmp/jobcompass-control-plane-execution-test/state/runs/crawl-run-test/crawler-run-summary.json',
     });
 
     expect(envOverrides.CRAWLEE_LOG_LEVEL).toBe('DEBUG');
+  });
+
+  it('maps GCS artifacts and Pub/Sub broker settings into worker env overrides', async () => {
+    Object.assign(process.env, {
+      CONTROL_PLANE_BROKER_BACKEND: 'gcp_pubsub',
+      CONTROL_PLANE_GCP_PROJECT_ID: 'jobcompass-test',
+      CONTROL_PLANE_GCP_PUBSUB_TOPIC: 'jobcompass-control-plane-events',
+      CONTROL_PLANE_GCP_PUBSUB_SUBSCRIPTION_PREFIX: 'jobcompass-run',
+    });
+    vi.resetModules();
+
+    const { buildCrawlerWorkerEnvOverrides, buildIngestionWorkerEnvOverrides } =
+      await import('@/server/control-plane/execution');
+
+    const manifest = {
+      runId: 'crawl-run-test',
+      pipelineId: 'pipeline-test',
+      pipelineVersion: 1,
+      sourceType: 'jobs_cz' as const,
+      mode: 'crawl_and_ingest' as const,
+      searchSpaceSnapshot: {
+        id: 'prague-tech-jobs',
+        name: 'Prague tech jobs',
+        sourceType: 'jobs_cz' as const,
+        startUrls: ['https://www.jobs.cz/prace/praha/'],
+        maxItemsDefault: 1,
+        allowInactiveMarkingOnPartialRuns: false,
+        version: 1,
+      },
+      runtimeProfileSnapshot: {
+        id: 'runtime-test',
+        name: 'Runtime test',
+        crawlerMaxConcurrency: 1,
+        crawlerMaxRequestsPerMinute: 30,
+        ingestionConcurrency: 1,
+        ingestionEnabled: true,
+        debugLog: false,
+      },
+      artifactDestinationSnapshot: {
+        id: 'artifact-gcs',
+        name: 'Artifact GCS',
+        type: 'gcs' as const,
+        config: {
+          bucket: 'jobcompass-artifacts-test',
+          prefix: 'v1',
+        },
+      },
+      structuredOutputDestinationSnapshots: [
+        {
+          id: 'json-gcs',
+          name: 'JSON GCS',
+          type: 'gcs_json' as const,
+          config: {
+            bucket: 'jobcompass-json-test',
+            prefix: 'normalized',
+          },
+        },
+      ],
+      createdAt: '2026-03-03T00:00:00.000Z',
+      createdBy: 'vitest',
+    };
+
+    const crawlerEnv = buildCrawlerWorkerEnvOverrides({
+      manifest,
+      runId: 'crawl-run-test',
+      mongoDbName: 'job-compass-prague-tech-jobs',
+      crawlerSummaryPath:
+        '/tmp/jobcompass-control-plane-execution-test/state/runs/crawl-run-test/crawler-run-summary.json',
+    });
+
+    const ingestionEnv = buildIngestionWorkerEnvOverrides({
+      manifest,
+      mongoDbName: 'job-compass-prague-tech-jobs',
+    });
+
+    expect(crawlerEnv.JOB_COMPASS_ARTIFACT_STORE_TYPE).toBe('gcs');
+    expect(crawlerEnv.JOB_COMPASS_GCS_BUCKET).toBe('jobcompass-artifacts-test');
+    expect(crawlerEnv.JOB_COMPASS_BROKER_BACKEND).toBe('gcp_pubsub');
+    expect(crawlerEnv.JOB_COMPASS_GCP_PROJECT_ID).toBe('jobcompass-test');
+    expect(ingestionEnv.JOB_COMPASS_BROKER_BACKEND).toBe('gcp_pubsub');
+    expect(ingestionEnv.JOB_COMPASS_GCP_PUBSUB_TOPIC).toBe('jobcompass-control-plane-events');
   });
 
   it('detects worker keys from app-local env files for local_cli preflight', async () => {

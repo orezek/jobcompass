@@ -2,6 +2,15 @@ import { openSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import {
+  buildArtifactRunLayout,
+  getArtifactDestinationRootLabel,
+  publishBrokerEvent,
+  type BrokerTransportConfig,
+  writeDatasetMetadata,
+  writeHtmlArtifact,
+  writeStructuredJsonDocument,
+} from '@repo/control-plane-adapters';
 import { actorOperatorInputSchema, deriveMongoDbName } from '@repo/job-search-spaces';
 import type {
   ControlPlaneRun,
@@ -9,16 +18,11 @@ import type {
   SourceListingRecord,
 } from '@repo/control-plane-contracts';
 import {
-  buildArtifactDatasetPath,
   buildArtifactHtmlFileName,
-  buildArtifactRunDir,
   buildCrawlerDetailCapturedEvent,
   buildCrawlerRunFinishedEvent,
   buildCrawlerRunRequestedEvent,
-  buildStructuredJsonFileName,
-  buildStructuredRunDir,
   nowIso,
-  writeBrokerEvent,
 } from '@repo/control-plane-contracts';
 import { env } from '@/server/env';
 import {
@@ -46,7 +50,6 @@ type CrawlerWorkerEnvInput = {
   manifest: RunManifest;
   runId: string;
   mongoDbName: string;
-  artifactRoot: string;
   crawlerSummaryPath: string;
 };
 
@@ -57,17 +60,27 @@ type IngestionWorkerEnvInput = {
 
 const workerEnvFileNames = ['.env', `.env.${process.env.NODE_ENV ?? 'development'}`, '.env.local'];
 
-function getLocalArtifactBasePath(manifest: RunManifest): string {
-  if (
-    manifest.artifactDestinationSnapshot.type !== 'local_filesystem' ||
-    !('basePath' in manifest.artifactDestinationSnapshot.config)
-  ) {
-    throw new Error(
-      `Execution mode "${env.CONTROL_PLANE_EXECUTION_MODE}" only supports local filesystem artifact destinations in v1.`,
-    );
+function getBrokerTransportConfig(): BrokerTransportConfig {
+  if (env.CONTROL_PLANE_BROKER_BACKEND === 'gcp_pubsub') {
+    if (!env.CONTROL_PLANE_GCP_PROJECT_ID) {
+      throw new Error(
+        'CONTROL_PLANE_BROKER_BACKEND=gcp_pubsub requires CONTROL_PLANE_GCP_PROJECT_ID.',
+      );
+    }
+
+    return {
+      type: 'gcp_pubsub',
+      archiveRootDir: controlPlaneBrokerRootDir,
+      projectId: env.CONTROL_PLANE_GCP_PROJECT_ID,
+      topicName: env.CONTROL_PLANE_GCP_PUBSUB_TOPIC,
+      subscriptionNamePrefix: env.CONTROL_PLANE_GCP_PUBSUB_SUBSCRIPTION_PREFIX,
+    };
   }
 
-  return path.resolve(manifest.artifactDestinationSnapshot.config.basePath);
+  return {
+    type: 'local',
+    archiveRootDir: controlPlaneBrokerRootDir,
+  };
 }
 
 function getMongoDbName(manifest: RunManifest): string {
@@ -80,14 +93,6 @@ function getMongoDbName(manifest: RunManifest): string {
 function hasMongoSink(manifest: RunManifest): boolean {
   return manifest.structuredOutputDestinationSnapshots.some(
     (destination) => destination.type === 'mongodb',
-  );
-}
-
-function getLocalJsonSinkRoots(manifest: RunManifest): string[] {
-  return manifest.structuredOutputDestinationSnapshots.flatMap((destination) =>
-    destination.type === 'local_json' && 'basePath' in destination.config
-      ? [path.resolve(destination.config.basePath)]
-      : [],
   );
 }
 
@@ -155,32 +160,72 @@ export async function hasWorkerEnvValueInAppDir(appRootDir: string, key: string)
 export function buildCrawlerWorkerEnvOverrides(
   input: CrawlerWorkerEnvInput,
 ): Record<string, string> {
-  return {
+  const baseEnv: Record<string, string> = {
     NODE_ENV: process.env.NODE_ENV ?? 'development',
     CRAWLEE_LOG_LEVEL: input.manifest.runtimeProfileSnapshot.debugLog ? 'DEBUG' : 'INFO',
     JOB_COMPASS_DB_PREFIX: env.JOB_COMPASS_DB_PREFIX,
     MONGODB_URI: env.MONGODB_URI ?? '',
     MONGODB_DB_NAME: input.mongoDbName,
     ENABLE_MONGO_RUN_SUMMARY_WRITE: 'true',
-    LOCAL_SHARED_SCRAPED_JOBS_DIR: input.artifactRoot,
     CRAWL_RUN_ID: input.runId,
     CRAWL_RUN_SUMMARY_FILE_PATH: input.crawlerSummaryPath,
     LOCAL_BROKER_DIR: controlPlaneBrokerRootDir,
+    JOB_COMPASS_BROKER_BACKEND: env.CONTROL_PLANE_BROKER_BACKEND,
     ENABLE_INGESTION_TRIGGER: 'false',
   };
+
+  if (env.CONTROL_PLANE_BROKER_BACKEND === 'gcp_pubsub' && env.CONTROL_PLANE_GCP_PROJECT_ID) {
+    baseEnv.JOB_COMPASS_GCP_PROJECT_ID = env.CONTROL_PLANE_GCP_PROJECT_ID;
+    baseEnv.JOB_COMPASS_GCP_PUBSUB_TOPIC = env.CONTROL_PLANE_GCP_PUBSUB_TOPIC;
+    baseEnv.JOB_COMPASS_GCP_PUBSUB_SUBSCRIPTION_PREFIX =
+      env.CONTROL_PLANE_GCP_PUBSUB_SUBSCRIPTION_PREFIX;
+  }
+
+  if (
+    input.manifest.artifactDestinationSnapshot.type === 'local_filesystem' &&
+    'basePath' in input.manifest.artifactDestinationSnapshot.config
+  ) {
+    baseEnv.JOB_COMPASS_ARTIFACT_STORE_TYPE = 'local_filesystem';
+    baseEnv.LOCAL_SHARED_SCRAPED_JOBS_DIR = path.resolve(
+      input.manifest.artifactDestinationSnapshot.config.basePath,
+    );
+  } else if (
+    input.manifest.artifactDestinationSnapshot.type === 'gcs' &&
+    'bucket' in input.manifest.artifactDestinationSnapshot.config
+  ) {
+    baseEnv.JOB_COMPASS_ARTIFACT_STORE_TYPE = 'gcs';
+    baseEnv.JOB_COMPASS_GCS_BUCKET = input.manifest.artifactDestinationSnapshot.config.bucket;
+    baseEnv.JOB_COMPASS_GCS_PREFIX = input.manifest.artifactDestinationSnapshot.config.prefix ?? '';
+    if (env.CONTROL_PLANE_GCP_PROJECT_ID) {
+      baseEnv.JOB_COMPASS_GCP_PROJECT_ID = env.CONTROL_PLANE_GCP_PROJECT_ID;
+    }
+  }
+
+  return baseEnv;
 }
 
 export function buildIngestionWorkerEnvOverrides(
   input: IngestionWorkerEnvInput,
 ): Record<string, string> {
-  return {
+  const baseEnv: Record<string, string> = {
     NODE_ENV: process.env.NODE_ENV ?? 'development',
     JOB_COMPASS_DB_PREFIX: env.JOB_COMPASS_DB_PREFIX,
     SEARCH_SPACE_ID: input.manifest.searchSpaceSnapshot.id,
     MONGODB_URI: env.MONGODB_URI ?? '',
     ENABLE_MONGO_WRITE: hasMongoSink(input.manifest) ? 'true' : 'false',
     MONGODB_DB_NAME: input.mongoDbName,
+    LOCAL_BROKER_DIR: controlPlaneBrokerRootDir,
+    JOB_COMPASS_BROKER_BACKEND: env.CONTROL_PLANE_BROKER_BACKEND,
   };
+
+  if (env.CONTROL_PLANE_BROKER_BACKEND === 'gcp_pubsub' && env.CONTROL_PLANE_GCP_PROJECT_ID) {
+    baseEnv.JOB_COMPASS_GCP_PROJECT_ID = env.CONTROL_PLANE_GCP_PROJECT_ID;
+    baseEnv.JOB_COMPASS_GCP_PUBSUB_TOPIC = env.CONTROL_PLANE_GCP_PUBSUB_TOPIC;
+    baseEnv.JOB_COMPASS_GCP_PUBSUB_SUBSCRIPTION_PREFIX =
+      env.CONTROL_PLANE_GCP_PUBSUB_SUBSCRIPTION_PREFIX;
+  }
+
+  return baseEnv;
 }
 
 export async function assertExecutableRunPrerequisites(manifest: RunManifest): Promise<void> {
@@ -194,7 +239,7 @@ export async function assertExecutableRunPrerequisites(manifest: RunManifest): P
     );
   }
 
-  getLocalArtifactBasePath(manifest);
+  getBrokerTransportConfig();
 
   const shouldRunIngestion =
     manifest.mode === 'crawl_and_ingest' && manifest.runtimeProfileSnapshot.ingestionEnabled;
@@ -237,13 +282,11 @@ export async function writeGeneratedActorInput(
 }
 
 async function simulateFixtureExecution({ run, manifest }: ExecuteRunInput): Promise<void> {
-  const artifactRoot = getLocalArtifactBasePath(manifest);
-  const artifactRunDir = buildArtifactRunDir(artifactRoot, manifest.runId);
-  const artifactDatasetPath = buildArtifactDatasetPath(artifactRoot, manifest.runId);
-  const recordsDir = path.dirname(
-    path.join(artifactRunDir, 'records', buildArtifactHtmlFileName('fixture-001')),
+  const brokerTransport = getBrokerTransportConfig();
+  const artifactLayout = buildArtifactRunLayout(
+    manifest.artifactDestinationSnapshot,
+    manifest.runId,
   );
-  await mkdir(recordsDir, { recursive: true });
 
   const listingRecord: SourceListingRecord = {
     sourceId: 'fixture-001',
@@ -257,10 +300,22 @@ async function simulateFixtureExecution({ run, manifest }: ExecuteRunInput): Pro
     source: 'jobs.cz',
     htmlDetailPageKey: buildArtifactHtmlFileName('fixture-001'),
   };
-  const htmlPath = path.join(recordsDir, listingRecord.htmlDetailPageKey);
   const detailHtml = `<!doctype html><html><body><main><h1>${listingRecord.jobTitle}</h1><p>Fixture detail for control-plane testing.</p></main></body></html>`;
-  await writeFile(htmlPath, detailHtml, 'utf8');
-  await writeFile(artifactDatasetPath, `${JSON.stringify([listingRecord], null, 2)}\n`, 'utf8');
+  const htmlArtifact = await writeHtmlArtifact({
+    destination: manifest.artifactDestinationSnapshot,
+    crawlRunId: manifest.runId,
+    sourceId: listingRecord.sourceId,
+    html: detailHtml,
+    checksum: 'fixture-checksum',
+    sizeBytes: Buffer.byteLength(detailHtml, 'utf8'),
+    projectId: env.CONTROL_PLANE_GCP_PROJECT_ID,
+  });
+  const artifactDatasetPath = await writeDatasetMetadata({
+    destination: manifest.artifactDestinationSnapshot,
+    crawlRunId: manifest.runId,
+    datasetRecords: [listingRecord],
+    projectId: env.CONTROL_PLANE_GCP_PROJECT_ID,
+  });
 
   await updateRuntimeStatus(run.runId, {
     workerType: 'crawler',
@@ -270,34 +325,31 @@ async function simulateFixtureExecution({ run, manifest }: ExecuteRunInput): Pro
     counters: {},
   });
 
-  await writeBrokerEvent(
-    controlPlaneBrokerRootDir,
-    buildCrawlerRunRequestedEvent({ runManifest: manifest, producer: 'control-plane-fixture' }),
-  );
+  await publishBrokerEvent({
+    broker: brokerTransport,
+    event: buildCrawlerRunRequestedEvent({
+      runManifest: manifest,
+      producer: 'control-plane-fixture',
+    }),
+  });
 
-  await writeBrokerEvent(
-    controlPlaneBrokerRootDir,
-    buildCrawlerDetailCapturedEvent({
+  await publishBrokerEvent({
+    broker: brokerTransport,
+    event: buildCrawlerDetailCapturedEvent({
       runId: run.runId,
       crawlRunId: manifest.runId,
       searchSpaceId: manifest.searchSpaceSnapshot.id,
       source: 'jobs.cz',
       sourceId: listingRecord.sourceId,
       listingRecord,
-      artifact: {
-        artifactType: 'html',
-        storageType: 'local_filesystem',
-        storagePath: htmlPath,
-        checksum: 'fixture-checksum',
-        sizeBytes: Buffer.byteLength(detailHtml, 'utf8'),
-      },
+      artifact: htmlArtifact,
       producer: 'crawler-worker-fixture',
     }),
-  );
+  });
 
-  await writeBrokerEvent(
-    controlPlaneBrokerRootDir,
-    buildCrawlerRunFinishedEvent({
+  await publishBrokerEvent({
+    broker: brokerTransport,
+    event: buildCrawlerRunFinishedEvent({
       runId: run.runId,
       crawlRunId: manifest.runId,
       searchSpaceId: manifest.searchSpaceSnapshot.id,
@@ -308,7 +360,7 @@ async function simulateFixtureExecution({ run, manifest }: ExecuteRunInput): Pro
       stopReason: 'completed',
       producer: 'crawler-worker-fixture',
     }),
-  );
+  });
 
   await updateRuntimeStatus(run.runId, {
     workerType: 'crawler',
@@ -344,15 +396,19 @@ async function simulateFixtureExecution({ run, manifest }: ExecuteRunInput): Pro
     };
 
     await Promise.all(
-      getLocalJsonSinkRoots(manifest).map(async (rootDir) => {
-        const runDir = buildStructuredRunDir(rootDir, manifest.runId);
-        await mkdir(runDir, { recursive: true });
-        await writeFile(
-          path.join(runDir, buildStructuredJsonFileName(listingRecord.sourceId)),
-          `${JSON.stringify(normalizedDocument, null, 2)}\n`,
-          'utf8',
-        );
-      }),
+      manifest.structuredOutputDestinationSnapshots
+        .filter(
+          (destination) => destination.type === 'local_json' || destination.type === 'gcs_json',
+        )
+        .map((destination) =>
+          writeStructuredJsonDocument({
+            destination,
+            crawlRunId: manifest.runId,
+            sourceId: listingRecord.sourceId,
+            document: normalizedDocument,
+            projectId: env.CONTROL_PLANE_GCP_PROJECT_ID,
+          }),
+        ),
     );
 
     await updateRuntimeStatus(run.runId, {
@@ -380,6 +436,7 @@ async function simulateFixtureExecution({ run, manifest }: ExecuteRunInput): Pro
       ...run.summary,
       fixtureMode: true,
       brokerRunDir: path.join(controlPlaneBrokerRootDir, 'runs', run.runId),
+      artifactRunDir: artifactLayout.runDir,
       artifactDatasetPath,
     },
   });
@@ -407,7 +464,7 @@ function spawnWorker(input: {
 }
 
 async function startLocalCliExecution({ run, manifest }: ExecuteRunInput): Promise<void> {
-  const artifactRoot = getLocalArtifactBasePath(manifest);
+  const artifactRoot = getArtifactDestinationRootLabel(manifest.artifactDestinationSnapshot);
   const mongoDbName = getMongoDbName(manifest);
   const crawlerLogPath = buildRunWorkerLogPath(run.runId, 'crawler');
   const ingestionLogPath = buildRunWorkerLogPath(run.runId, 'ingestion');
@@ -495,7 +552,6 @@ async function startLocalCliExecution({ run, manifest }: ExecuteRunInput): Promi
       manifest,
       runId: run.runId,
       mongoDbName,
-      artifactRoot,
       crawlerSummaryPath,
     }),
   });
@@ -513,10 +569,10 @@ async function startLocalCliExecution({ run, manifest }: ExecuteRunInput): Promi
     },
   });
 
-  await writeBrokerEvent(
-    controlPlaneBrokerRootDir,
-    buildCrawlerRunRequestedEvent({ runManifest: manifest }),
-  );
+  await publishBrokerEvent({
+    broker: getBrokerTransportConfig(),
+    event: buildCrawlerRunRequestedEvent({ runManifest: manifest }),
+  });
 }
 
 export async function executeRun(input: ExecuteRunInput): Promise<void> {
