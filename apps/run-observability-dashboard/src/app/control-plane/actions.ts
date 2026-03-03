@@ -2,12 +2,27 @@
 
 import { revalidatePath } from 'next/cache';
 import {
+  archiveArtifactDestination,
+  archivePipeline,
+  archiveRuntimeProfile,
+  archiveSearchSpace,
+  archiveStructuredOutputDestination,
   createArtifactDestination,
   createPipeline,
   createRuntimeProfile,
   createSearchSpace,
   createStructuredOutputDestination,
+  deleteArtifactDestination,
+  deletePipeline,
+  deleteRuntimeProfile,
+  deleteSearchSpace,
+  deleteStructuredOutputDestination,
   startRun,
+  updateArtifactDestination,
+  updatePipeline,
+  updateRuntimeProfile,
+  updateSearchSpace,
+  updateStructuredOutputDestination,
 } from '@/server/control-plane/service';
 
 function getRequiredString(formData: FormData, key: string): string {
@@ -60,25 +75,21 @@ function parseStructuredOutputIds(value: string | undefined): string[] {
     .filter((item) => item.length > 0);
 }
 
-export async function createSearchSpaceAction(formData: FormData): Promise<void> {
-  await createSearchSpace({
+function buildSearchSpaceInput(formData: FormData) {
+  return {
     id: getOptionalString(formData, 'id'),
     name: getRequiredString(formData, 'name'),
     description: getOptionalString(formData, 'description') ?? '',
-    sourceType: 'jobs_cz',
+    sourceType: 'jobs_cz' as const,
     startUrls: parseMultilineUrls(getRequiredString(formData, 'startUrls')),
     maxItemsDefault: getPositiveInt(formData, 'maxItemsDefault'),
-    maxConcurrencyDefault: getPositiveInt(formData, 'maxConcurrencyDefault'),
-    maxRequestsPerMinuteDefault: getPositiveInt(formData, 'maxRequestsPerMinuteDefault'),
     allowInactiveMarkingOnPartialRuns: getBoolean(formData, 'allowInactiveMarkingOnPartialRuns'),
-    status: 'active',
-  });
-
-  revalidatePath('/control-plane');
+    status: 'active' as const,
+  };
 }
 
-export async function createRuntimeProfileAction(formData: FormData): Promise<void> {
-  await createRuntimeProfile({
+function buildRuntimeProfileInput(formData: FormData) {
+  return {
     id: getOptionalString(formData, 'id'),
     name: getRequiredString(formData, 'name'),
     crawlerMaxConcurrency: getPositiveInt(formData, 'crawlerMaxConcurrency'),
@@ -86,56 +97,80 @@ export async function createRuntimeProfileAction(formData: FormData): Promise<vo
     ingestionConcurrency: getPositiveInt(formData, 'ingestionConcurrency'),
     ingestionEnabled: getBoolean(formData, 'ingestionEnabled'),
     debugLog: getBoolean(formData, 'debugLog'),
-    status: 'active',
-  });
-
-  revalidatePath('/control-plane');
+    status: 'active' as const,
+  };
 }
 
-export async function createArtifactDestinationAction(formData: FormData): Promise<void> {
-  await createArtifactDestination({
+function buildArtifactDestinationInput(formData: FormData) {
+  const type = getRequiredString(formData, 'type');
+  if (type === 'gcs') {
+    return {
+      id: getOptionalString(formData, 'id'),
+      name: getRequiredString(formData, 'name'),
+      type: 'gcs' as const,
+      config: {
+        bucket: getRequiredString(formData, 'bucket'),
+        prefix: getOptionalString(formData, 'prefix') ?? '',
+      },
+      status: 'active' as const,
+    };
+  }
+
+  return {
     id: getOptionalString(formData, 'id'),
     name: getRequiredString(formData, 'name'),
-    type: 'local_filesystem',
+    type: 'local_filesystem' as const,
     config: {
       basePath: getRequiredString(formData, 'basePath'),
     },
-    status: 'active',
-  });
-
-  revalidatePath('/control-plane');
+    status: 'active' as const,
+  };
 }
 
-export async function createStructuredOutputDestinationAction(formData: FormData): Promise<void> {
+function buildStructuredOutputDestinationInput(formData: FormData) {
   const type = getRequiredString(formData, 'type');
   if (type === 'mongodb') {
-    await createStructuredOutputDestination({
+    return {
       id: getOptionalString(formData, 'id'),
       name: getRequiredString(formData, 'name'),
-      type: 'mongodb',
+      type: 'mongodb' as const,
       config: {
         connectionRef: getOptionalString(formData, 'connectionRef'),
         collectionName: getOptionalString(formData, 'collectionName') ?? 'normalized_job_ads',
       },
-      status: 'active',
-    });
-  } else {
-    await createStructuredOutputDestination({
-      id: getOptionalString(formData, 'id'),
-      name: getRequiredString(formData, 'name'),
-      type: 'local_json',
-      config: {
-        basePath: getRequiredString(formData, 'basePath'),
-      },
-      status: 'active',
-    });
+      status: 'active' as const,
+    };
   }
 
-  revalidatePath('/control-plane');
+  if (type === 'gcs_json') {
+    return {
+      id: getOptionalString(formData, 'id'),
+      name: getRequiredString(formData, 'name'),
+      type: 'gcs_json' as const,
+      config: {
+        bucket: getRequiredString(formData, 'bucket'),
+        prefix: getOptionalString(formData, 'prefix') ?? '',
+      },
+      status: 'active' as const,
+    };
+  }
+
+  return {
+    id: getOptionalString(formData, 'id'),
+    name: getRequiredString(formData, 'name'),
+    type: 'local_json' as const,
+    config: {
+      basePath: getRequiredString(formData, 'basePath'),
+    },
+    status: 'active' as const,
+  };
 }
 
-export async function createPipelineAction(formData: FormData): Promise<void> {
-  await createPipeline({
+function buildPipelineInput(formData: FormData) {
+  const mode: 'crawl_only' | 'crawl_and_ingest' =
+    getRequiredString(formData, 'mode') === 'crawl_only' ? 'crawl_only' : 'crawl_and_ingest';
+
+  return {
     id: getOptionalString(formData, 'id'),
     name: getRequiredString(formData, 'name'),
     searchSpaceId: getRequiredString(formData, 'searchSpaceId'),
@@ -144,10 +179,119 @@ export async function createPipelineAction(formData: FormData): Promise<void> {
     structuredOutputDestinationIds: parseStructuredOutputIds(
       getOptionalString(formData, 'structuredOutputDestinationIds'),
     ),
-    mode: getRequiredString(formData, 'mode') === 'crawl_only' ? 'crawl_only' : 'crawl_and_ingest',
-    status: 'active',
-  });
+    mode,
+    status: 'active' as const,
+  };
+}
 
+export async function createSearchSpaceAction(formData: FormData): Promise<void> {
+  await createSearchSpace(buildSearchSpaceInput(formData));
+
+  revalidatePath('/control-plane');
+}
+
+export async function updateSearchSpaceAction(formData: FormData): Promise<void> {
+  await updateSearchSpace(getRequiredString(formData, 'id'), buildSearchSpaceInput(formData));
+  revalidatePath('/control-plane');
+}
+
+export async function archiveSearchSpaceAction(formData: FormData): Promise<void> {
+  await archiveSearchSpace(getRequiredString(formData, 'id'));
+  revalidatePath('/control-plane');
+}
+
+export async function deleteSearchSpaceAction(formData: FormData): Promise<void> {
+  await deleteSearchSpace(getRequiredString(formData, 'id'));
+  revalidatePath('/control-plane');
+}
+
+export async function createRuntimeProfileAction(formData: FormData): Promise<void> {
+  await createRuntimeProfile(buildRuntimeProfileInput(formData));
+
+  revalidatePath('/control-plane');
+}
+
+export async function updateRuntimeProfileAction(formData: FormData): Promise<void> {
+  await updateRuntimeProfile(getRequiredString(formData, 'id'), buildRuntimeProfileInput(formData));
+  revalidatePath('/control-plane');
+}
+
+export async function archiveRuntimeProfileAction(formData: FormData): Promise<void> {
+  await archiveRuntimeProfile(getRequiredString(formData, 'id'));
+  revalidatePath('/control-plane');
+}
+
+export async function deleteRuntimeProfileAction(formData: FormData): Promise<void> {
+  await deleteRuntimeProfile(getRequiredString(formData, 'id'));
+  revalidatePath('/control-plane');
+}
+
+export async function createArtifactDestinationAction(formData: FormData): Promise<void> {
+  await createArtifactDestination(buildArtifactDestinationInput(formData));
+
+  revalidatePath('/control-plane');
+}
+
+export async function updateArtifactDestinationAction(formData: FormData): Promise<void> {
+  await updateArtifactDestination(
+    getRequiredString(formData, 'id'),
+    buildArtifactDestinationInput(formData),
+  );
+  revalidatePath('/control-plane');
+}
+
+export async function archiveArtifactDestinationAction(formData: FormData): Promise<void> {
+  await archiveArtifactDestination(getRequiredString(formData, 'id'));
+  revalidatePath('/control-plane');
+}
+
+export async function deleteArtifactDestinationAction(formData: FormData): Promise<void> {
+  await deleteArtifactDestination(getRequiredString(formData, 'id'));
+  revalidatePath('/control-plane');
+}
+
+export async function createStructuredOutputDestinationAction(formData: FormData): Promise<void> {
+  await createStructuredOutputDestination(buildStructuredOutputDestinationInput(formData));
+
+  revalidatePath('/control-plane');
+}
+
+export async function updateStructuredOutputDestinationAction(formData: FormData): Promise<void> {
+  await updateStructuredOutputDestination(
+    getRequiredString(formData, 'id'),
+    buildStructuredOutputDestinationInput(formData),
+  );
+  revalidatePath('/control-plane');
+}
+
+export async function archiveStructuredOutputDestinationAction(formData: FormData): Promise<void> {
+  await archiveStructuredOutputDestination(getRequiredString(formData, 'id'));
+  revalidatePath('/control-plane');
+}
+
+export async function deleteStructuredOutputDestinationAction(formData: FormData): Promise<void> {
+  await deleteStructuredOutputDestination(getRequiredString(formData, 'id'));
+  revalidatePath('/control-plane');
+}
+
+export async function createPipelineAction(formData: FormData): Promise<void> {
+  await createPipeline(buildPipelineInput(formData));
+
+  revalidatePath('/control-plane');
+}
+
+export async function updatePipelineAction(formData: FormData): Promise<void> {
+  await updatePipeline(getRequiredString(formData, 'id'), buildPipelineInput(formData));
+  revalidatePath('/control-plane');
+}
+
+export async function archivePipelineAction(formData: FormData): Promise<void> {
+  await archivePipeline(getRequiredString(formData, 'id'));
+  revalidatePath('/control-plane');
+}
+
+export async function deletePipelineAction(formData: FormData): Promise<void> {
+  await deletePipeline(getRequiredString(formData, 'id'));
   revalidatePath('/control-plane');
 }
 

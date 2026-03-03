@@ -78,6 +78,8 @@ The following decisions are considered agreed for v1.
 - Apify `INPUT.json` is a runtime projection, not the canonical source of truth
 - manual and API-triggered runs are in scope for v1
 - scheduled runs are deferred to v2
+- v1 should expose global run history for the local operator
+- v1 should not introduce user-specific run history, user spaces, or profiles
 
 ## Non-Goals
 
@@ -322,9 +324,14 @@ Primary features:
 - create and edit search spaces
 - configure whether ingestion is enabled
 - configure artifact and output destinations
+- support full CRUD, archive, and safe-delete flows for reusable resources
 - start and monitor runs
+- prevent duplicate concurrent starts for the same pipeline by default
+- inspect run detail including manifest, generated `INPUT.json`, worker status, logs, and event history
 - inspect crawl and ingestion results
+- browse and download persisted artifacts from the dashboard
 - review errors and retry candidates
+- deliver a polished and ergonomic operator UI before v1 is considered complete
 
 ## Domain Model
 
@@ -340,17 +347,18 @@ Suggested fields:
 - `name`
 - `description`
 - `sourceType`
-- `seedUrls`
-- `urlMode`
-- `crawlDefaults`
-- `reconciliationPolicy`
+- `startUrls`
+- `maxItemsDefault`
+- `allowInactiveMarkingOnPartialRuns`
 - `status`
 - `version`
 
 Notes:
 
-- `seedUrls` may contain list URLs, detail URLs, or mixed URLs if the source adapter supports it
-- `urlMode` may be `list_only`, `detail_only`, or `mixed`
+- `startUrls` are list/search pages in v1
+- `maxItemsDefault` remains on the source definition as a crawl breadth cap
+- crawler concurrency and request rate belong to `RuntimeProfile`, not `SearchSpace`
+- direct detail URLs and mixed URL classification are deferred to v2
 
 ### RuntimeProfile
 
@@ -360,12 +368,11 @@ Suggested fields:
 
 - `id`
 - `name`
-- `crawlerConcurrency`
-- `crawlerRateLimit`
+- `crawlerMaxConcurrency`
+- `crawlerMaxRequestsPerMinute`
 - `ingestionConcurrency`
-- `timeouts`
-- `retryPolicy`
-- `debugLogging`
+- `ingestionEnabled`
+- `debugLog`
 
 ### OutputDestination
 
@@ -521,9 +528,6 @@ Event names are illustrative and should become a versioned contract.
 ### Run command events
 
 - `crawler.run.requested.v1`
-- `crawler.run.stop-requested.v1`
-- `crawler.run.pause-requested.v1`
-- `crawler.run.resume-requested.v1`
 
 Required payload fields:
 
@@ -534,13 +538,19 @@ Required payload fields:
 - `manifest`
 - `emittedAt`
 
-### Crawl progress events
+### Crawl and ingestion events
 
-- `crawler.run.started.v1`
-- `crawler.run.progress.v1`
+V1 keeps the broker contract intentionally small.
+
+Required event families:
+
+- `crawler.run.requested.v1`
 - `crawler.detail.captured.v1`
-- `crawler.run.completed.v1`
-- `crawler.run.failed.v1`
+- `crawler.run.finished.v1`
+- `ingestion.item.started.v1`
+- `ingestion.item.succeeded.v1`
+- `ingestion.item.failed.v1`
+- `ingestion.item.rejected.v1`
 
 `crawler.detail.captured.v1` should include:
 
@@ -554,13 +564,8 @@ Required payload fields:
 - `dedupeKey`
 - `capturedAt`
 
-### Ingestion events
-
-- `ingestion.item.started.v1`
-- `ingestion.item.succeeded.v1`
-- `ingestion.item.failed.v1`
-- `ingestion.item.rejected.v1`
-- `ingestion.run.completed.v1`
+In local v1, queued and running worker state may be persisted through control-plane runtime files
+in addition to broker events.
 
 Important distinction:
 
@@ -880,6 +885,8 @@ The following items are intentionally deferred from the imminent implementation:
 - operator-selectable structured-output templates
 - production worker deployment topology decisions
 - scheduled and cron-driven runs
+- user spaces and user profiles
+- agent-first API usage, MCP, API keys, and usage attribution
 
 ## Recommended Next Specs
 

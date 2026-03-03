@@ -16,10 +16,13 @@ The app reads run-summary collections and presents:
 
 - `/` overview dashboard
 - `/control-plane` local v1 control plane
+- `/control-plane/runs/[runId]` operator run detail with manifest, logs, events, and artifacts
+- `/control-plane/runs/[runId]/artifacts/[sourceId]` artifact browser for captured HTML
 - `/crawler/runs/[crawlRunId]` crawler run detail
 - `/ingestion/runs/[runId]` ingestion run detail
 - `/pipeline/[crawlRunId]` linked pipeline detail
 - `/api/control-plane/[resource]` JSON API for local control-plane resources and run starts
+- `/api/control-plane/runs/[runId]/artifacts/[sourceId]` artifact preview/download endpoint
 
 ## Data Sources
 
@@ -51,6 +54,12 @@ Control-plane execution modes:
 
 Execution mode is env-driven in v1. The `/control-plane` route shows the active mode in the
 header, but does not provide a runtime selector.
+
+Operator-facing artifact access:
+
+- artifacts stay in the configured backend adapter
+- operators browse and download them through the dashboard
+- local filesystem paths are treated as backend references, not the primary operator workflow
 
 Database selection:
 

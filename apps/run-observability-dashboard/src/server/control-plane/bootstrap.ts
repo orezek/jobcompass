@@ -38,8 +38,6 @@ function toSearchSpaceRecord(input: {
   description: string;
   startUrls: string[];
   maxItemsDefault: number;
-  maxConcurrencyDefault: number;
-  maxRequestsPerMinuteDefault: number;
   allowInactiveMarkingOnPartialRuns: boolean;
 }): SearchSpace {
   const timestamp = nowIso();
@@ -50,8 +48,6 @@ function toSearchSpaceRecord(input: {
     sourceType: 'jobs_cz',
     startUrls: input.startUrls,
     maxItemsDefault: input.maxItemsDefault,
-    maxConcurrencyDefault: input.maxConcurrencyDefault,
-    maxRequestsPerMinuteDefault: input.maxRequestsPerMinuteDefault,
     allowInactiveMarkingOnPartialRuns: input.allowInactiveMarkingOnPartialRuns,
     status: 'active',
     version: 1,
@@ -155,8 +151,6 @@ async function bootstrapSearchSpaces(): Promise<void> {
             description: parsed.description,
             startUrls: parsed.startUrls,
             maxItemsDefault: parsed.crawlDefaults.maxItems,
-            maxConcurrencyDefault: parsed.crawlDefaults.maxConcurrency,
-            maxRequestsPerMinuteDefault: parsed.crawlDefaults.maxRequestsPerMinute,
             allowInactiveMarkingOnPartialRuns:
               parsed.reconciliation.allowInactiveMarkingOnPartialRuns,
           }),

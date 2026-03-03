@@ -110,12 +110,14 @@ V1 should keep the crawler aligned with the current list-page-driven implementat
 
 V2 may add:
 
+- operator-selectable predefined output shapes
+- schema-versioned output templates owned by the platform
 - template editor for internal admins
 - template compatibility matrix per sink
 - per-template validation preview
 - user-selectable download packaging
 
-V1 should keep templates predefined and controlled by us.
+V1 should keep one canonical normalized document shape with no template selection.
 
 ### 8. Additional Persistent State Models
 
@@ -148,7 +150,20 @@ Potential building blocks:
 
 This is intentionally deferred until the v1 pipeline contracts are stable.
 
-### 10. OpenAPI And Swagger
+### 10. Artifact And Output Access APIs
+
+V2 may add public API access for artifact and output downloads.
+
+Examples:
+
+- authenticated artifact download endpoints
+- run-scoped output download endpoints
+- bulk run export packaging
+
+V1 should prioritize dashboard-first browsing and download, with raw storage paths treated as an
+implementation detail.
+
+### 11. OpenAPI And Swagger
 
 V2 should publish the control-plane API in a machine-readable and developer-friendly form.
 
@@ -173,6 +188,31 @@ Reasoning:
 ## Later-Phase Roadmap Beyond V2
 
 These ideas are important but should not shape the immediate v1 or early v2 implementation too aggressively.
+
+### V3 Candidate: Execution Sessions And Shared Worker Pools
+
+V3 should add an execution model based on run execution sessions rather than browser or user
+sessions.
+
+Recommended direction:
+
+- a run creates a `RunExecutionSession`
+- shared worker pools are the default execution model
+- queue-based scaling is preferred over provisioning dedicated workers for every run
+- dedicated per-run workers remain an exception for selected workloads
+
+Potential scope:
+
+- execution sessions
+- worker leases and heartbeats
+- run concurrency budgets
+- cancellation and expiry
+- shared-pool quotas
+- autoscaling policies
+
+The guiding rule is:
+
+- execution is run-based, not user-session-based
 
 ### V3-V4 Candidate: Deeper Persistence Decoupling
 

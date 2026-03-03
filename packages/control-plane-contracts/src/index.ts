@@ -35,8 +35,6 @@ export const searchSpaceSchema = z.object({
   sourceType: sourceTypeSchema.default('jobs_cz'),
   startUrls: z.array(z.url()).min(1),
   maxItemsDefault: z.number().int().positive().default(100),
-  maxConcurrencyDefault: z.number().int().positive().default(5),
-  maxRequestsPerMinuteDefault: z.number().int().positive().default(120),
   allowInactiveMarkingOnPartialRuns: z.boolean().default(false),
   status: recordStatusSchema.default('draft'),
   version: z.number().int().positive().default(1),
@@ -51,8 +49,6 @@ export const createSearchSpaceInputSchema = z.object({
   sourceType: sourceTypeSchema.default('jobs_cz'),
   startUrls: z.array(z.url()).min(1),
   maxItemsDefault: z.number().int().positive().default(100),
-  maxConcurrencyDefault: z.number().int().positive().default(5),
-  maxRequestsPerMinuteDefault: z.number().int().positive().default(120),
   allowInactiveMarkingOnPartialRuns: z.boolean().default(false),
   status: recordStatusSchema.default('active'),
 });
@@ -237,8 +233,6 @@ export const searchSpaceSnapshotSchema = searchSpaceSchema.pick({
   sourceType: true,
   startUrls: true,
   maxItemsDefault: true,
-  maxConcurrencyDefault: true,
-  maxRequestsPerMinuteDefault: true,
   allowInactiveMarkingOnPartialRuns: true,
   version: true,
 });

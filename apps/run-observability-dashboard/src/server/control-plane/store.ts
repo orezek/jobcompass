@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import type {
@@ -20,9 +20,11 @@ import {
   structuredOutputDestinationSchema,
 } from '@repo/control-plane-contracts';
 import {
+  buildControlPlaneRunDir,
   buildRunManifestPath,
   buildRunRecordPath,
   buildRunWorkerRuntimePath,
+  controlPlaneLockRootDir,
   controlPlaneCollectionDirs,
 } from '@/server/control-plane/paths';
 
@@ -74,7 +76,10 @@ async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
 }
 
 export async function ensureControlPlaneStorage(): Promise<void> {
-  await Promise.all(Object.values(controlPlaneCollectionDirs).map((dirPath) => ensureDir(dirPath)));
+  await Promise.all([
+    ...Object.values(controlPlaneCollectionDirs).map((dirPath) => ensureDir(dirPath)),
+    ensureDir(controlPlaneLockRootDir),
+  ]);
 }
 
 export async function listCollectionRecords<T>(
@@ -115,6 +120,13 @@ export async function getCollectionRecord<T>(
   id: string,
 ): Promise<T | null> {
   return readJsonFile(path.join(controlPlaneCollectionDirs[collectionName], `${id}.json`), schema);
+}
+
+export async function deleteCollectionRecord(
+  collectionName: CollectionName,
+  id: string,
+): Promise<void> {
+  await rm(path.join(controlPlaneCollectionDirs[collectionName], `${id}.json`), { force: true });
 }
 
 export async function listSearchSpaces(): Promise<SearchSpace[]> {
@@ -219,6 +231,10 @@ export async function listRunRecords(): Promise<ControlPlaneRun[]> {
   return records.filter((record) => record !== null) as ControlPlaneRun[];
 }
 
+export async function deleteRunRecord(runId: string): Promise<void> {
+  await rm(buildControlPlaneRunDir(runId), { recursive: true, force: true });
+}
+
 export async function writeRunManifest(record: RunManifest): Promise<RunManifest> {
   const parsed = runManifestSchema.parse(record);
   await writeJsonFile(buildRunManifestPath(parsed.runId), parsed);
@@ -227,6 +243,17 @@ export async function writeRunManifest(record: RunManifest): Promise<RunManifest
 
 export async function getRunManifest(runId: string): Promise<RunManifest | null> {
   return readJsonFile(buildRunManifestPath(runId), runManifestSchema);
+}
+
+export async function listRunManifests(): Promise<RunManifest[]> {
+  const runsDir = controlPlaneCollectionDirs.runs;
+  await ensureDir(runsDir);
+  const entries = await readdir(runsDir, { withFileTypes: true });
+  const records = await Promise.all(
+    entries.filter((entry) => entry.isDirectory()).map((entry) => getRunManifest(entry.name)),
+  );
+
+  return records.filter((record) => record !== null) as RunManifest[];
 }
 
 export async function writeWorkerRuntime(

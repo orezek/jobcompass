@@ -92,75 +92,7 @@ Required payload fields:
 
 - `runManifest`
 
-### 2. Crawl lifecycle
-
-#### `crawler.run.started.v1`
-
-Produced by:
-
-- crawler worker
-
-Consumed by:
-
-- control plane
-
-Required payload fields:
-
-- `pipelineId`
-- `searchSpaceId`
-- `startedAt`
-
-#### `crawler.run.progress.v1`
-
-Produced by:
-
-- crawler worker
-
-Consumed by:
-
-- control plane
-
-Required payload fields:
-
-- `crawlRunId`
-- `listPagesVisited`
-- `detailPagesVisited`
-- `artifactsStored`
-- `failures`
-
-#### `crawler.run.completed.v1`
-
-Produced by:
-
-- crawler worker
-
-Consumed by:
-
-- control plane
-
-Required payload fields:
-
-- `crawlRunId`
-- `status`
-- `summary`
-
-#### `crawler.run.failed.v1`
-
-Produced by:
-
-- crawler worker
-
-Consumed by:
-
-- control plane
-
-Required payload fields:
-
-- `crawlRunId`
-- `error`
-- `summary`
-
-### 3. Detail artifact handoff
+### 2. Detail artifact handoff
 
 #### `crawler.detail.captured.v1`
 
@@ -213,6 +145,34 @@ Suggested payload example:
   "dedupeKey": "jobs.cz:prague-tech-jobs:crawl_01:2001077729"
 }
 ```
+
+### 3. Crawl completion
+
+#### `crawler.run.finished.v1`
+
+Produced by:
+
+- crawler worker
+
+Consumed by:
+
+- control plane
+
+Required payload fields:
+
+- `crawlRunId`
+- `searchSpaceId`
+- `status`
+- `summaryPath`
+- `datasetPath`
+- `newJobsCount`
+- `failedRequests`
+- `stopReason`
+
+V1 keeps crawler lifecycle events intentionally compact.
+
+Queued and running state can be persisted through local control-plane runtime files in addition to
+broker events.
 
 ### 4. Ingestion lifecycle
 
@@ -298,23 +258,6 @@ Required payload fields:
 - `sourceId`
 - `reason`
 - `dedupeKey`
-
-#### `ingestion.run.completed.v1`
-
-Produced by:
-
-- ingestion worker
-
-Consumed by:
-
-- control plane
-
-Required payload fields:
-
-- `ingestionRunId`
-- `crawlRunId`
-- `status`
-- `summary`
 
 ## Idempotency Rules
 

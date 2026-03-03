@@ -9,13 +9,28 @@ import type {
   StartRunRequest,
 } from '@repo/control-plane-contracts';
 import {
+  archiveArtifactDestination,
+  archivePipeline,
+  archiveRuntimeProfile,
+  archiveSearchSpace,
+  archiveStructuredOutputDestination,
   createArtifactDestination,
   createPipeline,
   createRuntimeProfile,
   createSearchSpace,
   createStructuredOutputDestination,
+  deleteArtifactDestination,
+  deletePipeline,
+  deleteRuntimeProfile,
+  deleteSearchSpace,
+  deleteStructuredOutputDestination,
   getControlPlaneOverview,
   startRun,
+  updateArtifactDestination,
+  updatePipeline,
+  updateRuntimeProfile,
+  updateSearchSpace,
+  updateStructuredOutputDestination,
 } from '@/server/control-plane/service';
 
 const resourceSchema = z.enum([
@@ -110,6 +125,138 @@ export async function POST(request: Request, context: RouteContext) {
           { status: 202 },
         );
     }
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unexpected control-plane error.',
+      },
+      { status: 400 },
+    );
+  }
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  const { resource } = await context.params;
+  const parsedResource = resourceSchema.safeParse(resource);
+  if (
+    !parsedResource.success ||
+    parsedResource.data === 'overview' ||
+    parsedResource.data === 'runs'
+  ) {
+    return NextResponse.json(
+      { ok: false, error: 'Unknown control-plane resource.' },
+      { status: 404 },
+    );
+  }
+
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  const id = typeof body?.id === 'string' ? body.id : null;
+  const action = typeof body?.action === 'string' ? body.action : 'update';
+
+  if (!id) {
+    return NextResponse.json({ ok: false, error: 'Missing required field "id".' }, { status: 400 });
+  }
+
+  try {
+    switch (parsedResource.data) {
+      case 'search-spaces':
+        return NextResponse.json({
+          ok: true,
+          data:
+            action === 'archive'
+              ? await archiveSearchSpace(id)
+              : await updateSearchSpace(id, body as CreateSearchSpaceInput),
+        });
+      case 'runtime-profiles':
+        return NextResponse.json({
+          ok: true,
+          data:
+            action === 'archive'
+              ? await archiveRuntimeProfile(id)
+              : await updateRuntimeProfile(id, body as CreateRuntimeProfileInput),
+        });
+      case 'artifact-destinations':
+        return NextResponse.json({
+          ok: true,
+          data:
+            action === 'archive'
+              ? await archiveArtifactDestination(id)
+              : await updateArtifactDestination(id, body as CreateArtifactDestinationInput),
+        });
+      case 'structured-output-destinations':
+        return NextResponse.json({
+          ok: true,
+          data:
+            action === 'archive'
+              ? await archiveStructuredOutputDestination(id)
+              : await updateStructuredOutputDestination(
+                  id,
+                  body as CreateStructuredOutputDestinationInput,
+                ),
+        });
+      case 'pipelines':
+        return NextResponse.json({
+          ok: true,
+          data:
+            action === 'archive'
+              ? await archivePipeline(id)
+              : await updatePipeline(id, body as CreatePipelineInput),
+        });
+    }
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unexpected control-plane error.',
+      },
+      { status: 400 },
+    );
+  }
+}
+
+export async function DELETE(request: Request, context: RouteContext) {
+  const { resource } = await context.params;
+  const parsedResource = resourceSchema.safeParse(resource);
+  if (
+    !parsedResource.success ||
+    parsedResource.data === 'overview' ||
+    parsedResource.data === 'runs'
+  ) {
+    return NextResponse.json(
+      { ok: false, error: 'Unknown control-plane resource.' },
+      { status: 404 },
+    );
+  }
+
+  const id = new URL(request.url).searchParams.get('id');
+  if (!id) {
+    return NextResponse.json(
+      { ok: false, error: 'Missing required query param "id".' },
+      { status: 400 },
+    );
+  }
+
+  try {
+    switch (parsedResource.data) {
+      case 'search-spaces':
+        await deleteSearchSpace(id);
+        break;
+      case 'runtime-profiles':
+        await deleteRuntimeProfile(id);
+        break;
+      case 'artifact-destinations':
+        await deleteArtifactDestination(id);
+        break;
+      case 'structured-output-destinations':
+        await deleteStructuredOutputDestination(id);
+        break;
+      case 'pipelines':
+        await deletePipeline(id);
+        break;
+    }
+
+    return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json(
       {

@@ -46,6 +46,8 @@ export const controlPlaneCollectionDirs = {
   runs: path.join(controlPlaneDataRootDir, 'runs'),
 } as const;
 
+export const controlPlaneLockRootDir = path.join(controlPlaneDataRootDir, '.locks');
+
 export const buildControlPlaneRunDir = (runId: string): string =>
   path.join(controlPlaneCollectionDirs.runs, runId);
 
@@ -65,3 +67,6 @@ export const buildRunWorkerRuntimePath = (
 
 export const buildRunWorkerLogPath = (runId: string, workerType: 'crawler' | 'ingestion'): string =>
   path.join(controlPlaneWorkerLogRootDir, `${runId}-${workerType}.log`);
+
+export const buildPipelineStartLockDir = (pipelineId: string): string =>
+  path.join(controlPlaneLockRootDir, `start-run-${pipelineId}`);

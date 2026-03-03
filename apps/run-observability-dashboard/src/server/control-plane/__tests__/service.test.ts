@@ -97,4 +97,133 @@ describe('control-plane service', () => {
     expect(normalizedJson.searchSpaceId).toBe(searchSpace.id);
     expect(normalizedJson.crawlRunId).toBe(runView.run.runId);
   });
+
+  it('loads control-plane run detail with manifest, broker events, and artifact captures', async () => {
+    const { createPipeline, getControlPlaneOverview, getControlPlaneRunDetail, startRun } =
+      await import('@/server/control-plane/service');
+
+    const overview = await getControlPlaneOverview();
+    const searchSpace = overview.searchSpaces[0]!;
+    const runtimeProfile = overview.runtimeProfiles[0]!;
+    const artifactDestination = overview.artifactDestinations[0]!;
+    const jsonOutputDestination = overview.structuredOutputDestinations.find(
+      (destination) => destination.type === 'local_json',
+    )!;
+
+    const pipeline = await createPipeline({
+      name: 'Fixture detail pipeline',
+      searchSpaceId: searchSpace.id,
+      runtimeProfileId: runtimeProfile.id,
+      artifactDestinationId: artifactDestination.id,
+      structuredOutputDestinationIds: [jsonOutputDestination.id],
+      mode: 'crawl_and_ingest',
+      status: 'active',
+    });
+
+    const runView = await startRun({
+      pipelineId: pipeline.id,
+      createdBy: 'vitest',
+    });
+
+    const detail = await getControlPlaneRunDetail(runView.run.runId);
+    expect(detail).not.toBeNull();
+    expect(detail?.runView.run.runId).toBe(runView.run.runId);
+    expect(detail?.generatedInput.exists).toBe(true);
+    expect(detail?.generatedInput.contents).toContain(searchSpace.id);
+    expect(detail?.brokerEvents).toHaveLength(3);
+    expect(detail?.artifactCaptures).toHaveLength(1);
+    expect(detail?.artifactCaptures[0]?.sourceId).toBe('fixture-001');
+    expect(detail?.artifactCaptures[0]?.artifactPath).toContain('job-html-fixture-001.html');
+  });
+
+  it('returns the existing active run for a pipeline instead of creating a duplicate', async () => {
+    const { createPipeline, getControlPlaneOverview, startRun } =
+      await import('@/server/control-plane/service');
+    const { listRunRecords, writeRunRecord } = await import('@/server/control-plane/store');
+
+    const overview = await getControlPlaneOverview();
+    const searchSpace = overview.searchSpaces[0]!;
+    const runtimeProfile = overview.runtimeProfiles[0]!;
+    const artifactDestination = overview.artifactDestinations[0]!;
+
+    const pipeline = await createPipeline({
+      name: 'Active run guard pipeline',
+      searchSpaceId: searchSpace.id,
+      runtimeProfileId: runtimeProfile.id,
+      artifactDestinationId: artifactDestination.id,
+      structuredOutputDestinationIds: [],
+      mode: 'crawl_only',
+      status: 'active',
+    });
+
+    await writeRunRecord({
+      runId: 'crawl-run-existing-active',
+      pipelineId: pipeline.id,
+      pipelineVersion: pipeline.version,
+      status: 'running',
+      requestedAt: new Date().toISOString(),
+      startedAt: new Date().toISOString(),
+      stopReason: null,
+      summary: {},
+    });
+
+    const runView = await startRun({
+      pipelineId: pipeline.id,
+      createdBy: 'vitest',
+    });
+
+    expect(runView.run.runId).toBe('crawl-run-existing-active');
+    expect(runView.computedStatus).toBe('running');
+
+    const runs = await listRunRecords();
+    expect(runs.filter((run) => run.pipelineId === pipeline.id)).toHaveLength(1);
+  });
+
+  it('updates runtime profiles and persists the new values', async () => {
+    const { getControlPlaneOverview, updateRuntimeProfile } =
+      await import('@/server/control-plane/service');
+
+    const overview = await getControlPlaneOverview();
+    const runtimeProfile = overview.runtimeProfiles[0]!;
+
+    const updated = await updateRuntimeProfile(runtimeProfile.id, {
+      id: runtimeProfile.id,
+      name: `${runtimeProfile.name} updated`,
+      crawlerMaxConcurrency: 3,
+      crawlerMaxRequestsPerMinute: 45,
+      ingestionConcurrency: 2,
+      ingestionEnabled: false,
+      debugLog: true,
+      status: 'active',
+    });
+
+    expect(updated.name).toContain('updated');
+    expect(updated.crawlerMaxConcurrency).toBe(3);
+    expect(updated.ingestionEnabled).toBe(false);
+    expect(updated.debugLog).toBe(true);
+  });
+
+  it('rejects deleting a search space that is still referenced by a pipeline', async () => {
+    const { createPipeline, deleteSearchSpace, getControlPlaneOverview } =
+      await import('@/server/control-plane/service');
+
+    const overview = await getControlPlaneOverview();
+    const searchSpace = overview.searchSpaces[0]!;
+    const runtimeProfile = overview.runtimeProfiles[0]!;
+    const artifactDestination = overview.artifactDestinations[0]!;
+
+    await createPipeline({
+      name: 'Deletion guard pipeline',
+      searchSpaceId: searchSpace.id,
+      runtimeProfileId: runtimeProfile.id,
+      artifactDestinationId: artifactDestination.id,
+      structuredOutputDestinationIds: [],
+      mode: 'crawl_only',
+      status: 'active',
+    });
+
+    await expect(deleteSearchSpace(searchSpace.id)).rejects.toThrow(
+      /referenced by one or more pipelines/i,
+    );
+  });
 });

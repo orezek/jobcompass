@@ -23,6 +23,9 @@ test('control plane can create a pipeline and run it in fixture mode', async ({ 
 
   await page.goto('/control-plane');
   await expect(page.getByRole('heading', { name: 'Local operator surface' })).toBeVisible();
+  await expect(page.locator('.kpi-card__label', { hasText: 'ACTIVE RUNS' }).first()).toBeVisible();
+  await expect(page.getByTestId('create-pipeline-disclosure')).toBeVisible();
+  await expect(page.getByText('Manage source definitions')).toBeVisible();
 
   await page.getByTestId('pipeline-name-input').fill(pipelineName);
   await page.getByRole('textbox', { name: 'STRUCTURED OUTPUT IDS' }).fill('local-json-output');
@@ -35,4 +38,22 @@ test('control plane can create a pipeline and run it in fixture mode', async ({ 
 
   await expect(page.getByTestId('control-plane-runs')).toContainText(pipelineName);
   await expect(page.getByTestId('control-plane-runs')).toContainText('succeeded');
+
+  await page
+    .getByTestId('control-plane-runs')
+    .getByRole('link', { name: /crawl-run-/i })
+    .first()
+    .click();
+  await expect(page.getByRole('heading', { name: /Run crawl-run-/i })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Generated INPUT.json' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Event history' })).toBeVisible();
+
+  await page.getByTestId('artifact-browse-fixture-001').click();
+  await expect(page.getByRole('heading', { name: 'Fixture platform engineer' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Artifact preview' })).toBeVisible();
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('link', { name: 'Download HTML' }).click();
+  const download = await downloadPromise;
+  expect(await download.suggestedFilename()).toBe('job-html-fixture-001.html');
 });

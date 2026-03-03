@@ -53,8 +53,6 @@ Required fields:
 - `sourceType`
 - `startUrls`
 - `maxItemsDefault`
-- `maxConcurrencyDefault`
-- `maxRequestsPerMinuteDefault`
 - `allowInactiveMarkingOnPartialRuns`
 - `status`
 - `version`
@@ -65,6 +63,8 @@ Field notes:
 
 - `sourceType` is `jobs_cz` in v1
 - `startUrls` represent list/search pages in v1
+- `maxItemsDefault` is a source-level breadth cap
+- concurrency and requests-per-minute belong to `RuntimeProfile`, not `SearchSpace`
 - `status` is one of:
   - `draft`
   - `active`
@@ -300,6 +300,10 @@ Required fields:
 - `failed`
 - `stopped`
 
+V1 run history is control-plane history for the local operator.
+
+It is not a user-personal history model and should not depend on user spaces or profiles.
+
 ### RunItem
 
 Represents item-level tracking for artifact and ingestion processing.
@@ -363,6 +367,9 @@ V1 rules:
 - `artifactDestinationId` must reference an active artifact destination
 - `crawl_only` pipelines must not require structured output destinations
 - `crawl_and_ingest` pipelines must reference at least one structured output destination
+- only one active run per pipeline is allowed by default
+- active means `queued` or `running`
+- start requests must be idempotent while an active run already exists
 
 ## Operator-Facing API
 
@@ -384,8 +391,6 @@ Request body:
   "sourceType": "jobs_cz",
   "startUrls": ["https://www.jobs.cz/prace/praha/?q=developer"],
   "maxItemsDefault": 100,
-  "maxConcurrencyDefault": 5,
-  "maxRequestsPerMinuteDefault": 120,
   "allowInactiveMarkingOnPartialRuns": false
 }
 ```
@@ -535,9 +540,17 @@ Response shape:
 }
 ```
 
+Run-start rule:
+
+- if the pipeline already has an active run, the control plane must return that existing run or
+  reject the request with a clear conflict
+- normal repeated clicks must not create duplicate concurrent runs for the same pipeline
+
 #### `POST /api/runs/:id/start`
 
 Create the immutable manifest and publish the run command.
+
+This operation must be idempotent for a given run.
 
 #### `POST /api/runs/:id/stop`
 
