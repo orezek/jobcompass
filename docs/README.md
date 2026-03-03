@@ -5,6 +5,10 @@ This directory contains design and implementation documentation for the JobCompa
 ## Start Here
 
 - System integration spec (crawler + ingestion MVP flow): `docs/specs/incremental-crawler-ingestion-monolith.md`
+- Next-generation architecture brief (control plane + workers): `docs/specs/crawler-ingestion-control-plane-v1.md`
+- Control-plane domain model and API contract: `docs/specs/control-plane-domain-api-v1.md`
+- Event contracts and sink adapters: `docs/specs/pipeline-events-sinks-v1.md`
+- Deferred follow-up scope after v1: `docs/specs/crawler-ingestion-control-plane-v2.md`
 
 ## App Docs
 
@@ -35,9 +39,13 @@ This directory contains design and implementation documentation for the JobCompa
 ## Suggested Reading Order (New Contributors)
 
 1. `docs/specs/incremental-crawler-ingestion-monolith.md`
-2. `docs/specs/jobs-crawler-actor.md`
-3. `docs/specs/jobs-ingestion-service.md`
-4. `docs/specs/job-compass-chat.md`
-5. `apps/jobs-crawler-actor/README.md`
-6. `apps/jobs-ingestion-service/README.md`
-7. `apps/job-compass-chat/README.md`
+2. `docs/specs/crawler-ingestion-control-plane-v1.md`
+3. `docs/specs/control-plane-domain-api-v1.md`
+4. `docs/specs/pipeline-events-sinks-v1.md`
+5. `docs/specs/crawler-ingestion-control-plane-v2.md`
+6. `docs/specs/jobs-crawler-actor.md`
+7. `docs/specs/jobs-ingestion-service.md`
+8. `docs/specs/job-compass-chat.md`
+9. `apps/jobs-crawler-actor/README.md`
+10. `apps/jobs-ingestion-service/README.md`
+11. `apps/job-compass-chat/README.md`
