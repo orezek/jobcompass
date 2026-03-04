@@ -16,6 +16,7 @@ Capture the features intentionally deferred from v1 so they stay visible without
 - richer orchestration and replay
 - broader source support
 - more advanced stateful pipeline capabilities
+- naming and configuration cleanup
 - published machine-readable API contracts
 
 ## Deferred Features
@@ -184,6 +185,32 @@ Reasoning:
 - agent and MCP use later will benefit from a stable machine-readable API
 - the contract should exist before the agent-facing layer is introduced
 - Swagger is useful earlier than the full agent platform roadmap
+
+### 12. Naming And Configuration Cleanup
+
+V2 should clean up legacy naming that no longer matches the product boundary.
+
+Priority cleanup items:
+
+- replace `JOB_COMPASS_DB_PREFIX` with a crawler/ingestion-neutral setting name
+- define a short canonical default database prefix owned by the platform
+- remove legacy `job-compass` terminology from operational env defaults where the app is no longer
+  actually "Job Compass"
+- separate product naming from storage naming so database prefixes do not inherit stale branding
+- document and enforce one migration path for old env vars, including deprecation behavior and
+  removal timing
+
+Specific V2 requirement:
+
+- `JOB_COMPASS_DB_PREFIX` should be treated as compatibility debt, not as the long-term contract
+
+Reasoning:
+
+- the current env var name leaks old product language into crawler and ingestion runtime behavior
+- operational naming is part of the external contract for MongoDB persistence and should be cleaned
+  up deliberately, not piecemeal
+- future storage migrations will be harder if naming debt stays embedded in env vars, docs, and
+  defaults
 
 ## Later-Phase Roadmap Beyond V2
 
