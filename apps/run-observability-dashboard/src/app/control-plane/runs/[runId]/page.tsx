@@ -1,16 +1,16 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import type { BrokerEvent } from '@repo/control-plane-contracts';
 import { AppShell } from '@/components/layout/app-shell';
 import { PageHeader } from '@/components/layout/page-header';
 import { KpiCard } from '@/components/metrics/kpi-card';
 import { StatusBadge } from '@/components/state/status-badge';
 import { ErrorState } from '@/components/state/error-state';
-import { FilePreviewPanel } from '@/components/control-plane/file-preview-panel';
 import { JsonViewerPanel } from '@/components/control-plane/json-viewer-panel';
 import { DisclosurePanel } from '@/components/control-plane/disclosure-panel';
 import { LiveRefresh } from '@/components/control-plane/live-refresh';
 import { SectionHeading } from '@/components/control-plane/section-heading';
+import { WorkerLogPreviewPanel } from '@/components/control-plane/worker-log-preview-panel';
+import { BrokerEventHistoryPanel } from '@/components/control-plane/broker-event-history-panel';
 import { formatCompactBytes, formatDateTime, formatNumber } from '@/server/lib/formatting';
 import { env } from '@/server/env';
 import { getControlPlaneRunDetail } from '@/server/control-plane/service';
@@ -19,22 +19,6 @@ export const dynamic = 'force-dynamic';
 
 function shouldAutoRefresh(status: string): boolean {
   return status === 'queued' || status === 'running';
-}
-
-function describeBrokerEvent(event: BrokerEvent): string {
-  switch (event.eventType) {
-    case 'crawler.run.requested':
-      return `${event.payload.runManifest.searchSpaceSnapshot.startUrls.length} start URLs`;
-    case 'crawler.detail.captured':
-      return `${event.payload.sourceId} • ${event.payload.listingRecord.jobTitle}`;
-    case 'crawler.run.finished':
-      return `status=${event.payload.status} • new=${event.payload.newJobsCount} • failed=${event.payload.failedRequests}`;
-    case 'ingestion.item.started':
-    case 'ingestion.item.succeeded':
-    case 'ingestion.item.failed':
-    case 'ingestion.item.rejected':
-      return `${event.payload.sourceId} • ${event.payload.reason ?? event.payload.documentId ?? 'no extra details'}`;
-  }
 }
 
 function parseJsonPreview(contents: string | null | undefined): unknown | null {
@@ -338,13 +322,13 @@ export default async function ControlPlaneRunDetailPage({
             description="Expand only when the run needs low-level inspection."
           >
             <section className="chart-grid chart-grid--compact">
-              <FilePreviewPanel
+              <WorkerLogPreviewPanel
                 eyebrow="Crawler worker"
                 title="Crawler log preview"
                 preview={detail.crawlerLog}
                 emptyCopy="No crawler log has been written for this run yet."
               />
-              <FilePreviewPanel
+              <WorkerLogPreviewPanel
                 eyebrow="Ingestion worker"
                 title="Ingestion log preview"
                 preview={detail.ingestionLog}
@@ -359,30 +343,7 @@ export default async function ControlPlaneRunDetailPage({
             {detail.brokerEvents.length === 0 ? (
               <p className="empty-copy">No broker events have been persisted for this run yet.</p>
             ) : (
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>WHEN</th>
-                      <th>TYPE</th>
-                      <th>PRODUCER</th>
-                      <th>CORRELATION</th>
-                      <th>DETAIL</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detail.brokerEvents.map((event) => (
-                      <tr key={event.eventId}>
-                        <td>{formatDateTime(event.occurredAt)}</td>
-                        <td>{event.eventType}</td>
-                        <td>{event.producer}</td>
-                        <td className="data-table__cell--wrap">{event.correlationId}</td>
-                        <td className="data-table__cell--wrap">{describeBrokerEvent(event)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <BrokerEventHistoryPanel events={detail.brokerEvents} />
             )}
           </DisclosurePanel>
         </section>
