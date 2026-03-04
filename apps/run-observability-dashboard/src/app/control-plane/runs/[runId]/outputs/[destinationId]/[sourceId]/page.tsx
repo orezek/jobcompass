@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
+import { BreadcrumbNav } from '@/components/layout/breadcrumb-nav';
 import { PageHeader } from '@/components/layout/page-header';
 import { ErrorState } from '@/components/state/error-state';
 import { JsonViewerPanel } from '@/components/control-plane/json-viewer-panel';
@@ -49,6 +50,13 @@ export default async function ControlPlaneStructuredOutputPage({
     return (
       <AppShell>
         <LiveRefresh enabled={shouldAutoRefresh(detail.runView.computedStatus)} />
+        <BreadcrumbNav
+          items={[
+            { label: 'Dashboard', href: '/' },
+            { label: `Run: ${runId}`, href: `/control-plane/runs/${runId}` },
+            { label: `Output: ${output.capture.sourceId}` },
+          ]}
+        />
         <PageHeader
           eyebrow="Structured output browser"
           title={output.capture.fileName}
@@ -58,16 +66,32 @@ export default async function ControlPlaneStructuredOutputPage({
           generatedAt={output.capture.occurredAt}
           latestCrawlerStatus={detail.runView.crawlerRuntime?.status ?? null}
           latestIngestionStatus={detail.runView.ingestionRuntime?.status ?? null}
-          backHref={`/control-plane/runs/${runId}`}
-          backLabel="Back to run detail"
+          actions={[]}
           showControlPlaneLink={false}
-          summaryItems={[
-            { label: 'Destination', value: output.capture.destinationName },
-            { label: 'Source id', value: output.capture.sourceId },
-            { label: 'Generated', value: formatDateTime(output.capture.occurredAt) },
-            { label: 'Storage', value: output.capture.outputStorageType },
-          ]}
         />
+
+        <section className="panel technical-meta-panel">
+          <div className="technical-meta-grid">
+            <article className="technical-meta-item">
+              <p className="technical-meta-item__label">Destination</p>
+              <p className="technical-meta-item__value">{output.capture.destinationName}</p>
+            </article>
+            <article className="technical-meta-item">
+              <p className="technical-meta-item__label">Source id</p>
+              <p className="technical-meta-item__value">{output.capture.sourceId}</p>
+            </article>
+            <article className="technical-meta-item">
+              <p className="technical-meta-item__label">Generated</p>
+              <p className="technical-meta-item__value">
+                {formatDateTime(output.capture.occurredAt)}
+              </p>
+            </article>
+            <article className="technical-meta-item">
+              <p className="technical-meta-item__label">Storage</p>
+              <p className="technical-meta-item__value">{output.capture.outputStorageType}</p>
+            </article>
+          </div>
+        </section>
 
         <section className="panel detail-grid detail-grid--meta">
           <div className="detail-card">
@@ -127,7 +151,7 @@ export default async function ControlPlaneStructuredOutputPage({
           title="JSON preview"
           value={output.preview.exists ? parseJsonPreview(output.preview.contents) : null}
           emptyCopy="The structured output could not be read for this run."
-          description="Expand only the branches you need to inspect."
+          description="Expand the payload only when you need field-level inspection."
           rootLabel="document"
         />
       </AppShell>

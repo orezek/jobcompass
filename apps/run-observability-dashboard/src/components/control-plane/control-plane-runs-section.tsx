@@ -28,7 +28,7 @@ export function ControlPlaneRunsSection({ runs, pipelines }: ControlPlaneRunsSec
           message="No control-plane runs have been started yet."
         />
       ) : (
-        <div className="table-wrap" data-testid="control-plane-runs">
+        <div className="table-wrap table-wrap--bounded" data-testid="control-plane-runs">
           <table className="data-table control-plane-runs-table">
             <thead>
               <tr>

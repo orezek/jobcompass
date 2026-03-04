@@ -24,7 +24,9 @@ export function FilePreviewPanel({
             {preview.sizeBytes ? ` • ${formatCompactBytes(preview.sizeBytes)} bytes` : ''}
             {preview.truncated ? ' • preview truncated' : ''}
           </p>
-          <pre className="code-panel">{preview.contents}</pre>
+          <pre className="code-panel code-panel--scrollable code-panel--html">
+            {preview.contents}
+          </pre>
         </>
       ) : (
         <EmptyTray

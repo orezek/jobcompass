@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
+import { BreadcrumbNav } from '@/components/layout/breadcrumb-nav';
 import { PageHeader } from '@/components/layout/page-header';
 import { ErrorState } from '@/components/state/error-state';
 import { FilePreviewPanel } from '@/components/control-plane/file-preview-panel';
@@ -37,6 +38,13 @@ export default async function ControlPlaneArtifactPage({
     return (
       <AppShell>
         <LiveRefresh enabled={shouldAutoRefresh(detail.runView.computedStatus)} />
+        <BreadcrumbNav
+          items={[
+            { label: 'Dashboard', href: '/' },
+            { label: `Run: ${runId}`, href: `/control-plane/runs/${runId}` },
+            { label: `Artifact: ${artifact.capture.sourceId}` },
+          ]}
+        />
         <PageHeader
           eyebrow="Artifact browser"
           title={artifact.capture.jobTitle}
@@ -46,8 +54,7 @@ export default async function ControlPlaneArtifactPage({
           generatedAt={artifact.capture.occurredAt}
           latestCrawlerStatus={detail.runView.crawlerRuntime?.status ?? null}
           latestIngestionStatus={detail.runView.ingestionRuntime?.status ?? null}
-          backHref={`/control-plane/runs/${runId}`}
-          backLabel="Back to run detail"
+          actions={[]}
           showControlPlaneLink={false}
           summaryItems={[
             { label: 'Source id', value: artifact.capture.sourceId },

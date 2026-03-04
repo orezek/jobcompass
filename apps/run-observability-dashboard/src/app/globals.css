@@ -151,6 +151,39 @@ textarea:focus-visible,
   padding: 28px 2rem 64px;
 }
 
+.breadcrumb-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-family: var(--font-primary);
+  font-size: 0.86rem;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+.breadcrumb-nav__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.breadcrumb-nav__link,
+.breadcrumb-nav__separator {
+  color: var(--theme-text-secondary);
+}
+
+.breadcrumb-nav__link:hover {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--theme-text-secondary) 68%, transparent);
+  text-underline-offset: 0.16em;
+}
+
+.breadcrumb-nav__current {
+  color: var(--theme-text-primary);
+}
+
 .page-header,
 .panel {
   margin-bottom: 20px;
@@ -1106,6 +1139,40 @@ textarea:focus-visible,
   min-width: min(22rem, 100%);
 }
 
+.technical-meta-panel {
+  padding: 12px;
+}
+
+.technical-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.technical-meta-item {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--theme-border-soft);
+  background: var(--theme-canvas);
+}
+
+.technical-meta-item__label {
+  color: var(--theme-text-secondary);
+  font-family: var(--font-secondary);
+  font-size: var(--text-label);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.technical-meta-item__value {
+  color: var(--theme-text-primary);
+  font-family: var(--font-secondary);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
 .detail-card {
   display: grid;
   gap: 10px;
@@ -1645,6 +1712,18 @@ textarea:focus-visible,
   word-break: break-word;
 }
 
+.code-panel--scrollable {
+  max-height: 36rem;
+  overflow: auto;
+  white-space: pre;
+  word-break: normal;
+}
+
+.code-panel--html {
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
 .json-viewer {
   margin-top: 12px;
 }
@@ -1778,6 +1857,10 @@ textarea:focus-visible,
     grid-template-columns: 1fr;
   }
 
+  .technical-meta-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .page-header__actions {
     flex-direction: column;
     align-items: stretch;
@@ -1826,6 +1909,10 @@ textarea:focus-visible,
   }
 
   .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .technical-meta-grid {
     grid-template-columns: 1fr;
   }
 
