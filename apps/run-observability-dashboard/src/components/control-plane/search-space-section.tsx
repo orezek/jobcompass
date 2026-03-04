@@ -1,4 +1,4 @@
-import type { SearchSpace } from '@repo/control-plane-contracts';
+import { CONTROL_PLANE_NAME_MAX_LENGTH, type SearchSpace } from '@repo/control-plane-contracts';
 import { DisclosurePanel } from '@/components/control-plane/disclosure-panel';
 import { SectionHeading } from '@/components/control-plane/section-heading';
 import { ResourceLifecycleActions } from '@/components/control-plane/resource-lifecycle-actions';
@@ -52,7 +52,12 @@ export function SearchSpaceSection({ searchSpaces }: SearchSpaceSectionProps) {
                   <input type="hidden" name="id" value={searchSpace.id} />
                   <label>
                     <span>NAME</span>
-                    <input name="name" defaultValue={searchSpace.name} required />
+                    <input
+                      name="name"
+                      defaultValue={searchSpace.name}
+                      maxLength={CONTROL_PLANE_NAME_MAX_LENGTH}
+                      required
+                    />
                   </label>
                   <label>
                     <span>DESCRIPTION</span>
@@ -103,7 +108,12 @@ export function SearchSpaceSection({ searchSpaces }: SearchSpaceSectionProps) {
         <form action={createSearchSpaceAction} className="control-form">
           <label>
             <span>NAME</span>
-            <input name="name" placeholder="Prague backend daily" required />
+            <input
+              name="name"
+              maxLength={CONTROL_PLANE_NAME_MAX_LENGTH}
+              placeholder="Prague backend daily"
+              required
+            />
           </label>
           <label>
             <span>DESCRIPTION</span>

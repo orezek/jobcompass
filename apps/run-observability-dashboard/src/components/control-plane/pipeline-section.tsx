@@ -1,8 +1,9 @@
-import type {
-  Pipeline,
-  RuntimeProfile,
-  SearchSpace,
-  StructuredOutputDestination,
+import {
+  CONTROL_PLANE_NAME_MAX_LENGTH,
+  type Pipeline,
+  type RuntimeProfile,
+  type SearchSpace,
+  type StructuredOutputDestination,
 } from '@repo/control-plane-contracts';
 import { DisclosurePanel } from '@/components/control-plane/disclosure-panel';
 import { SectionHeading } from '@/components/control-plane/section-heading';
@@ -140,7 +141,12 @@ export function PipelineSection({
                   <input type="hidden" name="id" value={pipeline.id} />
                   <label>
                     <span>NAME</span>
-                    <input name="name" defaultValue={pipeline.name} required />
+                    <input
+                      name="name"
+                      defaultValue={pipeline.name}
+                      maxLength={CONTROL_PLANE_NAME_MAX_LENGTH}
+                      required
+                    />
                   </label>
                   <div className="control-form__row">
                     <label>
@@ -204,6 +210,7 @@ export function PipelineSection({
             <span>NAME</span>
             <input
               name="name"
+              maxLength={CONTROL_PLANE_NAME_MAX_LENGTH}
               placeholder="Prague jobs local pipeline"
               required
               data-testid="pipeline-name-input"

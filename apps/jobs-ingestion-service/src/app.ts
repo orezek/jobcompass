@@ -99,7 +99,7 @@ export const envSchema = z.object({
   INGESTION_API_HOST: z.string().default('127.0.0.1'),
   INGESTION_API_PORT: z.coerce.number().int().min(1).max(65_535).default(3010),
   ENABLE_MONGO_WRITE: toBoolean.default(false),
-  JOB_COMPASS_DB_PREFIX: z.string().trim().min(1).default('job-compass'),
+  JOB_COMPASS_DB_PREFIX: z.string().trim().min(1).default('crawl-ops'),
   SEARCH_SPACE_ID: searchSpaceIdSchema.default('default'),
   MONGODB_URI: z.string().optional(),
   MONGODB_DB_NAME: toOptionalString,

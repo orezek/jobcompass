@@ -1,4 +1,7 @@
-import type { StructuredOutputDestination } from '@repo/control-plane-contracts';
+import {
+  CONTROL_PLANE_NAME_MAX_LENGTH,
+  type StructuredOutputDestination,
+} from '@repo/control-plane-contracts';
 import { DisclosurePanel } from '@/components/control-plane/disclosure-panel';
 import { SectionHeading } from '@/components/control-plane/section-heading';
 import { ResourceLifecycleActions } from '@/components/control-plane/resource-lifecycle-actions';
@@ -68,7 +71,12 @@ export function StructuredOutputSection({
                   <input type="hidden" name="type" value={destination.type} />
                   <label>
                     <span>NAME</span>
-                    <input name="name" defaultValue={destination.name} required />
+                    <input
+                      name="name"
+                      defaultValue={destination.name}
+                      maxLength={CONTROL_PLANE_NAME_MAX_LENGTH}
+                      required
+                    />
                   </label>
                   <label>
                     <span>TYPE</span>
@@ -107,7 +115,12 @@ export function StructuredOutputSection({
               <input type="hidden" name="type" value="mongodb" />
               <label>
                 <span>NAME</span>
-                <input name="name" placeholder="MongoDB sink" required />
+                <input
+                  name="name"
+                  maxLength={CONTROL_PLANE_NAME_MAX_LENGTH}
+                  placeholder="MongoDB sink"
+                  required
+                />
               </label>
               <label>
                 <span>MONGODB CONNECTION URI</span>

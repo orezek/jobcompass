@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { CONTROL_PLANE_NAME_MAX_LENGTH } from '@repo/control-plane-contracts';
 import { deriveMongoDbName, MONGO_DB_NAME_MAX_BYTES } from '@repo/job-search-spaces';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IMPLICIT_DOWNLOADABLE_JSON_DESTINATION_ID } from '@/server/control-plane/builtin-outputs';
@@ -255,6 +256,55 @@ describe('control-plane service', () => {
     expect(normalizedJson.crawlRunId).toBe(runView.run.runId);
   });
 
+  it('rejects creating a pipeline with an overlong name', async () => {
+    const { createPipeline, getControlPlaneOverview } =
+      await import('@/server/control-plane/service');
+
+    const overview = await getControlPlaneOverview();
+    const searchSpace = overview.searchSpaces[0]!;
+    const runtimeProfile = overview.runtimeProfiles[0]!;
+    const longName = 'x'.repeat(CONTROL_PLANE_NAME_MAX_LENGTH + 1);
+
+    await expect(
+      createPipeline({
+        name: longName,
+        searchSpaceId: searchSpace.id,
+        runtimeProfileId: runtimeProfile.id,
+        structuredOutputDestinationIds: [],
+        mode: 'crawl_only',
+        status: 'active',
+      }),
+    ).rejects.toThrow(/too_big|at most|80/i);
+  });
+
+  it('rejects updating a pipeline with an overlong name', async () => {
+    const { createPipeline, getControlPlaneOverview, updatePipeline } =
+      await import('@/server/control-plane/service');
+
+    const overview = await getControlPlaneOverview();
+    const searchSpace = overview.searchSpaces[0]!;
+    const runtimeProfile = overview.runtimeProfiles[0]!;
+    const pipeline = await createPipeline({
+      name: 'Valid pipeline name',
+      searchSpaceId: searchSpace.id,
+      runtimeProfileId: runtimeProfile.id,
+      structuredOutputDestinationIds: [],
+      mode: 'crawl_only',
+      status: 'active',
+    });
+
+    await expect(
+      updatePipeline(pipeline.id, {
+        name: 'y'.repeat(CONTROL_PLANE_NAME_MAX_LENGTH + 1),
+        searchSpaceId: searchSpace.id,
+        runtimeProfileId: runtimeProfile.id,
+        structuredOutputDestinationIds: [],
+        mode: 'crawl_only',
+        status: 'active',
+      }),
+    ).rejects.toThrow(/too_big|at most|80/i);
+  });
+
   it('caps derived Mongo database names for long search-space ids', async () => {
     const {
       createPipeline,
@@ -299,7 +349,7 @@ describe('control-plane service', () => {
     const detail = await getControlPlaneRunDetail(runView.run.runId);
 
     const expectedDatabaseName = deriveMongoDbName({
-      dbPrefix: 'job-compass',
+      dbPrefix: 'crawl-ops',
       searchSpaceId: searchSpace.id,
     });
 
@@ -307,7 +357,7 @@ describe('control-plane service', () => {
     expect(Buffer.byteLength(detail?.mongoDatabaseName ?? '', 'utf8')).toBeLessThanOrEqual(
       MONGO_DB_NAME_MAX_BYTES,
     );
-    expect(detail?.mongoDatabaseName).not.toBe(`job-compass-${searchSpace.id}`);
+    expect(detail?.mongoDatabaseName).not.toBe(`crawl-ops-${searchSpace.id}`);
   });
 
   it('loads control-plane run detail with manifest, broker events, and artifact captures', async () => {

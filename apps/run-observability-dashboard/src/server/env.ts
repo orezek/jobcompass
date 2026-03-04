@@ -17,7 +17,7 @@ const optionalStringSchema = z.preprocess((value) => {
 
 const envSchema = z.object({
   DASHBOARD_DATA_MODE: dataModeSchema.default('mongo'),
-  JOB_COMPASS_DB_PREFIX: z.string().trim().min(1).default('job-compass'),
+  JOB_COMPASS_DB_PREFIX: z.string().trim().min(1).default('crawl-ops'),
   MONGODB_URI: z.string().optional(),
   MONGODB_DB_NAME: optionalStringSchema,
   MONGODB_CRAWL_RUN_SUMMARIES_COLLECTION: z.string().default('crawl_run_summaries'),

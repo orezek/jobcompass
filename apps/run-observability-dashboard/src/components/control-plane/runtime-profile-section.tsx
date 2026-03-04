@@ -1,4 +1,4 @@
-import type { RuntimeProfile } from '@repo/control-plane-contracts';
+import { CONTROL_PLANE_NAME_MAX_LENGTH, type RuntimeProfile } from '@repo/control-plane-contracts';
 import { DisclosurePanel } from '@/components/control-plane/disclosure-panel';
 import { SectionHeading } from '@/components/control-plane/section-heading';
 import { ResourceLifecycleActions } from '@/components/control-plane/resource-lifecycle-actions';
@@ -55,7 +55,12 @@ export function RuntimeProfileSection({ runtimeProfiles }: RuntimeProfileSection
                   <input type="hidden" name="id" value={profile.id} />
                   <label>
                     <span>NAME</span>
-                    <input name="name" defaultValue={profile.name} required />
+                    <input
+                      name="name"
+                      defaultValue={profile.name}
+                      maxLength={CONTROL_PLANE_NAME_MAX_LENGTH}
+                      required
+                    />
                   </label>
                   <div className="control-form__row">
                     <label>
@@ -117,7 +122,12 @@ export function RuntimeProfileSection({ runtimeProfiles }: RuntimeProfileSection
         <form action={createRuntimeProfileAction} className="control-form">
           <label>
             <span>NAME</span>
-            <input name="name" placeholder="Daily local crawl" required />
+            <input
+              name="name"
+              maxLength={CONTROL_PLANE_NAME_MAX_LENGTH}
+              placeholder="Daily local crawl"
+              required
+            />
           </label>
           <div className="control-form__row">
             <label>

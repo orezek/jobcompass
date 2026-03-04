@@ -13,6 +13,19 @@ const optionalStringSchema = z.preprocess((value) => {
   return value;
 }, z.string().trim().min(1).optional());
 
+export const CONTROL_PLANE_NAME_MAX_LENGTH = 80;
+export const CONTROL_PLANE_RECORD_ID_MAX_LENGTH = 64;
+
+const controlPlaneNameSchema = nonEmptyStringSchema.max(CONTROL_PLANE_NAME_MAX_LENGTH);
+const controlPlaneOptionalIdSchema = z.preprocess((value) => {
+  if (typeof value === 'string' && value.trim() === '') {
+    return undefined;
+  }
+
+  return value;
+}, z.string().trim().min(1).max(CONTROL_PLANE_RECORD_ID_MAX_LENGTH).optional());
+const controlPlaneRecordIdSchema = nonEmptyStringSchema.max(CONTROL_PLANE_RECORD_ID_MAX_LENGTH);
+
 export const sourceTypeSchema = z.enum(['jobs_cz']);
 export const managedStorageTypeSchema = z.enum(['local_filesystem', 'gcs']);
 export const structuredOutputDestinationTypeSchema = z.enum(['mongodb', 'downloadable_json']);
@@ -28,8 +41,8 @@ export const runStatusSchema = z.enum([
 ]);
 
 export const searchSpaceSchema = z.object({
-  id: nonEmptyStringSchema,
-  name: nonEmptyStringSchema,
+  id: controlPlaneRecordIdSchema,
+  name: controlPlaneNameSchema,
   description: optionalStringSchema.default(''),
   sourceType: sourceTypeSchema.default('jobs_cz'),
   startUrls: z.array(z.url()).min(1),
@@ -42,8 +55,8 @@ export const searchSpaceSchema = z.object({
 });
 
 export const createSearchSpaceInputSchema = z.object({
-  id: optionalStringSchema,
-  name: nonEmptyStringSchema,
+  id: controlPlaneOptionalIdSchema,
+  name: controlPlaneNameSchema,
   description: optionalStringSchema.default(''),
   sourceType: sourceTypeSchema.default('jobs_cz'),
   startUrls: z.array(z.url()).min(1),
@@ -53,8 +66,8 @@ export const createSearchSpaceInputSchema = z.object({
 });
 
 export const runtimeProfileSchema = z.object({
-  id: nonEmptyStringSchema,
-  name: nonEmptyStringSchema,
+  id: controlPlaneRecordIdSchema,
+  name: controlPlaneNameSchema,
   crawlerMaxConcurrency: z.number().int().positive().default(5),
   crawlerMaxRequestsPerMinute: z.number().int().positive().default(120),
   ingestionConcurrency: z.number().int().positive().default(1),
@@ -66,8 +79,8 @@ export const runtimeProfileSchema = z.object({
 });
 
 export const createRuntimeProfileInputSchema = z.object({
-  id: optionalStringSchema,
-  name: nonEmptyStringSchema,
+  id: controlPlaneOptionalIdSchema,
+  name: controlPlaneNameSchema,
   crawlerMaxConcurrency: z.number().int().positive().default(5),
   crawlerMaxRequestsPerMinute: z.number().int().positive().default(120),
   ingestionConcurrency: z.number().int().positive().default(1),
@@ -103,8 +116,8 @@ export const mongoStructuredOutputConfigSchema = z.object({
 export const downloadableJsonStructuredOutputConfigSchema = z.object({}).default({});
 
 const structuredOutputDestinationBaseShape = {
-  id: optionalStringSchema,
-  name: nonEmptyStringSchema,
+  id: controlPlaneOptionalIdSchema,
+  name: controlPlaneNameSchema,
   status: z.enum(['active', 'archived']).default('active'),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
@@ -112,14 +125,14 @@ const structuredOutputDestinationBaseShape = {
 
 const mongoStructuredOutputDestinationSchema = z.object({
   ...structuredOutputDestinationBaseShape,
-  id: nonEmptyStringSchema,
+  id: controlPlaneRecordIdSchema,
   type: z.literal('mongodb'),
   config: mongoStructuredOutputConfigSchema,
 });
 
 const downloadableJsonStructuredOutputDestinationSchema = z.object({
   ...structuredOutputDestinationBaseShape,
-  id: nonEmptyStringSchema,
+  id: controlPlaneRecordIdSchema,
   type: z.literal('downloadable_json'),
   config: downloadableJsonStructuredOutputConfigSchema,
 });
@@ -131,8 +144,8 @@ export const structuredOutputDestinationSchema = z.discriminatedUnion('type', [
 
 export const createStructuredOutputDestinationInputSchema = z.discriminatedUnion('type', [
   z.object({
-    id: optionalStringSchema,
-    name: nonEmptyStringSchema,
+    id: controlPlaneOptionalIdSchema,
+    name: controlPlaneNameSchema,
     type: z.literal('mongodb'),
     config: mongoStructuredOutputConfigSchema.default({
       connectionUri: 'env:MONGODB_URI',
@@ -140,8 +153,8 @@ export const createStructuredOutputDestinationInputSchema = z.discriminatedUnion
     status: z.enum(['active', 'archived']).default('active'),
   }),
   z.object({
-    id: optionalStringSchema,
-    name: nonEmptyStringSchema,
+    id: controlPlaneOptionalIdSchema,
+    name: controlPlaneNameSchema,
     type: z.literal('downloadable_json'),
     config: downloadableJsonStructuredOutputConfigSchema.optional().default({}),
     status: z.enum(['active', 'archived']).default('active'),
@@ -165,11 +178,11 @@ export const downloadableJsonDeliveryConfigSchema = z.discriminatedUnion('storag
 ]);
 
 export const pipelineSchema = z.object({
-  id: nonEmptyStringSchema,
-  name: nonEmptyStringSchema,
-  searchSpaceId: nonEmptyStringSchema,
-  runtimeProfileId: nonEmptyStringSchema,
-  structuredOutputDestinationIds: z.array(nonEmptyStringSchema).default([]),
+  id: controlPlaneRecordIdSchema,
+  name: controlPlaneNameSchema,
+  searchSpaceId: controlPlaneRecordIdSchema,
+  runtimeProfileId: controlPlaneRecordIdSchema,
+  structuredOutputDestinationIds: z.array(controlPlaneRecordIdSchema).default([]),
   mode: pipelineModeSchema,
   status: recordStatusSchema.default('draft'),
   version: z.number().int().positive().default(1),
@@ -178,11 +191,11 @@ export const pipelineSchema = z.object({
 });
 
 export const createPipelineInputSchema = z.object({
-  id: optionalStringSchema,
-  name: nonEmptyStringSchema,
-  searchSpaceId: nonEmptyStringSchema,
-  runtimeProfileId: nonEmptyStringSchema,
-  structuredOutputDestinationIds: z.array(nonEmptyStringSchema).default([]),
+  id: controlPlaneOptionalIdSchema,
+  name: controlPlaneNameSchema,
+  searchSpaceId: controlPlaneRecordIdSchema,
+  runtimeProfileId: controlPlaneRecordIdSchema,
+  structuredOutputDestinationIds: z.array(controlPlaneRecordIdSchema).default([]),
   mode: pipelineModeSchema,
   status: recordStatusSchema.default('active'),
 });
@@ -215,8 +228,8 @@ export const structuredOutputDestinationSnapshotSchema = z.discriminatedUnion('t
     config: true,
   }),
   z.object({
-    id: nonEmptyStringSchema,
-    name: nonEmptyStringSchema,
+    id: controlPlaneRecordIdSchema,
+    name: controlPlaneNameSchema,
     type: z.literal('downloadable_json'),
     config: downloadableJsonDeliveryConfigSchema,
   }),
@@ -421,7 +434,9 @@ export const buildRecordId = (input: string): string =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .replace(/--+/g, '-');
+    .replace(/--+/g, '-')
+    .slice(0, CONTROL_PLANE_RECORD_ID_MAX_LENGTH)
+    .replace(/-+$/g, '');
 
 export const buildArtifactRunDir = (root: string, crawlRunId: string): string =>
   path.join(path.resolve(root), 'runs', crawlRunId);
