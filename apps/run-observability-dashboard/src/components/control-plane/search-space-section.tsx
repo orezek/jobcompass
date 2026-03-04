@@ -26,18 +26,18 @@ export function SearchSpaceSection({ searchSpaces }: SearchSpaceSectionProps) {
               </div>
               <span className="resource-status-chip">{searchSpace.status}</span>
             </div>
-            <dl className="resource-spec-list">
+            <div className="resource-spec-list">
               <div className="resource-spec-list__row">
-                <dt>Start URLs</dt>
-                <dd>
+                <span className="resource-spec-list__term">Start URLs</span>
+                <span className="resource-spec-list__value">
                   {searchSpace.startUrls.length} URL{searchSpace.startUrls.length === 1 ? '' : 's'}
-                </dd>
+                </span>
               </div>
               <div className="resource-spec-list__row">
-                <dt>Max items</dt>
-                <dd>{searchSpace.maxItemsDefault}</dd>
+                <span className="resource-spec-list__term">Max items</span>
+                <span className="resource-spec-list__value">{searchSpace.maxItemsDefault}</span>
               </div>
-            </dl>
+            </div>
           </article>
         ))}
       </div>

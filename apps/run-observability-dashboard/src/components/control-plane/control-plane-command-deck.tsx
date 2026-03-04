@@ -95,36 +95,36 @@ export function ControlPlaneCommandDeck({
               description="Mode, database, broker, and local state."
             >
               <div className="control-plane-environment-card">
-                <dl className="system-detail-list">
+                <div className="system-detail-list">
                   <div className="system-detail-list__row">
-                    <dt>Mode</dt>
-                    <dd>{executionMode}</dd>
+                    <span className="system-detail-list__term">Mode</span>
+                    <span className="system-detail-list__value">{executionMode}</span>
                   </div>
                   {databaseName ? (
                     <div className="system-detail-list__row">
-                      <dt>Database</dt>
-                      <dd>{databaseName}</dd>
+                      <span className="system-detail-list__term">Database</span>
+                      <span className="system-detail-list__value">{databaseName}</span>
                     </div>
                   ) : null}
                   <div className="system-detail-list__row">
-                    <dt>Broker</dt>
-                    <dd>{brokerBackend}</dd>
+                    <span className="system-detail-list__term">Broker</span>
+                    <span className="system-detail-list__value">{brokerBackend}</span>
                   </div>
                   {brokerTopic ? (
                     <div className="system-detail-list__row">
-                      <dt>Topic</dt>
-                      <dd>{brokerTopic}</dd>
+                      <span className="system-detail-list__term">Topic</span>
+                      <span className="system-detail-list__value">{brokerTopic}</span>
                     </div>
                   ) : null}
                   <div className="system-detail-list__row">
-                    <dt>Archive</dt>
-                    <dd>{brokerDir}</dd>
+                    <span className="system-detail-list__term">Archive</span>
+                    <span className="system-detail-list__value">{brokerDir}</span>
                   </div>
                   <div className="system-detail-list__row">
-                    <dt>State</dt>
-                    <dd>{dataDir}</dd>
+                    <span className="system-detail-list__term">State</span>
+                    <span className="system-detail-list__value">{dataDir}</span>
                   </div>
-                </dl>
+                </div>
               </div>
             </DisclosurePanel>
           </div>

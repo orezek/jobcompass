@@ -49,16 +49,20 @@ export function StructuredOutputSection({
               </div>
               <span className="resource-status-chip">{destination.status}</span>
             </div>
-            <dl className="resource-spec-list">
+            <div className="resource-spec-list">
               <div className="resource-spec-list__row">
-                <dt>Type</dt>
-                <dd>{getStructuredOutputTypeLabel(destination.type)}</dd>
+                <span className="resource-spec-list__term">Type</span>
+                <span className="resource-spec-list__value">
+                  {getStructuredOutputTypeLabel(destination.type)}
+                </span>
               </div>
               <div className="resource-spec-list__row">
-                <dt>Target</dt>
-                <dd>{describeStructuredOutputConfig(destination)}</dd>
+                <span className="resource-spec-list__term">Target</span>
+                <span className="resource-spec-list__value">
+                  {describeStructuredOutputConfig(destination)}
+                </span>
               </div>
-            </dl>
+            </div>
           </article>
         ))}
       </div>

@@ -26,18 +26,20 @@ export function RuntimeProfileSection({ runtimeProfiles }: RuntimeProfileSection
               </div>
               <span className="resource-status-chip">{profile.status}</span>
             </div>
-            <dl className="resource-spec-list">
+            <div className="resource-spec-list">
               <div className="resource-spec-list__row">
-                <dt>Crawler</dt>
-                <dd>
+                <span className="resource-spec-list__term">Crawler</span>
+                <span className="resource-spec-list__value">
                   {profile.crawlerMaxConcurrency} • {profile.crawlerMaxRequestsPerMinute} req/min
-                </dd>
+                </span>
               </div>
               <div className="resource-spec-list__row">
-                <dt>Ingestion</dt>
-                <dd>{profile.ingestionEnabled ? profile.ingestionConcurrency : 'disabled'}</dd>
+                <span className="resource-spec-list__term">Ingestion</span>
+                <span className="resource-spec-list__value">
+                  {profile.ingestionEnabled ? profile.ingestionConcurrency : 'disabled'}
+                </span>
               </div>
-            </dl>
+            </div>
           </article>
         ))}
       </div>

@@ -94,38 +94,40 @@ export function PipelineSection({
                 </div>
                 <span className="resource-status-chip">{pipeline.status}</span>
               </div>
-              <dl className="resource-spec-list">
+              <div className="resource-spec-list">
                 <div className="resource-spec-list__row">
-                  <dt>Source</dt>
-                  <dd>
+                  <span className="resource-spec-list__term">Source</span>
+                  <span className="resource-spec-list__value">
                     {getResourceNameById({
                       id: pipeline.searchSpaceId,
                       records: searchSpaces,
                     })}
-                  </dd>
+                  </span>
                 </div>
                 <div className="resource-spec-list__row">
-                  <dt>Runtime</dt>
-                  <dd>
+                  <span className="resource-spec-list__term">Runtime</span>
+                  <span className="resource-spec-list__value">
                     {getResourceNameById({
                       id: pipeline.runtimeProfileId,
                       records: runtimeProfiles,
                     })}
-                  </dd>
+                  </span>
                 </div>
                 <div className="resource-spec-list__row">
-                  <dt>Mode</dt>
-                  <dd>{getPipelineModeLabel(pipeline.mode)}</dd>
+                  <span className="resource-spec-list__term">Mode</span>
+                  <span className="resource-spec-list__value">
+                    {getPipelineModeLabel(pipeline.mode)}
+                  </span>
                 </div>
                 <div className="resource-spec-list__row">
-                  <dt>Outputs</dt>
-                  <dd>
+                  <span className="resource-spec-list__term">Outputs</span>
+                  <span className="resource-spec-list__value">
                     {pipeline.structuredOutputDestinationIds.length > 0
                       ? pipeline.structuredOutputDestinationIds.length
                       : 'none'}
-                  </dd>
+                  </span>
                 </div>
-              </dl>
+              </div>
             </article>
           ))}
         </div>
