@@ -11,10 +11,10 @@ import {
 import { searchSpaceConfigSchema } from '@repo/job-search-spaces';
 import { bootstrapSearchSpacesDir } from '@/server/control-plane/paths';
 import {
-  ensureControlPlaneStorage,
   getRuntimeProfile,
   getStructuredOutputDestination,
   listSearchSpaces,
+  normalizeLegacyControlPlaneState,
   writeRuntimeProfile,
   writeSearchSpace,
   writeStructuredOutputDestination,
@@ -134,7 +134,7 @@ async function ensureDefaultStructuredOutputs(): Promise<void> {
 }
 
 export async function ensureControlPlaneBootstrap(): Promise<void> {
-  await ensureControlPlaneStorage();
+  await normalizeLegacyControlPlaneState();
   await bootstrapSearchSpaces();
   await ensureDefaultRuntimeProfile();
   await ensureDefaultStructuredOutputs();

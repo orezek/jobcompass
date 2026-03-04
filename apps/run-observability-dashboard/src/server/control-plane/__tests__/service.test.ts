@@ -1,6 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IMPLICIT_DOWNLOADABLE_JSON_DESTINATION_ID } from '@/server/control-plane/builtin-outputs';
 
@@ -44,6 +44,162 @@ describe('control-plane service', () => {
         (destination) => destination.id === 'mongo-normalized-jobs',
       ),
     ).toBe(true);
+  });
+
+  it('normalizes legacy archived control-plane records and removes managed downloadable json', async () => {
+    const stateRootDir = path.join(tempRootDir, 'state');
+    const timestamp = '2026-03-04T18:30:00.000Z';
+
+    await Promise.all([
+      mkdir(path.join(stateRootDir, 'search-spaces'), { recursive: true }),
+      mkdir(path.join(stateRootDir, 'runtime-profiles'), { recursive: true }),
+      mkdir(path.join(stateRootDir, 'structured-output-destinations'), { recursive: true }),
+      mkdir(path.join(stateRootDir, 'pipelines'), { recursive: true }),
+    ]);
+
+    await Promise.all([
+      writeFile(
+        path.join(stateRootDir, 'search-spaces', 'legacy-search.json'),
+        `${JSON.stringify(
+          {
+            id: 'legacy-search',
+            name: 'Legacy Search',
+            description: '',
+            sourceType: 'jobs_cz',
+            startUrls: ['https://www.jobs.cz/prace/'],
+            maxItemsDefault: 25,
+            allowInactiveMarkingOnPartialRuns: false,
+            status: 'archived',
+            version: 1,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      ),
+      writeFile(
+        path.join(stateRootDir, 'runtime-profiles', 'legacy-runtime.json'),
+        `${JSON.stringify(
+          {
+            id: 'legacy-runtime',
+            name: 'Legacy Runtime',
+            crawlerMaxConcurrency: 1,
+            crawlerMaxRequestsPerMinute: 30,
+            ingestionConcurrency: 4,
+            ingestionEnabled: true,
+            debugLog: false,
+            status: 'archived',
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      ),
+      writeFile(
+        path.join(stateRootDir, 'structured-output-destinations', 'legacy-mongo.json'),
+        `${JSON.stringify(
+          {
+            id: 'legacy-mongo',
+            name: 'Legacy Mongo',
+            status: 'archived',
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            type: 'mongodb',
+            config: {
+              connectionUri: 'env:MONGODB_URI',
+            },
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      ),
+      writeFile(
+        path.join(stateRootDir, 'structured-output-destinations', 'downloadable-json.json'),
+        `${JSON.stringify(
+          {
+            id: IMPLICIT_DOWNLOADABLE_JSON_DESTINATION_ID,
+            name: 'Downloadable JSON',
+            status: 'active',
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            type: 'downloadable_json',
+            config: {},
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      ),
+      writeFile(
+        path.join(stateRootDir, 'pipelines', 'legacy-pipeline.json'),
+        `${JSON.stringify(
+          {
+            id: 'legacy-pipeline',
+            name: 'Legacy Pipeline',
+            searchSpaceId: 'legacy-search',
+            runtimeProfileId: 'legacy-runtime',
+            structuredOutputDestinationIds: [
+              IMPLICIT_DOWNLOADABLE_JSON_DESTINATION_ID,
+              'legacy-mongo',
+            ],
+            mode: 'crawl_and_ingest',
+            status: 'draft',
+            version: 1,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      ),
+    ]);
+
+    const { getControlPlaneOverview } = await import('@/server/control-plane/service');
+    const overview = await getControlPlaneOverview();
+
+    expect(
+      overview.searchSpaces.find((searchSpace) => searchSpace.id === 'legacy-search')?.status,
+    ).toBe('active');
+    expect(
+      overview.runtimeProfiles.find((profile) => profile.id === 'legacy-runtime')?.status,
+    ).toBe('active');
+    expect(
+      overview.structuredOutputDestinations.find((destination) => destination.id === 'legacy-mongo')
+        ?.status,
+    ).toBe('active');
+    expect(overview.pipelines.find((pipeline) => pipeline.id === 'legacy-pipeline')?.status).toBe(
+      'active',
+    );
+    expect(
+      overview.structuredOutputDestinations.some(
+        (destination) => destination.id === IMPLICIT_DOWNLOADABLE_JSON_DESTINATION_ID,
+      ),
+    ).toBe(false);
+
+    const legacyPipeline = JSON.parse(
+      await readFile(path.join(stateRootDir, 'pipelines', 'legacy-pipeline.json'), 'utf8'),
+    ) as {
+      status: string;
+    };
+    expect(legacyPipeline.status).toBe('active');
+
+    await expect(
+      access(
+        path.join(
+          stateRootDir,
+          'structured-output-destinations',
+          `${IMPLICIT_DOWNLOADABLE_JSON_DESTINATION_ID}.json`,
+        ),
+      ),
+    ).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
   });
 
   it('creates a pipeline and runs it in fixture mode', async () => {

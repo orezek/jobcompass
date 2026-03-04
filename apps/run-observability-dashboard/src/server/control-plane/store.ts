@@ -25,6 +25,7 @@ import {
   controlPlaneLockRootDir,
   controlPlaneCollectionDirs,
 } from '@/server/control-plane/paths';
+import { isImplicitDownloadableJsonDestinationId } from '@/server/control-plane/builtin-outputs';
 
 export const workerRuntimeSchema = z.object({
   workerType: z.enum(['crawler', 'ingestion']),
@@ -49,6 +50,59 @@ const collectionSchemas = {
 } as const;
 
 type CollectionName = keyof typeof collectionSchemas;
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeLegacyCollectionRecord(input: {
+  collectionName: CollectionName;
+  record: unknown;
+}): {
+  changed: boolean;
+  deleteFile: boolean;
+  record: unknown;
+} {
+  const { collectionName, record } = input;
+  if (!isJsonObject(record)) {
+    return {
+      changed: false,
+      deleteFile: false,
+      record,
+    };
+  }
+
+  if (
+    collectionName === 'structuredOutputDestinations' &&
+    typeof record.id === 'string' &&
+    typeof record.type === 'string' &&
+    isImplicitDownloadableJsonDestinationId(record.id) &&
+    record.type === 'downloadable_json'
+  ) {
+    return {
+      changed: true,
+      deleteFile: true,
+      record,
+    };
+  }
+
+  if (record.status === 'archived' || record.status === 'draft') {
+    return {
+      changed: true,
+      deleteFile: false,
+      record: {
+        ...record,
+        status: 'active',
+      },
+    };
+  }
+
+  return {
+    changed: false,
+    deleteFile: false,
+    record,
+  };
+}
 
 async function ensureDir(dirPath: string): Promise<void> {
   await mkdir(dirPath, { recursive: true });
@@ -81,6 +135,41 @@ export async function ensureControlPlaneStorage(): Promise<void> {
     ...Object.values(controlPlaneCollectionDirs).map((dirPath) => ensureDir(dirPath)),
     ensureDir(controlPlaneLockRootDir),
   ]);
+}
+
+export async function normalizeLegacyControlPlaneState(): Promise<void> {
+  await ensureControlPlaneStorage();
+
+  await Promise.all(
+    Object.keys(collectionSchemas).map(async (collectionName) => {
+      const typedCollectionName = collectionName as CollectionName;
+      const dirPath = controlPlaneCollectionDirs[typedCollectionName];
+      const entries = await readdir(dirPath, { withFileTypes: true });
+
+      await Promise.all(
+        entries
+          .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+          .map(async (entry) => {
+            const filePath = path.join(dirPath, entry.name);
+            const raw = await readFile(filePath, 'utf8');
+            const parsed = JSON.parse(raw) as unknown;
+            const normalized = normalizeLegacyCollectionRecord({
+              collectionName: typedCollectionName,
+              record: parsed,
+            });
+
+            if (normalized.deleteFile) {
+              await rm(filePath, { force: true });
+              return;
+            }
+
+            if (normalized.changed) {
+              await writeJsonFile(filePath, normalized.record);
+            }
+          }),
+      );
+    }),
+  );
 }
 
 export async function listCollectionRecords<T>(
