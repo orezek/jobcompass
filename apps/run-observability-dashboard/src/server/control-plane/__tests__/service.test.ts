@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { deriveMongoDbName, MONGO_DB_NAME_MAX_BYTES } from '@repo/job-search-spaces';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IMPLICIT_DOWNLOADABLE_JSON_DESTINATION_ID } from '@/server/control-plane/builtin-outputs';
 
@@ -252,6 +253,61 @@ describe('control-plane service', () => {
     >;
     expect(normalizedJson.searchSpaceId).toBe(searchSpace.id);
     expect(normalizedJson.crawlRunId).toBe(runView.run.runId);
+  });
+
+  it('caps derived Mongo database names for long search-space ids', async () => {
+    const {
+      createPipeline,
+      createSearchSpace,
+      getControlPlaneOverview,
+      getControlPlaneRunDetail,
+      startRun,
+    } = await import('@/server/control-plane/service');
+
+    const overview = await getControlPlaneOverview();
+    const runtimeProfile = overview.runtimeProfiles[0]!;
+    const mongoDestination = overview.structuredOutputDestinations.find(
+      (destination) => destination.type === 'mongodb',
+    );
+
+    expect(mongoDestination).toBeDefined();
+
+    const searchSpace = await createSearchSpace({
+      id: 'prague-jobs-above-170k-english-market-expanded',
+      name: 'Prague Jobs Above 170K English Market Expanded',
+      description: 'Regression case for Mongo database name length.',
+      sourceType: 'jobs_cz',
+      startUrls: ['https://www.jobs.cz/prace/'],
+      maxItemsDefault: 10,
+      allowInactiveMarkingOnPartialRuns: false,
+      status: 'active',
+    });
+
+    const pipeline = await createPipeline({
+      name: 'Long db name pipeline',
+      searchSpaceId: searchSpace.id,
+      runtimeProfileId: runtimeProfile.id,
+      structuredOutputDestinationIds: [mongoDestination!.id],
+      mode: 'crawl_and_ingest',
+      status: 'active',
+    });
+
+    const runView = await startRun({
+      pipelineId: pipeline.id,
+      createdBy: 'vitest',
+    });
+    const detail = await getControlPlaneRunDetail(runView.run.runId);
+
+    const expectedDatabaseName = deriveMongoDbName({
+      dbPrefix: 'job-compass',
+      searchSpaceId: searchSpace.id,
+    });
+
+    expect(detail?.mongoDatabaseName).toBe(expectedDatabaseName);
+    expect(Buffer.byteLength(detail?.mongoDatabaseName ?? '', 'utf8')).toBeLessThanOrEqual(
+      MONGO_DB_NAME_MAX_BYTES,
+    );
+    expect(detail?.mongoDatabaseName).not.toBe(`job-compass-${searchSpace.id}`);
   });
 
   it('loads control-plane run detail with manifest, broker events, and artifact captures', async () => {

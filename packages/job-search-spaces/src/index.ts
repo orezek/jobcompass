@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 export const searchSpaceIdSchema = z
@@ -81,6 +82,9 @@ export type ActorInputOverrides = {
   allowInactiveMarkingOnPartialRuns?: boolean;
 };
 
+export const MONGO_DB_NAME_MAX_BYTES = 38;
+const DERIVED_MONGO_DB_HASH_LENGTH = 8;
+
 export const buildActorInputFromSearchSpace = (
   searchSpace: SearchSpaceConfig,
   overrides: ActorInputOverrides = {},
@@ -107,6 +111,12 @@ export const deriveMongoDbName = (input: {
 }): string => {
   const explicitDbName = input.explicitDbName?.trim();
   if (explicitDbName) {
+    if (Buffer.byteLength(explicitDbName, 'utf8') > MONGO_DB_NAME_MAX_BYTES) {
+      throw new Error(
+        `Database name ${explicitDbName} is too long. Max database name length is ${MONGO_DB_NAME_MAX_BYTES} bytes.`,
+      );
+    }
+
     return explicitDbName;
   }
 
@@ -117,5 +127,31 @@ export const deriveMongoDbName = (input: {
     throw new Error('dbPrefix must not be empty when deriving a MongoDB database name.');
   }
 
-  return `${dbPrefix}-${searchSpaceId}`;
+  const candidateName = `${dbPrefix}-${searchSpaceId}`;
+  if (Buffer.byteLength(candidateName, 'utf8') <= MONGO_DB_NAME_MAX_BYTES) {
+    return candidateName;
+  }
+
+  const hash = createHash('sha256')
+    .update(candidateName)
+    .digest('hex')
+    .slice(0, DERIVED_MONGO_DB_HASH_LENGTH);
+  const hashSuffix = `-${hash}`;
+  const baseMaxBytes = MONGO_DB_NAME_MAX_BYTES - Buffer.byteLength(hashSuffix, 'utf8');
+
+  let truncatedBase = '';
+  for (const character of candidateName) {
+    if (Buffer.byteLength(`${truncatedBase}${character}`, 'utf8') > baseMaxBytes) {
+      break;
+    }
+
+    truncatedBase += character;
+  }
+
+  const normalizedBase = truncatedBase.replace(/-+$/u, '');
+  if (normalizedBase.length === 0) {
+    return hash.slice(0, MONGO_DB_NAME_MAX_BYTES);
+  }
+
+  return `${normalizedBase}${hashSuffix}`;
 };

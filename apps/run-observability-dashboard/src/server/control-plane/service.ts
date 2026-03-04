@@ -27,6 +27,7 @@ import {
   searchSpaceSchema,
   startRunRequestSchema,
 } from '@repo/control-plane-contracts';
+import { deriveMongoDbName } from '@repo/job-search-spaces';
 import { env } from '@/server/env';
 import {
   buildArtifactCaptures,
@@ -140,7 +141,10 @@ function deriveMongoDatabaseName(manifest: RunManifest | null): string | null {
     return null;
   }
 
-  return `${env.JOB_COMPASS_DB_PREFIX}-${manifest.searchSpaceSnapshot.id}`;
+  return deriveMongoDbName({
+    dbPrefix: env.JOB_COMPASS_DB_PREFIX,
+    searchSpaceId: manifest.searchSpaceSnapshot.id,
+  });
 }
 
 function assertRecordIsActive(
