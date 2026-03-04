@@ -69,7 +69,7 @@ export default async function ControlPlaneStructuredOutputPage({
           ]}
         />
 
-        <section className="panel detail-grid">
+        <section className="panel detail-grid detail-grid--meta">
           <div className="detail-card">
             <SectionHeading
               eyebrow="Output"

@@ -59,7 +59,7 @@ const tooltipItemStyle = {
 
 export function OverviewChartsPanel({ charts }: { charts: OverviewCharts }) {
   return (
-    <div className="chart-grid">
+    <div className="chart-grid chart-grid--overview">
       <ChartFrame title="Crawler status trend" description="Recent crawler outcomes by run.">
         <ResponsiveContainer width="100%" height={260}>
           <LineChart data={charts.crawlerStatusTrend}>

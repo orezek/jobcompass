@@ -55,7 +55,7 @@ export default async function CrawlerRunDetailPage({
           <KpiCard label="HTML BYTES" value={formatCompactBytes(run.totalDetailHtmlBytes)} />
         </section>
 
-        <section className="panel detail-grid">
+        <section className="panel detail-grid detail-grid--meta">
           <div className="detail-card">
             <SectionHeading eyebrow="Input" title="Run configuration" />
             <ul className="detail-list">

@@ -72,7 +72,7 @@ export default async function IngestionRunDetailPage({
           />
         </section>
 
-        <section className="panel detail-grid">
+        <section className="panel detail-grid detail-grid--meta">
           <div className="detail-card">
             <SectionHeading eyebrow="Prompting" title="Model and parser" />
             <ul className="detail-list">

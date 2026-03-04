@@ -73,7 +73,7 @@ export default async function PipelineRunDetailPage({
           <KpiCard label="FAILED" value={formatNumber(pipeline.ingestionRun?.jobsFailed ?? 0)} />
         </section>
 
-        <section className="panel detail-grid">
+        <section className="panel detail-grid detail-grid--meta">
           <div className="detail-card">
             <SectionHeading eyebrow="Crawler" title="Run snapshot" />
             <ul className="detail-list">

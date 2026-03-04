@@ -124,9 +124,10 @@ textarea:focus-visible,
 }
 
 .app-shell {
-  width: min(1480px, calc(100vw - 40px));
+  width: 100%;
+  max-width: 1440px;
   margin: 0 auto;
-  padding: 28px 0 64px;
+  padding: 28px 2rem 64px;
 }
 
 .page-header,
@@ -494,6 +495,11 @@ textarea:focus-visible,
   margin-bottom: 20px;
 }
 
+.chart-grid--overview {
+  gap: 1.5rem;
+  align-items: stretch;
+}
+
 .control-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-bottom: 0;
@@ -528,10 +534,14 @@ textarea:focus-visible,
 }
 
 .chart-panel {
+  display: flex;
+  flex-direction: column;
   min-height: 380px;
 }
 
 .chart-container {
+  flex: 1 1 auto;
+  min-width: 0;
   height: 280px;
   margin-top: 18px;
 }
@@ -664,6 +674,17 @@ textarea:focus-visible,
 
 .detail-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.detail-grid--meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+}
+
+.detail-grid--meta > * {
+  flex: 1 1 22rem;
+  min-width: min(22rem, 100%);
 }
 
 .detail-card {
@@ -876,6 +897,12 @@ textarea:focus-visible,
   gap: 8px;
 }
 
+.control-form > label,
+.control-form__row > label {
+  width: 100%;
+  max-width: 480px;
+}
+
 .control-form textarea,
 .control-form input,
 .control-form select,
@@ -888,6 +915,12 @@ textarea:focus-visible,
 .control-form input,
 .control-form select {
   background: var(--theme-canvas);
+}
+
+.control-form textarea,
+.control-form input:not([type='checkbox']),
+.control-form select {
+  max-width: 480px;
 }
 
 .control-form button,
@@ -994,8 +1027,11 @@ textarea:focus-visible,
   margin-top: 16px;
 }
 
+.resource-edit-grid,
+.resource-compact-grid,
 .pipeline-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(350px, 100%), 1fr));
+  gap: 1rem;
 }
 
 .resource-compact-card,
@@ -1215,9 +1251,16 @@ textarea:focus-visible,
   align-items: stretch;
 }
 
+.chart-grid > *,
+.control-grid > *,
+.resource-edit-grid > *,
+.resource-compact-grid > *,
+.pipeline-grid > * {
+  min-width: 0;
+}
+
 @media (max-width: 1180px) {
   .page-header__top,
-  .detail-grid,
   .chart-grid,
   .control-grid,
   .control-grid--triple,
@@ -1245,10 +1288,16 @@ textarea:focus-visible,
   }
 }
 
+@media (max-width: 1024px) {
+  .chart-grid--overview {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 860px) {
   .app-shell {
-    width: min(100vw - 24px, 100%);
     padding-top: 16px;
+    padding-inline: 1rem;
   }
 
   .page-header {

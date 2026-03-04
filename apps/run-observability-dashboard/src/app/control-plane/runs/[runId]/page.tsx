@@ -123,7 +123,7 @@ export default async function ControlPlaneRunDetailPage({
           />
         </section>
 
-        <section className="panel detail-grid">
+        <section className="panel detail-grid detail-grid--meta">
           <div className="detail-card">
             <SectionHeading eyebrow="Lifecycle" title="Run timing" />
             <ul className="detail-list">
