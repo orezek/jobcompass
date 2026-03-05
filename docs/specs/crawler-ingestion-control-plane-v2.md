@@ -4,10 +4,13 @@
 
 - draft
 - follow-up scope after v1 implementation, review, and testing
+- promoted planning target: v2.0 architecture and platform hardening
 
 ## Purpose
 
 Capture the features intentionally deferred from v1 so they stay visible without destabilizing the first implementation.
+
+For v2.0, this document also defines the target production architecture and delivery sequence.
 
 ## V2 Themes
 
@@ -18,6 +21,406 @@ Capture the features intentionally deferred from v1 so they stay visible without
 - more advanced stateful pipeline capabilities
 - naming and configuration cleanup
 - published machine-readable API contracts
+- persistence convergence and explicit domain boundaries
+- standalone deployability of control plane, crawler worker, and ingestion worker
+
+## V2.0 Target Architecture
+
+### Core Direction
+
+v2.0 should move from local process/file coupling to explicit service contracts:
+
+- `ops-control-plane` runs as a standalone UI (for example on Vercel)
+- a dedicated control API/orchestrator service owns control-plane write workflows
+- crawler and ingestion run as standalone worker services
+- services communicate through broker events and durable shared storage contracts
+- local filesystem state is dev-only and not production system-of-record
+
+### Service Boundaries
+
+#### 1. Control UI Service
+
+- scope: operator-facing Next.js app only
+- no direct worker spawning
+- no direct ownership of execution side effects
+- reads/writes through Control API only
+
+#### 2. Control API / Orchestrator Service
+
+- canonical write boundary for control-plane domain
+- owns configuration CRUD, run creation, scheduling, lifecycle transitions
+- publishes run/work commands to broker
+- validates and persists execution state transitions
+- exposes machine-readable API contract (OpenAPI)
+
+#### 3. Crawler Worker Service
+
+- consumes crawler run commands/events
+- executes crawl workload
+- writes crawler artifacts + crawler telemetry
+- emits crawler lifecycle and capture events
+
+#### 4. Ingestion Worker Service
+
+- consumes ingestion commands/events
+- executes normalization/output routing workload
+- writes ingestion telemetry + production output payloads
+- emits ingestion lifecycle events
+
+### Integration Contract
+
+- async control path: broker topics/queues for run orchestration
+- sync control path: REST API for operator actions and read models
+- all services must be able to operate without monorepo-relative filesystem assumptions
+
+## v2.0 Data Domain Model
+
+v2.0 keeps five first-class data domains.
+
+### Domain 1: Operational Telemetry
+
+purpose:
+
+- observability, dashboarding, KPIs, SLOs, anomaly detection
+
+collections:
+
+- `crawl_run_summaries`
+- `ingestion_run_summaries`
+- `ingestion_trigger_requests`
+
+### Domain 2: Control-Plane Configuration (Desired State)
+
+purpose:
+
+- operator-managed run definitions and execution policies
+
+collections:
+
+- `control_plane_search_spaces`
+- `control_plane_runtime_profiles`
+- `control_plane_pipelines`
+- `control_plane_structured_output_destinations`
+
+### Domain 3: System Bootstrap / Config Packs
+
+purpose:
+
+- system-wide setup profiles that can be imported/exported and promoted across environments
+
+collections:
+
+- `control_plane_bootstrap_profiles`
+
+document intent:
+
+- one profile document represents a deployable setup style (`local-dev`, `staging`, `prod-cz`)
+- references default runtime profile, storage adapters, broker adapter, and policy defaults
+
+### Domain 4: Execution State (Run Ledger)
+
+purpose:
+
+- canonical transaction state for each run execution
+
+collections:
+
+- `control_plane_runs`
+- `control_plane_run_manifests`
+- `control_plane_run_event_index`
+
+notes:
+
+- this is distinct from telemetry summaries
+- this is distinct from static configuration
+
+### Domain 5: Production Output Data
+
+purpose:
+
+- durable business/result payloads and lineage evidence
+
+storage:
+
+- `normalized_job_ads` (Mongo collection or equivalent canonical store)
+- downloadable JSON objects (object storage backend)
+- captured HTML artifacts (object storage backend)
+
+## v2.0 Persistence Rules
+
+1. Configuration and execution metadata must not depend on local JSON files.
+2. MongoDB (or selected primary DB) is mandatory in production profiles.
+3. Local file persistence is permitted only in explicit dev profile mode.
+4. Artifact/output blobs may stay in object storage, but metadata and references belong in DB collections.
+5. Every collection used for operator history must have documented retention and index policy.
+
+## v2.0 API Contract Shape
+
+Control API should expose:
+
+- configuration resources:
+  - `search-spaces`
+  - `runtime-profiles`
+  - `pipelines`
+  - `structured-output-destinations`
+- bootstrap resources:
+  - `bootstrap-profiles`
+  - `bootstrap-apply`
+  - `bootstrap-export`
+- execution resources:
+  - `runs`
+  - `runs/{runId}`
+  - `runs/{runId}/events`
+  - `runs/{runId}/artifacts`
+  - `runs/{runId}/outputs`
+- scheduling resources (when enabled):
+  - `schedules`
+  - `schedules/{id}/pause`
+  - `schedules/{id}/resume`
+
+All writes should be API-owned and idempotency-aware.
+
+## v2.0 Worker Bootstrap And Runtime Contracts
+
+### Crawler Service `.env` Bootstrap (Minimal)
+
+- `PORT`
+- `SERVICE_NAME=crawler-worker`
+- `SERVICE_VERSION`
+- `CONTROL_AUTH_MODE` (`jwt` or `token`)
+- `CONTROL_JWT_PUBLIC_KEY` or `CONTROL_SHARED_TOKEN`
+- `GCP_PROJECT_ID`
+- `PUBSUB_EVENTS_TOPIC` (crawler publish topic)
+- `ARTIFACTS_BUCKET`
+- `ARTIFACTS_PREFIX` (optional)
+- `LOG_LEVEL`
+- `MAX_CONCURRENT_RUNS`
+
+### Ingestion Service `.env` Bootstrap (Minimal)
+
+- `PORT`
+- `SERVICE_NAME=ingestion-worker`
+- `SERVICE_VERSION`
+- `CONTROL_AUTH_MODE` (`jwt` or `token`)
+- `CONTROL_JWT_PUBLIC_KEY` or `CONTROL_SHARED_TOKEN`
+- `GCP_PROJECT_ID`
+- `PUBSUB_EVENTS_TOPIC`
+- `OUTPUTS_BUCKET`
+- `OUTPUTS_PREFIX` (optional)
+- `LOG_LEVEL`
+- `MAX_CONCURRENT_RUNS`
+
+### Crawler REST Endpoints
+
+- `GET /healthz`
+- `GET /readyz`
+- `GET /v1/capabilities`
+- `POST /v1/runs` (accepts `StartRun` snapshot)
+- `GET /v1/runs/{runId}` (status + counters)
+- `POST /v1/runs/{runId}/cancel`
+- `GET /v1/runs/{runId}/artifacts` (metadata/index, not raw blob)
+
+### Ingestion REST Endpoints
+
+- `GET /healthz`
+- `GET /readyz`
+- `GET /v1/capabilities`
+- `POST /v1/runs`
+- `GET /v1/runs/{runId}`
+- `POST /v1/runs/{runId}/cancel`
+- `GET /v1/runs/{runId}/outputs` (metadata/index)
+
+### `POST /v1/runs` (`StartRun`) Required Payload Shape
+
+- `runId`, `idempotencyKey`, `requestedAt`, `correlationId`
+- `manifestVersion`
+- `pipelineSnapshot` (resolved immutable config)
+- `runtimeSnapshot` (concurrency, limits, flags)
+- `inputRef` (for ingestion: crawler dataset/artifact refs)
+- `artifactSink` / `outputSinks` (bucket paths, modes)
+- `persistenceTargets`:
+  - `dbName`
+  - `crawlRunSummariesCollection`
+  - `ingestionRunSummariesCollection`
+  - `ingestionTriggerRequestsCollection`
+  - `normalizedJobAdsCollection`
+  - write flags/policies per collection where needed
+- `eventContext` (run metadata for emitted events)
+- `timeouts`/`safety` per run (optional, bounded)
+
+security constraint:
+
+- `StartRun` must not include database credentials or secret material
+- workers receive credentials from bootstrap env/secrets only
+- control plane sends logical routing targets (db + collection names), not secrets
+
+### Data Flow (Execution Runtime)
+
+- Pub/Sub: event stream (`crawler.run.started`, `crawler.detail.captured`,
+  `ingestion.item.succeeded`, etc.)
+- Buckets: HTML dumps + downloadable JSON payloads
+- MongoDB: control config + execution ledger + telemetry projections (source of truth), not
+  Pub/Sub alone
+
+## v2.0 Event Contract Shape
+
+minimum event families:
+
+- `run.requested`
+- `crawler.run.started`
+- `crawler.detail.captured`
+- `crawler.run.finished`
+- `ingestion.run.started`
+- `ingestion.item.started`
+- `ingestion.item.succeeded`
+- `ingestion.item.failed`
+- `ingestion.run.finished`
+
+Each event should include:
+
+- `eventId`
+- `eventType`
+- `occurredAt`
+- `runId`
+- `correlationId`
+- `producer`
+- payload with versioned schema
+
+## v2.0 Detailed Event And Persistence Map
+
+This section maps current v1 event types to the v2.0 target routing model.
+
+Design rule:
+
+- Pub/Sub is transport for cross-service workflow.
+- MongoDB is persistent read-model/projection state.
+- Buckets are for large blobs (HTML artifacts and downloadable JSON outputs), not control metadata.
+- workers write operational telemetry and production outputs directly to MongoDB collections using
+  `StartRun` persistence targets.
+
+### Current Event Types (as implemented today)
+
+- `crawler.run.requested`
+- `crawler.detail.captured`
+- `crawler.run.finished`
+- `ingestion.item.started`
+- `ingestion.item.succeeded`
+- `ingestion.item.failed`
+- `ingestion.item.rejected`
+
+### Event Routing Matrix
+
+| Event Type                 | Produced By              | Publish To                 | Primary Consumers                                | Persistent Projections (Mongo)                                                                                            | Blob/Bucket Side Effects                                              |
+| -------------------------- | ------------------------ | -------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `crawler.run.requested`    | Control API/Orchestrator | Pub/Sub `run-events` topic | Crawler worker, Control projection worker        | `control_plane_runs` status transition (`queued` -> `running` intent), `control_plane_run_event_index`                    | None                                                                  |
+| `crawler.detail.captured`  | Crawler worker           | Pub/Sub `run-events` topic | Ingestion worker, Control projection worker      | `control_plane_run_event_index`, optional `control_plane_artifact_index` (runId/sourceId -> artifact ref)                 | Crawler already wrote HTML dump + dataset metadata to artifact bucket |
+| `crawler.run.finished`     | Crawler worker           | Pub/Sub `run-events` topic | Control projection worker, Ingestion worker gate | `crawl_run_summaries`, `control_plane_runs` crawler phase status, `control_plane_run_event_index`                         | None (summary references bucket/object paths as metadata)             |
+| `ingestion.item.started`   | Ingestion worker         | Pub/Sub `run-events` topic | Control projection worker                        | `control_plane_run_event_index`, optional in-flight counters projection on `control_plane_runs`                           | None                                                                  |
+| `ingestion.item.succeeded` | Ingestion worker         | Pub/Sub `run-events` topic | Control projection worker                        | `ingestion_trigger_requests` update, `ingestion_run_summaries` incremental projection, `control_plane_run_event_index`    | Ingestion writes normalized JSON object to output bucket (if enabled) |
+| `ingestion.item.failed`    | Ingestion worker         | Pub/Sub `run-events` topic | Control projection worker                        | `ingestion_trigger_requests` failure update, `ingestion_run_summaries` failure counters, `control_plane_run_event_index`  | None direct; failure metadata persisted                               |
+| `ingestion.item.rejected`  | Ingestion worker         | Pub/Sub `run-events` topic | Control projection worker                        | `ingestion_trigger_requests` rejected update, `ingestion_run_summaries` skipped counters, `control_plane_run_event_index` | None direct; rejection metadata persisted                             |
+
+### Crawler-To-Ingestion Handoff
+
+For v2.0, ingestion should subscribe to run events and process:
+
+- required trigger: `crawler.detail.captured`
+- completion gate signal: `crawler.run.finished`
+
+Behavior:
+
+- each `crawler.detail.captured` event becomes one ingestion item command unit
+- ingestion idempotency key is `dedupeKey`
+- ingestion finalization for a run waits for:
+  - crawler finished signal received
+  - in-flight captured-item queue drained
+
+### Persistence Responsibilities By Service
+
+#### Control API / Orchestrator
+
+- owns `control_plane_runs`, `control_plane_run_manifests`, and run-state transitions
+- owns configuration domains and bootstrap profiles
+- owns authoritative event-index write policy (`control_plane_run_event_index`)
+
+#### Crawler Worker
+
+- emits crawler lifecycle/capture events
+- writes artifact blobs and dataset metadata
+- writes crawler telemetry summary to `crawl_run_summaries`
+- must not mutate control-plane configuration collections
+
+#### Ingestion Worker
+
+- emits ingestion item lifecycle events
+- writes production output payloads (`normalized_job_ads`, downloadable JSON blobs)
+- writes ingestion telemetry to:
+  - `ingestion_run_summaries`
+  - `ingestion_trigger_requests`
+  - `normalized_job_ads`
+
+### Canonical Naming Contract (v2.0)
+
+Collection and database naming remains unchanged in v2.0 routing:
+
+- database naming contract stays as currently defined
+- collection names stay:
+  - `crawl_run_summaries`
+  - `ingestion_run_summaries`
+  - `ingestion_trigger_requests`
+  - `normalized_job_ads`
+
+## v2.0 Deployment Topology
+
+recommended production topology:
+
+- Control UI: Vercel (or equivalent web runtime)
+- Control API / Orchestrator: container runtime (Cloud Run or equivalent)
+- Crawler worker service: container runtime (job or service shape)
+- Ingestion worker service: container runtime (event/service shape)
+- Broker: managed queue/pubsub
+- DB: managed MongoDB (initially)
+- Object storage: managed bucket(s)
+
+non-goal for v2.0 production:
+
+- direct process spawning of worker apps from UI runtime
+- monorepo-relative runtime directory coupling
+
+## v2.0 Migration Plan
+
+### Phase A: Contract and Repository Refactor
+
+- introduce persistence abstraction for configuration and execution state
+- implement Mongo-backed repositories for Domains 2/3/4
+- keep file-backed repository only as dev adapter
+
+### Phase B: Control API Extraction
+
+- separate UI handlers from orchestration logic
+- expose explicit REST/OpenAPI endpoints
+- move run-start and lifecycle mutations behind API boundary
+
+### Phase C: Worker Decoupling
+
+- add remote execution adapter using broker contracts
+- disable local spawn in production profiles
+- ensure workers resolve manifests/artifact metadata from shared stores
+
+### Phase D: Hardening
+
+- add retention/index policies
+- add replay, repair, and audit queries
+- enforce bootstrap profile workflows (import/export/apply)
+
+## v2.0 Definition of Done
+
+- UI can run independently of worker code directories
+- control-plane config and run ledger no longer rely on local file storage
+- crawler/ingestion workers operate as standalone services via broker + shared persistence
+- OpenAPI contract published and validated in CI
+- documented bootstrap profile workflow available for environment bring-up
+- production deployment can run with `ops-control-plane` on Vercel plus backend services
 
 ## Deferred Features
 
@@ -211,6 +614,72 @@ Reasoning:
   up deliberately, not piecemeal
 - future storage migrations will be harder if naming debt stays embedded in env vars, docs, and
   defaults
+
+### 13. Persistence Convergence Backlog
+
+V2 should remove split-brain persistence where some run/control-plane state is local filesystem and
+some is in MongoDB collections.
+
+Backlog items:
+
+- `CP-PERSIST-001` Control-plane state persistence in managed storage
+- `CP-PERSIST-002` Unified run history persistence source of truth
+
+#### CP-PERSIST-001 Control-plane state persistence in managed storage
+
+Problem:
+
+- control-plane resources (pipelines, runtime profiles, search spaces, run records, manifests) are
+  currently persisted in local files under `storage/control-plane/**`
+- this is not suitable for production durability, multi-instance deployment, or operator audit
+
+Scope:
+
+- move control-plane domain records to managed persistence (MongoDB collections or equivalent
+  managed database)
+- define collections for:
+  - `control_plane_search_spaces`
+  - `control_plane_runtime_profiles`
+  - `control_plane_structured_output_destinations`
+  - `control_plane_pipelines`
+  - `control_plane_runs`
+  - `control_plane_run_manifests`
+- keep filesystem only for large blobs/logs/artifacts when appropriate; metadata must be in DB
+
+Acceptance criteria:
+
+- control-plane CRUD and run lifecycle no longer require local JSON files as the primary store
+- all control-plane list/detail pages read from the managed store
+- deletion/update constraints currently enforced in service logic remain intact
+- a migration path exists for existing local state into DB collections
+- docs and env configuration clearly describe the storage contract
+
+#### CP-PERSIST-002 Unified run history persistence source of truth
+
+Problem:
+
+- run history is currently split:
+  - dashboard summaries come from Mongo collections (`crawl_run_summaries`,
+    `ingestion_run_summaries`) or fixtures
+  - control-plane run records/history come from local `storage/control-plane/runs/**`
+- this creates inconsistency and makes traceability harder
+
+Scope:
+
+- define one canonical run-history model and serving path for operator history
+- ensure dashboard and control-plane history views are backed by persistent collections with clear
+  ownership boundaries
+- support consistent joins between:
+  - run metadata
+  - broker event history metadata
+  - artifact/output references
+
+Acceptance criteria:
+
+- dashboard and control-plane history cannot drift due to split persistence backends
+- run detail pages load history from persistent collections without requiring local-only run files
+- local fixture mode remains only for tests/dev simulation, not production history source
+- explicit retention policy and indexing plan is documented for run-history collections
 
 ## Later-Phase Roadmap Beyond V2
 
