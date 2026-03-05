@@ -1,3 +1,5 @@
+import { SectionHeading } from '@/components/control-plane/section-heading';
+import { EmptyTray } from '@/components/state/empty-tray';
 import type { FailedJobView, NonSuccessJobView } from '@/server/types';
 
 export function NonSuccessJobsTable({
@@ -9,12 +11,13 @@ export function NonSuccessJobsTable({
 }) {
   return (
     <section className="panel">
-      <div className="section-heading">
-        <p className="eyebrow">Audit</p>
-        <h2>{title}</h2>
-      </div>
+      <SectionHeading eyebrow="Audit" title={title} description="Only jobs that need follow-up." />
       {rows.length === 0 ? (
-        <p className="empty-copy">No rows in this category.</p>
+        <EmptyTray
+          label="Audit output"
+          title="No rows in this category"
+          message="No records matched this audit category."
+        />
       ) : (
         <div className="table-wrap">
           <table className="data-table data-table--stacked">

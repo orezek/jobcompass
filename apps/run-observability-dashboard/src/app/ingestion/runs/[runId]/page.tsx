@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/layout/page-header';
 import { KpiCard } from '@/components/metrics/kpi-card';
 import { ErrorState } from '@/components/state/error-state';
 import { NonSuccessJobsTable } from '@/components/tables/non-success-jobs-table';
+import { SectionHeading } from '@/components/control-plane/section-heading';
 import {
   formatCurrency,
   formatDurationSeconds,
@@ -37,16 +38,21 @@ export default async function IngestionRunDetailPage({
           databaseName={run.crawlRunId ?? 'unlinked'}
           generatedAt={run.completedAt ?? run.startedAt}
           latestIngestionStatus={run.status}
+          backHref="/"
+          backLabel="Back to overview"
+          showControlPlaneLink={false}
+          summaryItems={[
+            { label: 'Status', value: run.status.replaceAll('_', ' ') },
+            { label: 'Processed', value: formatNumber(run.jobsProcessed) },
+            { label: 'Success rate', value: formatPercent(run.jobsSuccessRate) },
+            { label: 'Total tokens', value: formatNumber(run.totalTokens) },
+          ]}
         />
 
         <section className="kpi-grid">
-          <KpiCard label="STATUS" value={run.status} />
           <KpiCard label="JOBS TOTAL" value={formatNumber(run.jobsTotal)} />
-          <KpiCard label="PROCESSED" value={formatNumber(run.jobsProcessed)} />
           <KpiCard label="SKIPPED" value={formatNumber(run.jobsSkippedIncomplete)} />
           <KpiCard label="FAILED" value={formatNumber(run.jobsFailed)} />
-          <KpiCard label="SUCCESS RATE" value={formatPercent(run.jobsSuccessRate)} />
-          <KpiCard label="TOTAL TOKENS" value={formatNumber(run.totalTokens)} />
           <KpiCard label="EST. COST" value={formatCurrency(run.totalEstimatedCostUsd)} />
           <KpiCard
             label="AVG PROCESS TIME"
@@ -66,10 +72,9 @@ export default async function IngestionRunDetailPage({
           />
         </section>
 
-        <section className="panel detail-grid">
-          <div>
-            <p className="eyebrow">Prompting</p>
-            <h2>Model and parser</h2>
+        <section className="panel detail-grid detail-grid--meta">
+          <div className="detail-card">
+            <SectionHeading eyebrow="Prompting" title="Model and parser" />
             <ul className="detail-list">
               <li>PARSER VERSION: {run.parserVersion ?? 'N/A'}</li>
               <li>EXTRACTOR MODEL: {run.extractorModel ?? 'N/A'}</li>
@@ -77,9 +82,8 @@ export default async function IngestionRunDetailPage({
               <li>EXTRACTOR PROMPT: {run.extractorPromptName ?? 'N/A'}</li>
             </ul>
           </div>
-          <div>
-            <p className="eyebrow">Cleaner LLM</p>
-            <h2>Stage metrics</h2>
+          <div className="detail-card">
+            <SectionHeading eyebrow="Cleaner LLM" title="Stage metrics" />
             <ul className="detail-list">
               <li>TOTAL TOKENS: {formatNumber(run.llmCleanerStats.totalTokens ?? 0)}</li>
               <li>INPUT TOKENS: {formatNumber(run.llmCleanerStats.totalInputTokens ?? 0)}</li>
@@ -87,9 +91,8 @@ export default async function IngestionRunDetailPage({
               <li>EST. COST: {formatCurrency(run.llmCleanerStats.totalEstimatedCostUsd ?? 0)}</li>
             </ul>
           </div>
-          <div>
-            <p className="eyebrow">Extractor LLM</p>
-            <h2>Stage metrics</h2>
+          <div className="detail-card">
+            <SectionHeading eyebrow="Extractor LLM" title="Stage metrics" />
             <ul className="detail-list">
               <li>TOTAL TOKENS: {formatNumber(run.llmExtractorStats.totalTokens ?? 0)}</li>
               <li>INPUT TOKENS: {formatNumber(run.llmExtractorStats.totalInputTokens ?? 0)}</li>

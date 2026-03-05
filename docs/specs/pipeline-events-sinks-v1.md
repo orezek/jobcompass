@@ -92,75 +92,7 @@ Required payload fields:
 
 - `runManifest`
 
-### 2. Crawl lifecycle
-
-#### `crawler.run.started.v1`
-
-Produced by:
-
-- crawler worker
-
-Consumed by:
-
-- control plane
-
-Required payload fields:
-
-- `pipelineId`
-- `searchSpaceId`
-- `startedAt`
-
-#### `crawler.run.progress.v1`
-
-Produced by:
-
-- crawler worker
-
-Consumed by:
-
-- control plane
-
-Required payload fields:
-
-- `crawlRunId`
-- `listPagesVisited`
-- `detailPagesVisited`
-- `artifactsStored`
-- `failures`
-
-#### `crawler.run.completed.v1`
-
-Produced by:
-
-- crawler worker
-
-Consumed by:
-
-- control plane
-
-Required payload fields:
-
-- `crawlRunId`
-- `status`
-- `summary`
-
-#### `crawler.run.failed.v1`
-
-Produced by:
-
-- crawler worker
-
-Consumed by:
-
-- control plane
-
-Required payload fields:
-
-- `crawlRunId`
-- `error`
-- `summary`
-
-### 3. Detail artifact handoff
+### 2. Detail artifact handoff
 
 #### `crawler.detail.captured.v1`
 
@@ -213,6 +145,34 @@ Suggested payload example:
   "dedupeKey": "jobs.cz:prague-tech-jobs:crawl_01:2001077729"
 }
 ```
+
+### 3. Crawl completion
+
+#### `crawler.run.finished.v1`
+
+Produced by:
+
+- crawler worker
+
+Consumed by:
+
+- control plane
+
+Required payload fields:
+
+- `crawlRunId`
+- `searchSpaceId`
+- `status`
+- `summaryPath`
+- `datasetPath`
+- `newJobsCount`
+- `failedRequests`
+- `stopReason`
+
+V1 keeps crawler lifecycle events intentionally compact.
+
+Queued and running state can be persisted through local control-plane runtime files in addition to
+broker events.
 
 ### 4. Ingestion lifecycle
 
@@ -299,23 +259,6 @@ Required payload fields:
 - `reason`
 - `dedupeKey`
 
-#### `ingestion.run.completed.v1`
-
-Produced by:
-
-- ingestion worker
-
-Consumed by:
-
-- control plane
-
-Required payload fields:
-
-- `ingestionRunId`
-- `crawlRunId`
-- `status`
-- `summary`
-
 ## Idempotency Rules
 
 ### Run command idempotency
@@ -381,6 +324,12 @@ V1 implementations:
 - local filesystem artifact store
 - Google Cloud Storage artifact store
 
+Operator boundary:
+
+- the artifact store is platform-managed in v1
+- operators browse and download artifacts through the dashboard
+- storage paths, local directories, buckets, and prefixes are internal runtime details
+
 ### Artifact path and naming rule
 
 In v1, the artifact-store adapter must preserve the current logical layout and naming convention.
@@ -421,7 +370,7 @@ Suggested interface:
 
 ```ts
 export type StructuredSinkWriteResult = {
-  sinkType: 'mongodb' | 'local_json' | 'gcs_json';
+  sinkType: 'mongodb' | 'downloadable_json';
   targetRef: string;
   writeMode: 'upsert' | 'overwrite';
 };
@@ -440,8 +389,7 @@ export interface StructuredOutputSink {
 V1 implementations:
 
 - MongoDB canonical-document sink
-- local filesystem JSON sink
-- Google Cloud Storage JSON sink
+- managed downloadable-JSON sink backed by local filesystem or GCS
 
 ### MongoDB sink compatibility requirement
 
@@ -471,6 +419,7 @@ In v1:
 - pipeline configuration selects the active sinks
 - ingestion writes the canonical document to each configured sink
 - success and failure must be reported per sink
+- downloadable JSON remains accessible through the dashboard rather than by exposing raw storage paths
 
 If one sink succeeds and another fails:
 
@@ -482,10 +431,10 @@ If one sink succeeds and another fails:
 V1 should allow:
 
 - local filesystem artifact store
-- local filesystem JSON sink
+- managed downloadable JSON on local filesystem
 - local MongoDB sink
 - local broker adapter
-- optional real Google Cloud Pub/Sub and GCS adapters for integration testing
+- optional real Google Cloud Pub/Sub and GCS-backed downloadable JSON for integration testing
 
 ## Deferred Beyond V1
 

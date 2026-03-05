@@ -1,0 +1,4 @@
+.next/
+.playwright-control-plane/
+test-results/
+storage/

@@ -4,6 +4,8 @@ packages:
 
 catalogs:
   default:
+    '@google-cloud/pubsub': ^5.3.0
+    '@google-cloud/storage': ^7.19.0
     '@playwright/test': ^1.58.2
     '@testing-library/jest-dom': ^6.9.1
     '@testing-library/react': ^16.3.2
