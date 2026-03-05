@@ -270,6 +270,21 @@ control-plane note:
 - control-plane can keep full `pipelineSnapshot` in its own run ledger for audit/replay
 - worker-facing `StartRun` payload is intentionally minimal and must not include unused config blobs
 
+execution modes:
+
+1. direct REST mode
+
+- `inputRef.records` is non-empty
+- ingestion worker processes provided records immediately
+- run finalizes once queue/active item processing drains
+
+2. event-driven mode
+
+- `inputRef.records` is empty (`[]`)
+- ingestion worker waits for `crawler.detail.captured` events
+- run finalization requires `crawler.run.finished` plus drained queue/active items
+- without `crawler.run.finished`, run remains `running`
+
 security constraint:
 
 - `StartRun` must not include database credentials or secret material

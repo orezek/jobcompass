@@ -79,6 +79,23 @@ For direct `POST /v1/runs` ingestion records, each `inputRef.records[]` entry mu
 - full `listingRecord` snapshot (`adUrl`, `jobTitle`, `companyName`, `location`, `salary`,
   `publishedInfoText`, `scrapedAt`, `source`, `htmlDetailPageKey`)
 
+## Processing modes
+
+The worker supports two execution modes from the same `POST /v1/runs` endpoint:
+
+1. Direct REST mode
+
+- `inputRef.records` is non-empty.
+- Worker starts processing immediately from provided records.
+- Run finalizes when internal queue and active item count reach zero.
+
+2. Event-driven Pub/Sub mode
+
+- `inputRef.records` is an empty array (`[]`).
+- Worker waits for `crawler.detail.captured` events to enqueue items.
+- Run finalizes only after `crawler.run.finished` is received and queue/active items are drained.
+- If `crawler.run.finished` is never received, run stays `running`.
+
 ## Local run
 
 ```bash
