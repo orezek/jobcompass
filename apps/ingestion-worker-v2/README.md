@@ -53,6 +53,9 @@ LOG_TEXT_TRANSFORM_PREVIEW_CHARS=1200
 PARSER_VERSION=ingestion-worker-v2-v1-model
 ```
 
+The `.env.example` file is intentionally minimal and aligned with the v2 bootstrap spec.
+Use the optional block above for parser/runtime tuning.
+
 ## Endpoints
 
 - `GET /healthz`
@@ -62,6 +65,15 @@ PARSER_VERSION=ingestion-worker-v2-v1-model
 - `GET /v1/runs/:runId`
 - `POST /v1/runs/:runId/cancel`
 - `GET /v1/runs/:runId/outputs`
+
+For direct `POST /v1/runs` ingestion records, each `inputRef.records[]` entry must now include:
+
+- `source`
+- `sourceId`
+- `dedupeKey`
+- `detailHtmlPath`
+- full `listingRecord` snapshot (`adUrl`, `jobTitle`, `companyName`, `location`, `salary`,
+  `publishedInfoText`, `scrapedAt`, `source`, `htmlDetailPageKey`)
 
 ## Local run
 
@@ -73,6 +85,7 @@ pnpm -C apps/ingestion-worker-v2 dev
 
 The E2E suite is in `test/e2e` and uses editable stubs from `test/e2e/stubs` for Pub/Sub and
 GCS while writing real run data to MongoDB.
+The fixture `test/fixtures/job-detail.html` is copied from a real V1 HTML artifact.
 
 Set these variables before running:
 
@@ -83,8 +96,11 @@ export INGESTION_WORKER_V2_E2E_CRAWL_RUN_SUMMARIES_COLLECTION='crawl_run_summari
 export INGESTION_WORKER_V2_E2E_INGESTION_RUN_SUMMARIES_COLLECTION='ingestion_run_summaries'
 export INGESTION_WORKER_V2_E2E_INGESTION_TRIGGER_REQUESTS_COLLECTION='ingestion_trigger_requests'
 export INGESTION_WORKER_V2_E2E_NORMALIZED_JOB_ADS_COLLECTION='normalized_job_ads'
+export INGESTION_WORKER_V2_E2E_KEEP_ARTIFACTS='true'
 export INGESTION_PARSER_BACKEND='fixture'
 ```
+
+Template file: `.env.e2e.example`
 
 Run:
 

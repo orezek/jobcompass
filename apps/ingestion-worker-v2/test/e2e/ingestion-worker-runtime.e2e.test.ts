@@ -70,6 +70,9 @@ const collections: CollectionNames = {
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const fixtureHtmlPath = path.resolve(currentDir, '../fixtures/job-detail.html');
+const keepArtifacts = /^(1|true|yes)$/i.test(
+  process.env.INGESTION_WORKER_V2_E2E_KEEP_ARTIFACTS ?? '',
+);
 
 let mongoClient: MongoClient | null = null;
 
@@ -143,9 +146,22 @@ function buildRuntimeEnv(): EnvSchema {
 function buildStartRunPayload(
   runId: string,
   records: Array<{
+    source: string;
     sourceId: string;
     dedupeKey: string;
     detailHtmlPath: string;
+    listingRecord: {
+      sourceId: string;
+      adUrl: string;
+      jobTitle: string;
+      companyName: string | null;
+      location: string | null;
+      salary: string | null;
+      publishedInfoText: string | null;
+      scrapedAt: string;
+      source: string;
+      htmlDetailPageKey: string;
+    };
     datasetFileName?: string;
     datasetRecordIndex?: number;
   }>,
@@ -176,9 +192,11 @@ function buildStartRunPayload(
       crawlRunId: runId,
       searchSpaceId: 'search-space-e2e',
       records: records.map((record, index) => ({
+        source: record.source,
         sourceId: record.sourceId,
         dedupeKey: record.dedupeKey,
         detailHtmlPath: record.detailHtmlPath,
+        listingRecord: record.listingRecord,
         datasetFileName: record.datasetFileName ?? 'dataset.json',
         datasetRecordIndex: record.datasetRecordIndex ?? index,
       })),
@@ -306,12 +324,27 @@ async function waitForEventType(
 }
 
 async function cleanupRunDocuments(runId: string): Promise<void> {
+  if (keepArtifacts) {
+    return;
+  }
+
   const db = getMongoClient().db(sharedDbName);
   await Promise.all([
     db.collection(collections.ingestionRunSummaries).deleteMany({ runId }),
     db.collection(collections.ingestionTriggerRequests).deleteMany({ crawlRunId: runId }),
     db.collection(collections.normalizedJobAds).deleteMany({ 'ingestion.runId': runId }),
   ]);
+}
+
+function logKeptRunDocuments(runId: string): void {
+  if (!keepArtifacts) {
+    return;
+  }
+
+  console.info(
+    `[ingestion-worker-v2:e2e] kept Mongo documents for runId="${runId}" in ` +
+      `${sharedDbName}.${collections.normalizedJobAds}`,
+  );
 }
 
 const maybeSkip = skipReason ? { skip: skipReason } : {};
@@ -325,13 +358,26 @@ test(
 
     try {
       const { runtime, outputBucket, topic } = await createRuntimeFixture();
-      const sourceId = '2000905774';
+      const sourceId = '2000606182';
       const dedupeKey = `jobs.cz:search-space-e2e:${runId}:${sourceId}`;
       const payload = buildStartRunPayload(runId, [
         {
+          source: 'jobs.cz',
           sourceId,
           dedupeKey,
           detailHtmlPath: fixtureHtmlPath,
+          listingRecord: {
+            sourceId,
+            adUrl: `https://www.jobs.cz/rpd/${sourceId}/`,
+            jobTitle: 'ML Engineer',
+            companyName: 'TV Nova',
+            location: 'Prague',
+            salary: null,
+            publishedInfoText: 'Aktualizováno dnes',
+            scrapedAt: new Date().toISOString(),
+            source: 'jobs.cz',
+            htmlDetailPageKey: 'job-detail.html',
+          },
         },
       ]);
 
@@ -381,6 +427,7 @@ test(
           (entry) => JSON.parse(entry.payload).eventType === 'ingestion.run.finished',
         ),
       );
+      logKeptRunDocuments(runId);
     } finally {
       await cleanupRunDocuments(runId);
     }
@@ -459,6 +506,7 @@ test(
         read: async () => db.collection(collections.ingestionRunSummaries).findOne({ runId }),
       });
       assert.equal(summary.status, 'succeeded');
+      logKeptRunDocuments(runId);
     } finally {
       await cleanupRunDocuments(runId);
     }
@@ -478,9 +526,22 @@ test(
       const dedupeKey = `jobs.cz:search-space-e2e:${runId}:${sourceId}`;
       const payload = buildStartRunPayload(runId, [
         {
+          source: 'jobs.cz',
           sourceId,
           dedupeKey,
           detailHtmlPath: `/tmp/ingestion-worker-v2-${runId}.html`,
+          listingRecord: {
+            sourceId,
+            adUrl: 'https://www.jobs.cz/rpd/missing-2000905776/',
+            jobTitle: 'Missing Detail Fixture',
+            companyName: null,
+            location: null,
+            salary: null,
+            publishedInfoText: null,
+            scrapedAt: new Date().toISOString(),
+            source: 'jobs.cz',
+            htmlDetailPageKey: 'missing-2000905776.html',
+          },
         },
       ]);
 
@@ -522,6 +583,7 @@ test(
 
       const errorLogs = logger.entries.filter((entry) => entry.level === 'error');
       assert.equal(errorLogs.length, 0);
+      logKeptRunDocuments(runId);
     } finally {
       await cleanupRunDocuments(runId);
     }

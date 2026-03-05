@@ -253,6 +253,8 @@ implementation note:
 - `pipelineSnapshot` (resolved immutable config)
 - `runtimeSnapshot` (concurrency, limits, flags)
 - `inputRef` (for ingestion: crawler dataset/artifact refs)
+  - each ingestion `inputRef.records[]` must carry `source`, `sourceId`, `dedupeKey`,
+    `detailHtmlPath`, and full `listingRecord` snapshot from crawler output
 - `artifactSink` / `outputSinks` (bucket paths, modes)
 - `persistenceTargets`:
   - `dbName`

@@ -1,4 +1,3 @@
-import path from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import {
   FixtureDetailTextCleaner,
@@ -7,7 +6,11 @@ import {
   GeminiJobDetailExtractor,
 } from './extraction.js';
 import { JobParsingGraph } from './job-parsing-graph.js';
-import { sourceListingRecordSchema, type UnifiedJobAd } from './schema.js';
+import {
+  sourceListingRecordSchema,
+  type SourceListingRecord,
+  type UnifiedJobAd,
+} from './schema.js';
 
 type ParserBackend = 'gemini' | 'fixture';
 type ThinkingLevel = 'THINKING_LEVEL_UNSPECIFIED' | 'LOW' | 'MEDIUM' | 'HIGH';
@@ -34,17 +37,10 @@ export type ParseFullModelInput = {
   runId: string;
   crawlRunId: string | null;
   searchSpaceId: string;
-  source: string;
-  sourceId: string;
   detailHtmlPath: string;
   datasetFileName: string;
   datasetRecordIndex: number;
-  listing?: {
-    adUrl?: string;
-    jobTitle?: string | null;
-    companyName?: string | null;
-    location?: string | null;
-  };
+  listingRecord: SourceListingRecord;
 };
 
 type LocalInputRecord = {
@@ -62,20 +58,7 @@ export class FullModelParser {
   public async parse(input: ParseFullModelInput): Promise<UnifiedJobAd> {
     const parserGraph = await this.getParserGraph(input.searchSpaceId);
 
-    const listingRecord = sourceListingRecordSchema.parse({
-      sourceId: input.sourceId,
-      adUrl:
-        input.listing?.adUrl ??
-        `https://example.invalid/runs/${encodeURIComponent(input.runId)}/${encodeURIComponent(input.sourceId)}`,
-      jobTitle: input.listing?.jobTitle?.trim() || `Unknown title ${input.sourceId}`,
-      companyName: input.listing?.companyName ?? null,
-      location: input.listing?.location ?? null,
-      salary: null,
-      publishedInfoText: null,
-      scrapedAt: new Date().toISOString(),
-      source: input.source,
-      htmlDetailPageKey: path.basename(input.detailHtmlPath),
-    });
+    const listingRecord = sourceListingRecordSchema.parse(input.listingRecord);
 
     const inputRecord: LocalInputRecord = {
       datasetFileName: input.datasetFileName,

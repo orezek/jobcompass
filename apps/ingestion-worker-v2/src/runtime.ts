@@ -21,7 +21,7 @@ import { z } from 'zod';
 import type { EnvSchema } from './env.js';
 import { IncompleteDetailPageError } from './full-model/html-detail-loader.js';
 import { FullModelParser } from './full-model/parser.js';
-import type { UnifiedJobAd } from './full-model/schema.js';
+import type { SourceListingRecord, UnifiedJobAd } from './full-model/schema.js';
 
 type IngestionStartRunRequestV2 = z.infer<typeof ingestionStartRunRequestV2Schema>;
 type CrawlerDetailCapturedEvent = z.infer<typeof crawlerDetailCapturedEventSchema>;
@@ -36,12 +36,7 @@ type ItemInput = {
   detailHtmlPath: string;
   datasetFileName?: string;
   datasetRecordIndex?: number;
-  listing?: {
-    adUrl?: string;
-    jobTitle?: string | null;
-    companyName?: string | null;
-    location?: string | null;
-  };
+  listingRecord: SourceListingRecord;
 };
 
 type RunOutputRef = {
@@ -235,7 +230,7 @@ export class IngestionWorkerRuntime {
 
     for (const record of parsedRequest.inputRef.records) {
       const item: ItemInput = {
-        source: 'start-run-input',
+        source: record.source,
         crawlRunId: parsedRequest.inputRef.crawlRunId,
         searchSpaceId: parsedRequest.inputRef.searchSpaceId,
         sourceId: record.sourceId,
@@ -243,6 +238,7 @@ export class IngestionWorkerRuntime {
         detailHtmlPath: record.detailHtmlPath,
         datasetFileName: record.datasetFileName,
         datasetRecordIndex: record.datasetRecordIndex,
+        listingRecord: record.listingRecord,
       };
 
       await this.queueItem(run, item);
@@ -369,12 +365,7 @@ export class IngestionWorkerRuntime {
       sourceId: event.payload.sourceId,
       dedupeKey: event.payload.dedupeKey,
       detailHtmlPath: event.payload.artifact.storagePath,
-      listing: {
-        adUrl: event.payload.listingRecord.adUrl,
-        jobTitle: event.payload.listingRecord.jobTitle,
-        companyName: event.payload.listingRecord.companyName,
-        location: event.payload.listingRecord.location,
-      },
+      listingRecord: event.payload.listingRecord,
     };
 
     await this.queueItem(run, item);
@@ -455,12 +446,10 @@ export class IngestionWorkerRuntime {
         runId: run.runId,
         crawlRunId: item.crawlRunId,
         searchSpaceId: item.searchSpaceId,
-        source: item.source,
-        sourceId: item.sourceId,
         detailHtmlPath: item.detailHtmlPath,
         datasetFileName: item.datasetFileName ?? 'dataset.json',
         datasetRecordIndex: item.datasetRecordIndex ?? 0,
-        listing: item.listing,
+        listingRecord: item.listingRecord,
       });
       const normalizedDoc: PersistedNormalizedJobAdDoc = {
         ...unifiedDoc,
