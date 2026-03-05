@@ -5,6 +5,7 @@ import {
   buildIngestionLifecycleEvent,
   crawlerDetailCapturedEventSchema,
   crawlerRunFinishedEventSchema,
+  crawlerRunFinishedEventV2Schema,
   ingestionRunFinishedEventV2Schema,
   ingestionRunStartedEventV2Schema,
   ingestionRunSummaryProjectionV2Schema,
@@ -26,6 +27,7 @@ import type { SourceListingRecord, UnifiedJobAd } from './full-model/schema.js';
 type IngestionStartRunRequestV2 = z.infer<typeof ingestionStartRunRequestV2Schema>;
 type CrawlerDetailCapturedEvent = z.infer<typeof crawlerDetailCapturedEventSchema>;
 type CrawlerRunFinishedEvent = z.infer<typeof crawlerRunFinishedEventSchema>;
+type CrawlerRunFinishedEventV2 = z.infer<typeof crawlerRunFinishedEventV2Schema>;
 
 type ItemInput = {
   source: string;
@@ -42,8 +44,8 @@ type ItemInput = {
 type RunOutputRef = {
   sourceId: string;
   dedupeKey: string;
-  mongoTargetRef: string;
-  downloadableJsonPath: string;
+  mongoTargetRef?: string;
+  downloadableJsonPath?: string;
   createdAt: string;
 };
 
@@ -168,7 +170,7 @@ function createRunMetricsAccumulator(): RunMetricsAccumulator {
 }
 
 function buildRunTriggerId(run: RunState): string {
-  return `run:${run.request.pipelineSnapshot.id}:${run.request.pipelineSnapshot.searchSpaceId}:${run.runId}`;
+  return `run:${run.request.inputRef.searchSpaceId}:${run.request.inputRef.crawlRunId}:${run.runId}`;
 }
 
 function buildItemTriggerId(item: ItemInput): string {
@@ -400,23 +402,32 @@ export class IngestionWorkerRuntime {
     }
 
     if (eventType === 'crawler.run.finished') {
-      const parsedEvent = crawlerRunFinishedEventSchema.safeParse(parsedJson);
-      if (!parsedEvent.success) {
-        this.deps.logger.warn(
-          { issues: parsedEvent.error.issues },
-          'Skipping malformed crawler.run.finished event.',
-        );
+      const parsedEventV1 = crawlerRunFinishedEventSchema.safeParse(parsedJson);
+      if (parsedEventV1.success) {
+        await this.handleCrawlerRunFinishedEvent(parsedEventV1.data);
         return;
       }
 
-      await this.handleCrawlerRunFinishedEvent(parsedEvent.data);
+      const parsedEventV2 = crawlerRunFinishedEventV2Schema.safeParse(parsedJson);
+      if (parsedEventV2.success) {
+        await this.handleCrawlerRunFinishedEvent(parsedEventV2.data);
+        return;
+      }
+
+      this.deps.logger.warn(
+        {
+          issuesV1: parsedEventV1.error.issues,
+          issuesV2: parsedEventV2.error.issues,
+        },
+        'Skipping malformed crawler.run.finished event.',
+      );
       return;
     }
   }
 
   private async handleCrawlerDetailCapturedEvent(event: CrawlerDetailCapturedEvent): Promise<void> {
-    const run = this.runs.get(event.runId);
-    if (!run || run.status !== 'running') {
+    const run = this.resolveRunForCrawlerEvent(event.runId, event.payload.crawlRunId);
+    if (!run) {
       return;
     }
 
@@ -433,15 +444,54 @@ export class IngestionWorkerRuntime {
     await this.queueItem(run, item);
   }
 
-  private async handleCrawlerRunFinishedEvent(event: CrawlerRunFinishedEvent): Promise<void> {
-    const run = this.runs.get(event.runId);
-    if (!run || run.status !== 'running') {
+  private async handleCrawlerRunFinishedEvent(
+    event: CrawlerRunFinishedEvent | CrawlerRunFinishedEventV2,
+  ): Promise<void> {
+    const run = this.resolveRunForCrawlerEvent(
+      event.runId,
+      'crawlRunId' in event.payload ? event.payload.crawlRunId : undefined,
+    );
+    if (!run) {
       return;
     }
 
     run.crawlerFinished = true;
     run.lastHeartbeatAt = nowIso();
     await this.tryFinalizeRun(run);
+  }
+
+  private resolveRunForCrawlerEvent(eventRunId: string, crawlRunId?: string): RunState | undefined {
+    const directRun = this.runs.get(eventRunId);
+    if (directRun?.status === 'running') {
+      return directRun;
+    }
+
+    const candidateCrawlRunIds = new Set<string>([eventRunId]);
+    if (crawlRunId) {
+      candidateCrawlRunIds.add(crawlRunId);
+    }
+
+    const matchedRuns = [...this.runs.values()].filter(
+      (run) =>
+        run.status === 'running' && candidateCrawlRunIds.has(run.request.inputRef.crawlRunId),
+    );
+
+    if (matchedRuns.length === 1) {
+      return matchedRuns[0];
+    }
+
+    if (matchedRuns.length > 1) {
+      this.deps.logger.warn(
+        {
+          eventRunId,
+          crawlRunId,
+          matchedRunIds: matchedRuns.map((run) => run.runId),
+        },
+        'Skipping crawler event because multiple running ingestion runs match crawlRunId.',
+      );
+    }
+
+    return undefined;
   }
 
   private async queueItem(run: RunState, item: ItemInput): Promise<void> {
@@ -504,6 +554,23 @@ export class IngestionWorkerRuntime {
     await this.publishIngestionItemEvent('ingestion.item.started', run, item);
 
     try {
+      const mongoSink = run.request.outputSinks.find(
+        (sink): sink is Extract<(typeof run.request.outputSinks)[number], { type: 'mongodb' }> =>
+          sink.type === 'mongodb',
+      ) ?? {
+        type: 'mongodb' as const,
+        collection: run.request.persistenceTargets.normalizedJobAdsCollection,
+        writeMode: 'upsert' as const,
+      };
+      const downloadableJsonSink = run.request.outputSinks.find(
+        (
+          sink,
+        ): sink is Extract<
+          (typeof run.request.outputSinks)[number],
+          { type: 'downloadable_json' }
+        > => sink.type === 'downloadable_json',
+      );
+
       const unifiedDoc = await this.fullModelParser.parse({
         runId: run.runId,
         crawlRunId: item.crawlRunId,
@@ -521,20 +588,27 @@ export class IngestionWorkerRuntime {
         { upsert: true },
       );
 
-      const downloadablePath = this.buildDownloadablePath(run, item);
-      await this.deps.outputsBucket
-        .file(downloadablePath)
-        .save(`${JSON.stringify(normalizedDoc, null, 2)}\n`, {
-          contentType: 'application/json',
-        });
+      let downloadableJsonPath: string | undefined;
+      let downloadableJsonWriteMode: 'upsert' | 'overwrite' | undefined;
+      if (downloadableJsonSink) {
+        const downloadablePath = this.buildDownloadablePath(run, item);
+        await this.deps.outputsBucket
+          .file(downloadablePath)
+          .save(`${JSON.stringify(normalizedDoc, null, 2)}\n`, {
+            contentType: 'application/json',
+          });
+        downloadableJsonPath = `gs://${this.deps.env.OUTPUTS_BUCKET}/${downloadablePath}`;
+        downloadableJsonWriteMode = downloadableJsonSink.writeMode;
+      }
 
       this.recordRunMetrics(run, normalizedDoc);
       run.counters.processed += 1;
+      const mongoTargetRef = `${run.request.persistenceTargets.dbName}.${mongoSink.collection}`;
       run.outputs.push({
         sourceId: item.sourceId,
         dedupeKey: item.dedupeKey,
-        mongoTargetRef: `${run.request.persistenceTargets.dbName}.${run.request.persistenceTargets.normalizedJobAdsCollection}`,
-        downloadableJsonPath: `gs://${this.deps.env.OUTPUTS_BUCKET}/${downloadablePath}`,
+        mongoTargetRef,
+        ...(downloadableJsonPath ? { downloadableJsonPath } : {}),
         createdAt: nowIso(),
       });
 
@@ -542,19 +616,26 @@ export class IngestionWorkerRuntime {
         totalTokensUsed: normalizedDoc.ingestion.llmTotalTokens,
         totalEstimatedCostUsd: normalizedDoc.ingestion.llmTotalCostUsd,
       });
+      const sinkResults: Array<{
+        sinkType: 'mongodb' | 'downloadable_json';
+        targetRef: string;
+        writeMode: 'upsert' | 'overwrite';
+      }> = [
+        {
+          sinkType: 'mongodb',
+          targetRef: mongoTargetRef,
+          writeMode: mongoSink.writeMode,
+        },
+      ];
+      if (downloadableJsonPath && downloadableJsonWriteMode) {
+        sinkResults.push({
+          sinkType: 'downloadable_json',
+          targetRef: downloadableJsonPath,
+          writeMode: downloadableJsonWriteMode,
+        });
+      }
       await this.publishIngestionItemEvent('ingestion.item.succeeded', run, item, {
-        sinkResults: [
-          {
-            sinkType: 'mongodb',
-            targetRef: `${run.request.persistenceTargets.dbName}.${run.request.persistenceTargets.normalizedJobAdsCollection}`,
-            writeMode: 'upsert',
-          },
-          {
-            sinkType: 'downloadable_json',
-            targetRef: `gs://${this.deps.env.OUTPUTS_BUCKET}/${downloadablePath}`,
-            writeMode: 'overwrite',
-          },
-        ],
+        sinkResults,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -662,12 +743,13 @@ export class IngestionWorkerRuntime {
   private async upsertRunTrigger(run: RunState): Promise<void> {
     const id = buildRunTriggerId(run);
     const now = nowIso();
+    const runSource = run.request.inputRef.records[0]?.source ?? 'unknown';
     const seed = ingestionTriggerRequestProjectionV2Schema.parse({
       id,
       triggerType: 'run',
-      source: run.request.pipelineSnapshot.id,
-      crawlRunId: run.runId,
-      searchSpaceId: run.request.pipelineSnapshot.searchSpaceId,
+      source: runSource,
+      crawlRunId: run.request.inputRef.crawlRunId,
+      searchSpaceId: run.request.inputRef.searchSpaceId,
       mongoDbName: run.request.persistenceTargets.dbName,
       status: 'running',
       requestedAt: run.requestedAt,

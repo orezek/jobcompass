@@ -137,7 +137,6 @@ const v2StartRunRequestBaseSchema = z.object({
   requestedAt: isoDateTimeSchema,
   correlationId: nonEmptyStringSchema,
   manifestVersion: z.number().int().positive(),
-  pipelineSnapshot: v2PipelineSnapshotSchema,
   runtimeSnapshot: v2RuntimeSnapshotSchema,
   persistenceTargets: v2PersistenceTargetsSchema,
   artifactSink: v2ArtifactSinkSchema.optional(),
@@ -388,15 +387,6 @@ export const crawlerStartRunRequestV2Fixture = crawlerStartRunRequestV2Schema.pa
   requestedAt: '2026-03-05T10:00:00.000Z',
   correlationId: 'corr-v2-fixture-001',
   manifestVersion: 2,
-  pipelineSnapshot: {
-    id: 'pipeline-prague-tech',
-    name: 'Prague Tech Crawl+Ingest',
-    version: 7,
-    mode: 'crawl_and_ingest',
-    searchSpaceId: 'prague-tech-jobs',
-    runtimeProfileId: 'runtime-balanced',
-    structuredOutputDestinationIds: ['mongo-normalized-jobs', 'downloadable-json-default'],
-  },
   runtimeSnapshot: {
     crawlerMaxConcurrency: 3,
     crawlerMaxRequestsPerMinute: 60,

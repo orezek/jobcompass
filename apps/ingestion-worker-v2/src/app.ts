@@ -15,6 +15,7 @@ async function ensureSubscription(input: {
 }): Promise<Subscription> {
   const topic = input.pubsub.topic(input.topicName);
   const subscription = topic.subscription(input.subscriptionName);
+  const [topicExists] = await topic.exists();
 
   const [subscriptionExists] = await subscription.exists();
   if (subscriptionExists) {
@@ -25,6 +26,10 @@ async function ensureSubscription(input: {
     throw new Error(
       `Pub/Sub subscription "${input.subscriptionName}" does not exist and auto-create is disabled.`,
     );
+  }
+
+  if (!topicExists) {
+    await topic.create();
   }
 
   await topic.createSubscription(input.subscriptionName);

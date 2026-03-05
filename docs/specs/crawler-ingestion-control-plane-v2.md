@@ -250,7 +250,6 @@ implementation note:
 
 - `runId`, `idempotencyKey`, `requestedAt`, `correlationId`
 - `manifestVersion`
-- `pipelineSnapshot` (resolved immutable config)
 - `runtimeSnapshot` (concurrency, limits, flags)
 - `inputRef` (for ingestion: crawler dataset/artifact refs)
   - each ingestion `inputRef.records[]` must carry `source`, `sourceId`, `dedupeKey`,
@@ -265,6 +264,11 @@ implementation note:
   - write flags/policies per collection where needed
 - `eventContext` (run metadata for emitted events)
 - `timeouts`/`safety` per run (optional, bounded)
+
+control-plane note:
+
+- control-plane can keep full `pipelineSnapshot` in its own run ledger for audit/replay
+- worker-facing `StartRun` payload is intentionally minimal and must not include unused config blobs
 
 security constraint:
 

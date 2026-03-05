@@ -53,6 +53,10 @@ LOG_TEXT_TRANSFORM_PREVIEW_CHARS=1200
 PARSER_VERSION=ingestion-worker-v2-v1-model
 ```
 
+When `ENABLE_PUBSUB_CONSUMER=true` and `PUBSUB_AUTO_CREATE_SUBSCRIPTION=true`, startup now
+auto-creates both the Pub/Sub topic and subscription if they do not exist.
+The runtime service account must have Pub/Sub create permissions.
+
 The `.env.example` file is intentionally minimal and aligned with the v2 bootstrap spec.
 Use the optional block above for parser/runtime tuning.
 
@@ -133,15 +137,6 @@ curl -X POST http://127.0.0.1:3020/v1/runs \
     "requestedAt": "2026-03-05T10:00:00.000Z",
     "correlationId": "corr-crawl-run-local-001",
     "manifestVersion": 2,
-    "pipelineSnapshot": {
-      "id": "pipeline-local",
-      "name": "Pipeline local",
-      "version": 1,
-      "mode": "crawl_and_ingest",
-      "searchSpaceId": "default",
-      "runtimeProfileId": "runtime-local",
-      "structuredOutputDestinationIds": ["mongo-normalized-jobs", "downloadable-json-default"]
-    },
     "runtimeSnapshot": {
       "ingestionConcurrency": 2,
       "ingestionEnabled": true

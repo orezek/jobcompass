@@ -302,15 +302,6 @@ function buildStartRunPayload(
     requestedAt: new Date().toISOString(),
     correlationId: `corr-${runId}`,
     manifestVersion: 2,
-    pipelineSnapshot: {
-      id: 'pipeline-e2e',
-      name: 'Pipeline E2E',
-      version: 1,
-      mode: 'crawl_and_ingest',
-      searchSpaceId: 'search-space-e2e',
-      runtimeProfileId: 'runtime-profile-e2e',
-      structuredOutputDestinationIds: ['mongo-normalized-jobs', 'downloadable-json-default'],
-    },
     runtimeSnapshot: {
       ingestionConcurrency: 2,
       ingestionEnabled: true,
@@ -716,6 +707,93 @@ test(
       assert.equal(summary.status, 'succeeded');
       logKeptRunDocuments(runId);
     } finally {
+      await cleanupRunDocuments(runId);
+    }
+  },
+);
+
+test(
+  'correlates crawler events by crawlRunId and succeeds with mongodb-only output sink',
+  maybeSkip,
+  async () => {
+    const runId = buildRunId('e2e-crawler-correlation');
+    const crawlRunId = `crawl-${runId}`;
+    await cleanupRunDocuments(runId);
+
+    try {
+      const { runtime, outputBucket } = await createRuntimeFixture();
+      const payload = buildStartRunPayload(runId, []);
+      payload.inputRef.crawlRunId = crawlRunId;
+      payload.outputSinks = [
+        {
+          type: 'mongodb',
+          collection: collections.normalizedJobAds,
+          writeMode: 'upsert',
+        },
+      ];
+
+      await runtime.startRun(payload);
+
+      const sourceId = '2001063102';
+      const fixturePath = fixturePathBySourceId.get(sourceId)!;
+      const detailEvent = buildCrawlerDetailCapturedEvent({
+        runId: crawlRunId,
+        crawlRunId,
+        searchSpaceId: 'search-space-e2e',
+        source: 'jobs.cz',
+        sourceId,
+        listingRecord: {
+          sourceId,
+          adUrl:
+            'https://www.jobs.cz/rpd/2001063102/?searchId=793f06bf-b653-4637-8010-5c1bebdf0970&rps=233',
+          jobTitle: 'Technical Program Manager',
+          companyName: 'Univerzita Karlova – Matematicko-fyzikální fakulta',
+          location: 'Praha – Malá Strana',
+          salary: null,
+          publishedInfoText: 'Aktualizováno dnes',
+          scrapedAt: '2026-03-05T10:00:00.000Z',
+          source: 'jobs.cz',
+          htmlDetailPageKey: 'job-html-2001063102.html',
+        },
+        artifact: {
+          artifactType: 'html',
+          storageType: 'local_filesystem',
+          storagePath: fixturePath,
+          checksum: 'checksum-2001063102',
+          sizeBytes: 4096,
+        },
+      });
+
+      await runtime.handlePubSubMessage(JSON.stringify(detailEvent));
+
+      const finishedEvent = buildCrawlerRunFinishedEvent({
+        runId: crawlRunId,
+        crawlRunId,
+        searchSpaceId: 'search-space-e2e',
+        status: 'succeeded',
+        newJobsCount: 1,
+        failedRequests: 0,
+        stopReason: 'completed',
+      });
+      await runtime.handlePubSubMessage(JSON.stringify(finishedEvent));
+
+      const completed = await waitForRunStatus(runtime, runId, 'succeeded');
+      assert.equal(completed.counters.received, 1);
+      assert.equal(completed.counters.processed, 1);
+      assert.equal(completed.counters.failed, 0);
+      assert.equal(completed.crawlerFinished, true);
+      assert.equal(outputBucket.listObjectPaths().length, 0);
+
+      const db = getMongoClient().db(sharedDbName);
+      const summary = await waitForDocument({
+        read: async () => db.collection(collections.ingestionRunSummaries).findOne({ runId }),
+      });
+      assert.equal(summary.status, 'succeeded');
+      assert.equal(summary.crawlRunId, crawlRunId);
+      logKeptRunDocuments(runId);
+    } finally {
+      const db = getMongoClient().db(sharedDbName);
+      await db.collection(collections.ingestionTriggerRequests).deleteMany({ crawlRunId });
       await cleanupRunDocuments(runId);
     }
   },
