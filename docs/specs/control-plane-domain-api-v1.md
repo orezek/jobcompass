@@ -63,8 +63,8 @@ Field notes:
 
 - `sourceType` is `jobs_cz` in v1
 - `startUrls` represent list/search pages in v1
-- `maxItemsDefault` is a source-level breadth cap
-- concurrency and requests-per-minute belong to `RuntimeProfile`, not `SearchSpace`
+- `maxItemsDefault` is a source-level crawl breadth cap, not a worker concurrency setting
+- crawler concurrency and rate limiting do not belong to `SearchSpace` in v1
 - `status` is one of:
   - `draft`
   - `active`
@@ -89,27 +89,55 @@ Required fields:
 
 Field notes:
 
+- `crawlerMaxConcurrency` is the maximum number of crawler requests processed in parallel within one run
+- `crawlerMaxRequestsPerMinute` is a crawl rate cap, not a parallelism setting
+- `ingestionConcurrency` is the maximum number of ingestion items processed in parallel within one run
+- runtime profiles own execution throttling in v1
 - `status` is one of:
   - `active`
   - `archived`
 
-### ManagedArtifactStorage
+### ArtifactDestination
 
-Represents the platform-managed HTML artifact backend.
+Represents where HTML artifacts are written.
 
-V1 semantics:
+Required fields:
 
-- not an operator-managed CRUD resource
-- selected by environment and platform setup
-- may use local filesystem in local development
-- may use GCS in cloud-backed environments
-- always exposed to operators through dashboard browse/download flows
+- `id`
+- `name`
+- `type`
+- `config`
+- `status`
+- `createdAt`
+- `updatedAt`
+
+Supported `type` values in v1:
+
+- `local_filesystem`
+- `gcs`
+
+Artifact destinations define backend storage only.
+
+They do not define the operator access model.
+
+V1 operator rule:
+
+- operators should browse and download artifacts through the dashboard
+- raw storage paths are internal references, not the primary user-facing access pattern
+
+`config` examples:
+
+- local filesystem:
+  - `basePath`
+- gcs:
+  - `bucket`
+  - `prefix`
 
 #### HTML artifact layout rule
 
-Managed artifact storage in v1 changes only the storage root or prefix.
+Artifact destinations in v1 change only the storage root or prefix.
 
-It does not change the logical crawler artifact layout.
+They do not change the logical crawler artifact layout.
 
 Required logical layout:
 
@@ -128,10 +156,21 @@ That means:
 
 Examples:
 
-- local filesystem backend:
+- local filesystem destination:
   - `<basePath>/runs/<crawlRunId>/records/job-html-<sourceId>.html`
-- GCS backend:
+- GCS destination:
   - `gs://<bucket>/<prefix>/runs/<crawlRunId>/records/job-html-<sourceId>.html`
+
+#### Artifact access rule
+
+V1 should expose artifacts through the control plane UI.
+
+Required behavior:
+
+- the dashboard should list available artifacts per run
+- the dashboard should allow HTML artifact download in the browser
+- filesystem or bucket paths may still exist in internal records, but those paths are implementation details
+- direct API-based artifact download can be expanded later, but the dashboard download flow is part of v1
 
 ### StructuredOutputDestination
 
@@ -149,15 +188,21 @@ Required fields:
 
 Supported `type` values in v1:
 
-- `downloadable_json`
 - `mongodb`
+- `local_json`
+- `gcs_json`
 
 `config` examples:
 
-- `downloadable_json`
-  - no operator-facing storage config
 - `mongodb`
-  - `connectionUri`
+  - `connectionRef`
+  - `databaseName`
+  - `collectionName`
+- `local_json`
+  - `basePath`
+- `gcs_json`
+  - `bucket`
+  - `prefix`
 
 #### MongoDB compatibility rule
 
@@ -187,17 +232,6 @@ The control plane may select whether MongoDB is used.
 
 If MongoDB is used, it should not redesign the schema topology in v1.
 
-#### Downloadable JSON rule
-
-If `type = downloadable_json`, v1 should treat the storage backend as a platform-managed detail.
-
-Required behavior:
-
-- operators do not configure base paths, buckets, or prefixes
-- normalized JSON remains browsable and downloadable through the dashboard
-- the backend may be local filesystem or GCS depending on environment
-- the canonical JSON file naming remains deterministic per run and source item
-
 ### Pipeline
 
 Represents an operator-managed runnable configuration.
@@ -208,6 +242,7 @@ Required fields:
 - `name`
 - `searchSpaceId`
 - `runtimeProfileId`
+- `artifactDestinationId`
 - `structuredOutputDestinationIds`
 - `mode`
 - `status`
@@ -231,7 +266,6 @@ V1 notes:
 - `crawl_only` still persists HTML artifacts
 - `crawl_and_ingest` persists HTML and publishes events for ingestion
 - `structuredOutputDestinationIds` may be empty only when `mode = crawl_only`
-- the artifact store is platform-managed and is not selected per pipeline in v1
 
 ### RunManifest
 
@@ -244,7 +278,7 @@ Required fields:
 - `pipelineVersion`
 - `searchSpaceSnapshot`
 - `runtimeProfileSnapshot`
-- `artifactStorageSnapshot`
+- `artifactDestinationSnapshot`
 - `structuredOutputDestinationSnapshots`
 - `mode`
 - `sourceType`
@@ -290,9 +324,20 @@ Required fields:
 - `failed`
 - `stopped`
 
-V1 run history is control-plane history for the local operator.
+#### Active-run exclusivity rule
 
-It is not a user-personal history model and should not depend on user spaces or profiles.
+V1 should treat `queued` and `running` runs as active.
+
+Required behavior:
+
+- only one active `Run` may exist per `Pipeline` by default
+- repeated start requests for a pipeline with an active run must not create a second active run
+- a new run may be created only after the previous run reaches a terminal state
+- terminal states in v1 are:
+  - `succeeded`
+  - `completed_with_errors`
+  - `failed`
+  - `stopped`
 
 ### RunItem
 
@@ -331,10 +376,23 @@ Required fields:
 
 - one `SearchSpace` can be used by many `Pipeline` records
 - one `RuntimeProfile` can be used by many `Pipeline` records
+- one `ArtifactDestination` can be used by many `Pipeline` records
 - one `Pipeline` may reference zero or many `StructuredOutputDestination` records
 - one `Pipeline` produces many `Run` records
 - one `Run` owns one immutable `RunManifest`
 - one `Run` may produce many `RunItem` records
+
+## Resource Lifecycle Rules
+
+V1 must support full operator lifecycle management for reusable resources.
+
+Required behavior:
+
+- resources must be creatable, viewable, editable, and removable from the control plane
+- destructive deletion must be safe
+- if a resource is referenced by historical runs, active pipelines, or other persisted records, the default action should be archive or deactivate rather than hard delete
+- hard delete should be allowed only when the resource is unused and has no historical dependency that would break run lineage or operator history
+- the GUI and API should make the difference between archive and delete explicit
 
 ## Validation Rules
 
@@ -346,8 +404,7 @@ V1 rules:
 - `startUrls` must be non-empty
 - each `startUrl` must be a valid URL
 - search-space IDs must be unique
-- `maxItemsDefault` remains on the search space
-- concurrency and requests-per-minute remain on the runtime profile
+- source definitions must not define crawler concurrency or request-rate settings in v1
 
 ### Pipeline validation
 
@@ -355,11 +412,17 @@ V1 rules:
 
 - `searchSpaceId` must reference an active search space
 - `runtimeProfileId` must reference an active runtime profile
+- `artifactDestinationId` must reference an active artifact destination
 - `crawl_only` pipelines must not require structured output destinations
 - `crawl_and_ingest` pipelines must reference at least one structured output destination
-- only one active run per pipeline is allowed by default
-- active means `queued` or `running`
-- start requests must be idempotent while an active run already exists
+
+### Run-start validation
+
+V1 rules:
+
+- a new run request must reference an active pipeline
+- a pipeline with an active `queued` or `running` run must not receive a second active run by default
+- duplicate submits from the UI must be handled safely even if the browser sends multiple requests
 
 ## Operator-Facing API
 
@@ -405,6 +468,12 @@ Validate search-space configuration without starting a run.
 
 Archive a search space.
 
+#### `DELETE /api/search-spaces/:id`
+
+Delete a search space if it is unused and safe to remove.
+
+If the search space is historically referenced, the API should reject hard delete and require archive instead.
+
 ### Runtime profiles
 
 #### `POST /api/runtime-profiles`
@@ -422,6 +491,44 @@ Get one runtime profile.
 #### `PATCH /api/runtime-profiles/:id`
 
 Update a runtime profile.
+
+#### `POST /api/runtime-profiles/:id/archive`
+
+Archive a runtime profile.
+
+#### `DELETE /api/runtime-profiles/:id`
+
+Delete a runtime profile if it is unused and safe to remove.
+
+### Artifact destinations
+
+#### `POST /api/artifact-destinations`
+
+Create an artifact destination.
+
+#### `GET /api/artifact-destinations`
+
+List artifact destinations.
+
+#### `GET /api/artifact-destinations/:id`
+
+Get one artifact destination.
+
+#### `PATCH /api/artifact-destinations/:id`
+
+Update an artifact destination.
+
+#### `POST /api/artifact-destinations/:id/archive`
+
+Archive an artifact destination.
+
+#### `POST /api/artifact-destinations/:id/validate`
+
+Validate artifact destination connectivity and write capability.
+
+#### `DELETE /api/artifact-destinations/:id`
+
+Delete an artifact destination if it is unused and safe to remove.
 
 ### Structured output destinations
 
@@ -441,9 +548,17 @@ Get one structured output destination.
 
 Update a structured output destination.
 
+#### `POST /api/structured-output-destinations/:id/archive`
+
+Archive a structured output destination.
+
 #### `POST /api/structured-output-destinations/:id/validate`
 
 Validate structured output destination connectivity and write capability.
+
+#### `DELETE /api/structured-output-destinations/:id`
+
+Delete a structured output destination if it is unused and safe to remove.
 
 ### Pipelines
 
@@ -458,7 +573,8 @@ Request body:
   "name": "Prague Jobs Crawl And Ingest",
   "searchSpaceId": "prague-tech-jobs",
   "runtimeProfileId": "default-local-runtime",
-  "structuredOutputDestinationIds": ["downloadable-json", "mongo-primary"],
+  "artifactDestinationId": "local-html-artifacts",
+  "structuredOutputDestinationIds": ["local-json-output", "mongo-primary"],
   "mode": "crawl_and_ingest"
 }
 ```
@@ -483,11 +599,29 @@ Validate pipeline wiring before activation.
 
 Mark a pipeline active and available for runs.
 
+#### `POST /api/pipelines/:id/archive`
+
+Archive a pipeline.
+
+#### `DELETE /api/pipelines/:id`
+
+Delete a pipeline if it is unused and safe to remove.
+
 ### Runs
 
 #### `POST /api/runs`
 
 Create a run request from a pipeline.
+
+V1 behavior:
+
+- if the pipeline has no active run, create a new run
+- if the pipeline already has an active `queued` or `running` run, do not create another active run
+- the API should either:
+  - return the existing active run, or
+  - reject with a clear conflict response such as `409 Conflict`
+
+The key requirement is that repeated clicks or retries must not create duplicate active runs.
 
 Request body:
 
@@ -507,17 +641,14 @@ Response shape:
 }
 ```
 
-Run-start rule:
-
-- if the pipeline already has an active run, the control plane must return that existing run or
-  reject the request with a clear conflict
-- normal repeated clicks must not create duplicate concurrent runs for the same pipeline
-
 #### `POST /api/runs/:id/start`
 
 Create the immutable manifest and publish the run command.
 
-This operation must be idempotent for a given run.
+V1 behavior:
+
+- this operation must be idempotent for a given run
+- publishing the run command more than once for the same run should not create duplicate crawler executions
 
 #### `POST /api/runs/:id/stop`
 
@@ -546,8 +677,10 @@ List control-plane-visible events for the run.
 - a run is created from an active pipeline
 - a run manifest is immutable once published
 - responses should expose version and status fields explicitly
-- artifact browse/download is the operator-facing access path for raw HTML in v1
-- backend storage paths, buckets, and prefixes are internal implementation details in v1
+- duplicate `Start Run` submissions must be safe by default
+- the server, not only the UI, must enforce active-run exclusivity per pipeline in v1
+- edit and remove actions for reusable settings must be available in both the API and GUI in v1
+- delete operations must enforce safe-removal rules rather than breaking historical run lineage
 
 ## Versioning Rules
 

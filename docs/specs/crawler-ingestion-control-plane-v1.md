@@ -78,8 +78,6 @@ The following decisions are considered agreed for v1.
 - Apify `INPUT.json` is a runtime projection, not the canonical source of truth
 - manual and API-triggered runs are in scope for v1
 - scheduled runs are deferred to v2
-- v1 should expose global run history for the local operator
-- v1 should not introduce user-specific run history, user spaces, or profiles
 
 ## Non-Goals
 
@@ -171,14 +169,40 @@ Owns:
 
 Primary features:
 
-- create and edit search spaces
-- create and edit structured output destinations
-- create and edit pipeline definitions
-- create and edit runtime profiles
+- create, view, edit, archive, and safely remove search spaces
+- create, view, edit, archive, and safely remove output destinations
+- create, view, edit, archive, and safely remove pipeline definitions
+- create, view, edit, archive, and safely remove runtime profiles
 - validate configuration before activation
 - start, stop, pause, and resume runs
+- prevent duplicate concurrent starts for the same pipeline by default
 - version run-relevant config
 - track run history and lineage
+
+#### V1 resource-management rule
+
+V1 must provide full operator lifecycle management for reusable configuration records.
+
+Required behavior:
+
+- operators must be able to create, inspect, edit, and remove resources from the GUI and API
+- removal must be safe for versioned and historically referenced resources
+- hard delete should be allowed only when a resource is unused and has no historical run dependency
+- otherwise the system should offer archive or deactivate behavior instead of destructive deletion
+- the operator surface must expose these actions directly; they must not require manual file edits
+
+#### V1 run-start safety rule
+
+V1 must not allow accidental duplicate active runs for the same pipeline.
+
+Required behavior:
+
+- only one `queued` or `running` run may exist per pipeline by default
+- repeated `Start Run` clicks must not create multiple active runs
+- the control-plane API must enforce this server-side
+- the GUI must disable or debounce the start action after submit
+- if an active run already exists, the API should either return that run or reject the request with a clear conflict response
+- starting a new execution after completion should be an explicit follow-up action, not an accidental double-submit side effect
 
 ### 2. Search Space Management
 
@@ -246,7 +270,7 @@ Owns normalization and structured output generation.
 Primary features:
 
 - subscribe to detail artifact events
-- load HTML artifacts from platform-managed storage
+- load HTML artifacts from configured storage
 - run deterministic parsing and completeness checks
 - run LLM cleaning and extraction
 - write normalized outputs to one or more sinks
@@ -256,7 +280,7 @@ Primary features:
 V1 structured-output behavior should stay simple:
 
 - ingestion produces one canonical normalized document shape
-- MongoDB and downloadable JSON outputs receive that canonical shape
+- MongoDB and JSON-based sinks receive that canonical shape
 - output-template selection is deferred to v2
 
 ### 5. Storage and Output Routing
@@ -265,20 +289,25 @@ Owns artifacts and normalized output delivery.
 
 Primary features:
 
-- managed HTML artifact storage
+- configurable HTML artifact destination
 - configurable normalized document destinations
-- downloadable JSON output option
+- file output option
 - database output option
 - object storage option
 - support for one or many sinks per pipeline
 - retention and naming policy support
 
-V1 storage boundary:
+#### V1 artifact access rule
 
-- raw HTML artifact storage is platform-managed and not configured per pipeline
-- operators browse and download artifacts through the dashboard
-- normalized JSON may be exposed as a downloadable output without exposing storage plumbing in the UI
-- local filesystem and GCS remain valid backend implementations behind the same adapter boundary
+Artifacts should be operator-accessible through the control plane, not through manual filesystem browsing.
+
+Required behavior:
+
+- operators must be able to browse run artifacts from the dashboard
+- operators must be able to download HTML artifacts from the dashboard in the browser
+- raw local filesystem paths are an implementation detail and should not be the primary operator workflow
+- the artifact-store backend remains pluggable in v1
+- object storage is the preferred production-style backend, but not the only allowed v1 backend
 
 ### 6. Eventing and Messaging
 
@@ -328,17 +357,26 @@ Owns operator experience, not worker logic.
 
 Primary features:
 
-- create and edit search spaces
+- create, inspect, edit, archive, and remove search spaces
 - configure whether ingestion is enabled
-- configure structured output destinations
-- support full CRUD, archive, and safe-delete flows for reusable resources
+- create, inspect, edit, archive, and remove artifact and output destinations
+- create, inspect, edit, archive, and remove runtime profiles and pipelines
 - start and monitor runs
-- prevent duplicate concurrent starts for the same pipeline by default
-- inspect run detail including manifest, generated `INPUT.json`, worker status, logs, and event history
 - inspect crawl and ingestion results
-- browse and download persisted artifacts from the dashboard
 - review errors and retry candidates
-- deliver a polished and ergonomic operator UI before v1 is considered complete
+
+#### V1 GUI usability requirement
+
+The GUI is not just a proof-of-concept admin page in v1.
+
+Required behavior:
+
+- common operator actions must be discoverable without reading source code or raw JSON files
+- edit and remove actions must be present for reusable resources
+- destructive actions must use clear confirmation and dependency messaging
+- form layout, labels, defaults, and validation feedback must be polished enough for repeated daily use
+- run monitoring must surface the most important execution state without forcing operators into the filesystem
+- artifact browsing and download must be available from the dashboard for completed or in-progress runs where artifacts exist
 
 ## Domain Model
 
@@ -354,18 +392,20 @@ Suggested fields:
 - `name`
 - `description`
 - `sourceType`
-- `startUrls`
-- `maxItemsDefault`
-- `allowInactiveMarkingOnPartialRuns`
+- `seedUrls`
+- `urlMode`
+- `crawlDefaults`
+- `reconciliationPolicy`
 - `status`
 - `version`
 
 Notes:
 
-- `startUrls` are list/search pages in v1
-- `maxItemsDefault` remains on the source definition as a crawl breadth cap
-- crawler concurrency and request rate belong to `RuntimeProfile`, not `SearchSpace`
-- direct detail URLs and mixed URL classification are deferred to v2
+- `seedUrls` may contain list URLs, detail URLs, or mixed URLs if the source adapter supports it
+- `urlMode` may be `list_only`, `detail_only`, or `mixed`
+- source definitions should describe what to crawl, not worker throttling
+- a source-level max-items cap is acceptable in v1
+- crawler concurrency and request-rate controls should live in the runtime profile
 
 ### RuntimeProfile
 
@@ -375,11 +415,18 @@ Suggested fields:
 
 - `id`
 - `name`
-- `crawlerMaxConcurrency`
-- `crawlerMaxRequestsPerMinute`
+- `crawlerConcurrency`
+- `crawlerRateLimit`
 - `ingestionConcurrency`
-- `ingestionEnabled`
-- `debugLog`
+- `timeouts`
+- `retryPolicy`
+- `debugLogging`
+
+Notes:
+
+- `crawlerConcurrency` is crawler-side parallelism within one run
+- `crawlerRateLimit` is a requests-per-minute cap, not parallelism
+- `ingestionConcurrency` is ingestion-side parallelism within one run
 
 ### OutputDestination
 
@@ -397,8 +444,10 @@ Suggested fields:
 
 Supported destination types in v1:
 
+- `local_filesystem`
+- `object_storage`
 - `mongodb`
-- `downloadable_json`
+- `json_export`
 
 ### PipelineDefinition
 
@@ -410,6 +459,7 @@ Suggested fields:
 - `name`
 - `searchSpaceId`
 - `runtimeProfileId`
+- `artifactDestinationId`
 - `normalizedOutputDestinationIds`
 - `ingestionMode`
 - `runMode`
@@ -432,7 +482,7 @@ Suggested fields:
 - `pipelineVersion`
 - `searchSpaceSnapshot`
 - `runtimeSnapshot`
-- `artifactStorageSnapshot`
+- `artifactDestinationSnapshot`
 - `normalizedOutputDestinationSnapshots`
 - `ingestionMode`
 - `createdAt`
@@ -498,11 +548,6 @@ This section defines the intended shape, not final OpenAPI.
 - `PATCH /output-destinations/:id`
 - `POST /output-destinations/:id/validate`
 
-V1 note:
-
-- artifact storage itself is not an operator-managed output destination
-- the dashboard and later API expose artifacts for browse/download without exposing backend paths or buckets
-
 ### Pipelines
 
 - `POST /pipelines`
@@ -523,6 +568,13 @@ V1 note:
 - `POST /runs/:id/resume`
 - `POST /runs/:id/retry-failed-items`
 
+V1 run lifecycle guard:
+
+- the control plane must not create more than one active run per pipeline by default
+- `queued` and `running` runs count as active
+- a new run may be created only after the previous run reaches a terminal state such as `succeeded`, `completed_with_errors`, `failed`, or `stopped`
+- any future support for concurrent runs must be an explicit later-version policy, not the default v1 behavior
+
 ### Observability
 
 - `GET /runs/:id/events`
@@ -537,6 +589,9 @@ Event names are illustrative and should become a versioned contract.
 ### Run command events
 
 - `crawler.run.requested.v1`
+- `crawler.run.stop-requested.v1`
+- `crawler.run.pause-requested.v1`
+- `crawler.run.resume-requested.v1`
 
 Required payload fields:
 
@@ -547,19 +602,13 @@ Required payload fields:
 - `manifest`
 - `emittedAt`
 
-### Crawl and ingestion events
+### Crawl progress events
 
-V1 keeps the broker contract intentionally small.
-
-Required event families:
-
-- `crawler.run.requested.v1`
+- `crawler.run.started.v1`
+- `crawler.run.progress.v1`
 - `crawler.detail.captured.v1`
-- `crawler.run.finished.v1`
-- `ingestion.item.started.v1`
-- `ingestion.item.succeeded.v1`
-- `ingestion.item.failed.v1`
-- `ingestion.item.rejected.v1`
+- `crawler.run.completed.v1`
+- `crawler.run.failed.v1`
 
 `crawler.detail.captured.v1` should include:
 
@@ -573,8 +622,13 @@ Required event families:
 - `dedupeKey`
 - `capturedAt`
 
-In local v1, queued and running worker state may be persisted through control-plane runtime files
-in addition to broker events.
+### Ingestion events
+
+- `ingestion.item.started.v1`
+- `ingestion.item.succeeded.v1`
+- `ingestion.item.failed.v1`
+- `ingestion.item.rejected.v1`
+- `ingestion.run.completed.v1`
 
 Important distinction:
 
@@ -894,8 +948,6 @@ The following items are intentionally deferred from the imminent implementation:
 - operator-selectable structured-output templates
 - production worker deployment topology decisions
 - scheduled and cron-driven runs
-- user spaces and user profiles
-- agent-first API usage, MCP, API keys, and usage attribution
 
 ## Recommended Next Specs
 

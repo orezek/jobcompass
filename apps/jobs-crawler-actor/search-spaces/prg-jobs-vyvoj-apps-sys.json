@@ -1,0 +1,22 @@
+{
+  "searchSpaceId": "prg-jobs-vyvoj-apps-sys",
+  "description": "Praha, 0 km radius, IS/IT Vyvoj aplikaci a systemu,",
+  "startUrls": [
+    "https://www.jobs.cz/prace/praha/is-it-vyvoj-aplikaci-a-systemu/?locality%5Bradius%5D=0"
+  ],
+  "crawlDefaults": {
+    "maxItems": 2000,
+    "maxConcurrency": 1,
+    "maxRequestsPerMinute": 10,
+    "debugLog": false,
+    "proxyConfiguration": {
+      "useApifyProxy": false
+    }
+  },
+  "reconciliation": {
+    "allowInactiveMarkingOnPartialRuns": true
+  },
+  "ingestion": {
+    "triggerEnabledByDefault": true
+  }
+}

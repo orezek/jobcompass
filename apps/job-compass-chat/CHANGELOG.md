@@ -4,6 +4,12 @@ All notable changes to `job-compass-chat` are documented in this file.
 
 The format is based on Keep a Changelog principles and uses Semantic Versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- Replaced the Gemini planner response schema sent to Google with a provider-safe flat schema and kept strict internal validation after conversion, fixing runtime failures caused by unsupported `const` fields in generated JSON Schema.
+
 ## [1.0.0] - 2026-03-01
 
 ### Added

@@ -1,6 +1,6 @@
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 
-import { plannerDecisionSchema } from './planner-schema.js';
+import { geminiPlannerDecisionSchema, parseGeminiPlannerDecision } from './planner-schema.js';
 import { loadPromptMarkdown } from './prompt-loader.js';
 import type { PlannerDecision, PlannerRouter } from './types.js';
 
@@ -26,7 +26,7 @@ export class GeminiPlannerRouter implements PlannerRouter {
       thinkingConfig: config.thinkingLevel ? { thinkingLevel: config.thinkingLevel } : undefined,
     });
 
-    this.structuredModel = model.withStructuredOutput(plannerDecisionSchema, {
+    this.structuredModel = model.withStructuredOutput(geminiPlannerDecisionSchema, {
       name: 'job_compass_chat_planner_record',
     });
     this.promptContentPromise = loadPromptMarkdown(config.promptPath);
@@ -38,6 +38,6 @@ export class GeminiPlannerRouter implements PlannerRouter {
       `${promptContent}\n\n## User Request\n\n${userMessage}`,
     );
 
-    return plannerDecisionSchema.parse(result);
+    return parseGeminiPlannerDecision(geminiPlannerDecisionSchema.parse(result));
   }
 }
