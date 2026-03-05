@@ -7,10 +7,10 @@ settings:
 catalogs:
   default:
     '@google-cloud/pubsub':
-      specifier: 5.3.0
+      specifier: ^5.3.0
       version: 5.3.0
     '@google-cloud/storage':
-      specifier: 7.19.0
+      specifier: ^7.19.0
       version: 7.19.0
     '@langchain/google-genai':
       specifier: ^2.1.20
@@ -52,7 +52,7 @@ catalogs:
       specifier: ^9.0.0
       version: 9.39.2
     fastify:
-      specifier: 5.7.4
+      specifier: ^5.6.0
       version: 5.7.4
     ink:
       specifier: ^6.8.0
@@ -64,7 +64,7 @@ catalogs:
       specifier: ^1.2.25
       version: 1.2.25
     mongodb:
-      specifier: 7.1.0
+      specifier: ^7.1.0
       version: 7.1.0
     next:
       specifier: ^16.1.6
@@ -165,15 +165,30 @@ importers:
       '@google-cloud/storage':
         specifier: 'catalog:'
         version: 7.19.0
+      '@langchain/google-genai':
+        specifier: 'catalog:'
+        version: 2.1.20(@langchain/core@1.1.27(@opentelemetry/api@1.9.0))
+      '@langchain/langgraph':
+        specifier: 'catalog:'
+        version: 1.1.5(@langchain/core@1.1.27(@opentelemetry/api@1.9.0))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod@4.3.5)
+      '@repo/control-plane-adapters':
+        specifier: workspace:*
+        version: link:../../packages/control-plane-adapters
       '@repo/control-plane-contracts':
         specifier: workspace:*
         version: link:../../packages/control-plane-contracts
       '@repo/env-config':
         specifier: workspace:*
         version: link:../../packages/env-config
+      cheerio:
+        specifier: 'catalog:'
+        version: 1.2.0
       fastify:
         specifier: 'catalog:'
         version: 5.7.4
+      langchain:
+        specifier: 'catalog:'
+        version: 1.2.25(@langchain/core@1.1.27(@opentelemetry/api@1.9.0))(@opentelemetry/api@1.9.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       mongodb:
         specifier: 'catalog:'
         version: 7.1.0(socks@2.8.7)

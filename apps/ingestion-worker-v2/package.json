@@ -15,14 +15,20 @@
     "start": "node dist/app.js",
     "dev": "tsx watch src/app.ts",
     "lint": "eslint . --max-warnings 0",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "test:e2e": "tsx --test test/e2e/**/*.test.ts"
   },
   "dependencies": {
+    "@langchain/google-genai": "catalog:",
+    "@langchain/langgraph": "catalog:",
     "@google-cloud/pubsub": "catalog:",
     "@google-cloud/storage": "catalog:",
+    "@repo/control-plane-adapters": "workspace:*",
     "@repo/control-plane-contracts": "workspace:*",
     "@repo/env-config": "workspace:*",
+    "cheerio": "catalog:",
     "fastify": "catalog:",
+    "langchain": "catalog:",
     "mongodb": "catalog:",
     "zod": "catalog:"
   },

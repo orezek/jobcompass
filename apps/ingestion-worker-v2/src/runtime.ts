@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import type { Topic } from '@google-cloud/pubsub';
 import type { Bucket, Storage } from '@google-cloud/storage';
 import {
@@ -20,7 +19,9 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Collection, MongoClient } from 'mongodb';
 import { z } from 'zod';
 import type { EnvSchema } from './env.js';
-import { normalizeHtml, type NormalizedJobAdDoc } from './normalization.js';
+import { IncompleteDetailPageError } from './full-model/html-detail-loader.js';
+import { FullModelParser } from './full-model/parser.js';
+import type { UnifiedJobAd } from './full-model/schema.js';
 
 type IngestionStartRunRequestV2 = z.infer<typeof ingestionStartRunRequestV2Schema>;
 type CrawlerDetailCapturedEvent = z.infer<typeof crawlerDetailCapturedEventSchema>;
@@ -91,6 +92,11 @@ type RuntimeDeps = {
   mongoClient: MongoClient;
 };
 
+type PersistedNormalizedJobAdDoc = UnifiedJobAd & {
+  dedupeKey: string;
+  createdAt?: string;
+};
+
 type StartRunResponse = z.infer<typeof startRunAcceptedResponseV2Schema>;
 
 export class ConflictError extends Error {
@@ -103,22 +109,6 @@ export class NotFoundError extends Error {
 
 function nowIso(): string {
   return new Date().toISOString();
-}
-
-function parseGsUri(uri: string): { bucket: string; objectPath: string } {
-  const stripped = uri.replace(/^gs:\/\//, '');
-  const firstSlashIndex = stripped.indexOf('/');
-  if (firstSlashIndex === -1) {
-    throw new Error(`Invalid gs:// URI "${uri}".`);
-  }
-
-  const bucket = stripped.slice(0, firstSlashIndex);
-  const objectPath = stripped.slice(firstSlashIndex + 1);
-  if (!bucket || !objectPath) {
-    throw new Error(`Invalid gs:// URI "${uri}".`);
-  }
-
-  return { bucket, objectPath };
 }
 
 function buildRunTriggerId(run: RunState): string {
@@ -135,8 +125,27 @@ export class IngestionWorkerRuntime {
   private activeWorkers = 0;
   private pubSubConsumerReady = false;
   private persistenceReady = false;
+  private readonly fullModelParser: FullModelParser;
 
-  public constructor(private readonly deps: RuntimeDeps) {}
+  public constructor(private readonly deps: RuntimeDeps) {
+    this.fullModelParser = new FullModelParser({
+      logger: deps.logger,
+      parserBackend: deps.env.INGESTION_PARSER_BACKEND,
+      parserVersion: deps.env.PARSER_VERSION,
+      logTextTransformContent: deps.env.LOG_TEXT_TRANSFORM_CONTENT,
+      textTransformPreviewChars: deps.env.LOG_TEXT_TRANSFORM_PREVIEW_CHARS,
+      minRelevantTextChars: deps.env.DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS,
+      llmExtractorPromptName: deps.env.LLM_EXTRACTOR_PROMPT_NAME,
+      llmCleanerPromptName: deps.env.LLM_CLEANER_PROMPT_NAME,
+      geminiApiKey: deps.env.GEMINI_API_KEY,
+      langsmithApiKey: deps.env.LANGSMITH_API_KEY,
+      geminiModel: deps.env.GEMINI_MODEL,
+      geminiTemperature: deps.env.GEMINI_TEMPERATURE,
+      geminiThinkingLevel: deps.env.GEMINI_THINKING_LEVEL,
+      geminiInputPriceUsdPerMillionTokens: deps.env.GEMINI_INPUT_PRICE_USD_PER_1M_TOKENS,
+      geminiOutputPriceUsdPerMillionTokens: deps.env.GEMINI_OUTPUT_PRICE_USD_PER_1M_TOKENS,
+    });
+  }
 
   public async initialize(): Promise<void> {
     await this.deps.mongoClient.db(this.deps.env.MONGODB_DB_NAME).command({ ping: 1 });
@@ -442,21 +451,24 @@ export class IngestionWorkerRuntime {
     await this.publishIngestionItemEvent('ingestion.item.started', run, item);
 
     try {
-      const html = await this.loadHtml(item.detailHtmlPath);
-      const normalizedDoc = normalizeHtml({
-        crawlRunId: item.crawlRunId,
+      const unifiedDoc = await this.fullModelParser.parse({
         runId: run.runId,
+        crawlRunId: item.crawlRunId,
         searchSpaceId: item.searchSpaceId,
         source: item.source,
         sourceId: item.sourceId,
-        dedupeKey: item.dedupeKey,
-        html,
-        parserVersion: this.deps.env.SERVICE_VERSION,
+        detailHtmlPath: item.detailHtmlPath,
+        datasetFileName: item.datasetFileName ?? 'dataset.json',
+        datasetRecordIndex: item.datasetRecordIndex ?? 0,
         listing: item.listing,
       });
+      const normalizedDoc: PersistedNormalizedJobAdDoc = {
+        ...unifiedDoc,
+        dedupeKey: item.dedupeKey,
+      };
 
       await this.getNormalizedCollectionForRun(run).updateOne(
-        { dedupeKey: normalizedDoc.dedupeKey },
+        { dedupeKey: item.dedupeKey },
         {
           $set: normalizedDoc,
           $setOnInsert: {
@@ -499,14 +511,22 @@ export class IngestionWorkerRuntime {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      run.counters.failed += 1;
-      await this.markItemTriggerFailed(run, triggerId, message);
-      await this.publishIngestionItemEvent('ingestion.item.failed', run, item, {
-        error: {
-          name: error instanceof Error ? error.name : 'IngestionItemError',
-          message,
-        },
-      });
+      if (error instanceof IncompleteDetailPageError) {
+        run.counters.rejected += 1;
+        await this.markItemTriggerFailed(run, triggerId, message);
+        await this.publishIngestionItemEvent('ingestion.item.rejected', run, item, {
+          reason: 'incomplete_detail_page',
+        });
+      } else {
+        run.counters.failed += 1;
+        await this.markItemTriggerFailed(run, triggerId, message);
+        await this.publishIngestionItemEvent('ingestion.item.failed', run, item, {
+          error: {
+            name: error instanceof Error ? error.name : 'IngestionItemError',
+            message,
+          },
+        });
+      }
     }
   }
 
@@ -737,16 +757,6 @@ export class IngestionWorkerRuntime {
     await this.publishRunFinished(run, status, stopReason);
   }
 
-  private async loadHtml(pathOrUri: string): Promise<string> {
-    if (pathOrUri.startsWith('gs://')) {
-      const { bucket, objectPath } = parseGsUri(pathOrUri);
-      const [content] = await this.deps.storage.bucket(bucket).file(objectPath).download();
-      return content.toString('utf8');
-    }
-
-    return readFile(pathOrUri, 'utf8');
-  }
-
   private buildDownloadablePath(run: RunState, item: ItemInput): string {
     const prefix = this.deps.env.OUTPUTS_PREFIX.replace(/^\/+|\/+$/g, '');
     const fileName = `${item.sourceId}-${randomUUID()}.json`;
@@ -872,11 +882,11 @@ export class IngestionWorkerRuntime {
       .collection<V2IngestionRunSummaryProjection>(targets.ingestionRunSummariesCollection);
   }
 
-  private getNormalizedCollectionForRun(run: RunState): Collection<NormalizedJobAdDoc> {
+  private getNormalizedCollectionForRun(run: RunState): Collection<PersistedNormalizedJobAdDoc> {
     const targets = run.request.persistenceTargets;
     return this.deps.mongoClient
       .db(targets.dbName)
-      .collection<NormalizedJobAdDoc>(targets.normalizedJobAdsCollection);
+      .collection<PersistedNormalizedJobAdDoc>(targets.normalizedJobAdsCollection);
   }
 
   private async ensureIndexesForRun(run: RunState): Promise<void> {

@@ -28,6 +28,17 @@ const optionalStringSchema = z.preprocess((value) => {
   return value;
 }, z.string().min(1).optional());
 
+const thinkingLevelSchema = z.preprocess(
+  (value) => {
+    if (value === undefined || value === null || value === '') {
+      return null;
+    }
+
+    return value;
+  },
+  z.enum(['THINKING_LEVEL_UNSPECIFIED', 'LOW', 'MEDIUM', 'HIGH']).nullable(),
+);
+
 export const envSchema = z
   .object({
     PORT: z.coerce.number().int().min(1).max(65535).default(3020),
@@ -60,6 +71,20 @@ export const envSchema = z
       .min(1)
       .default('ingestion_trigger_requests'),
     MONGODB_NORMALIZED_JOB_ADS_COLLECTION: z.string().trim().min(1).default('normalized_job_ads'),
+    INGESTION_PARSER_BACKEND: z.enum(['gemini', 'fixture']).default('gemini'),
+    GEMINI_API_KEY: optionalStringSchema,
+    LANGSMITH_API_KEY: optionalStringSchema,
+    LLM_EXTRACTOR_PROMPT_NAME: z.string().default('jobcompass-job-ad-structured-extractor'),
+    LLM_CLEANER_PROMPT_NAME: z.string().default('jobcompass-job-ad-text-cleaner'),
+    GEMINI_MODEL: z.string().default('gemini-3-flash-preview'),
+    GEMINI_TEMPERATURE: z.coerce.number().min(0).max(1).default(0),
+    GEMINI_THINKING_LEVEL: thinkingLevelSchema.default('LOW'),
+    GEMINI_INPUT_PRICE_USD_PER_1M_TOKENS: z.coerce.number().nonnegative().default(0.5),
+    GEMINI_OUTPUT_PRICE_USD_PER_1M_TOKENS: z.coerce.number().nonnegative().default(3),
+    DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS: z.coerce.number().int().min(100).max(300_000).default(700),
+    LOG_TEXT_TRANSFORM_CONTENT: toBoolean.default(false),
+    LOG_TEXT_TRANSFORM_PREVIEW_CHARS: z.coerce.number().int().min(120).max(20_000).default(1200),
+    PARSER_VERSION: z.string().default('ingestion-worker-v2-v1-model'),
   })
   .superRefine((value, context) => {
     if (value.CONTROL_AUTH_MODE === 'token' && !value.CONTROL_SHARED_TOKEN) {
@@ -75,6 +100,22 @@ export const envSchema = z
         code: z.ZodIssueCode.custom,
         path: ['CONTROL_JWT_PUBLIC_KEY'],
         message: 'CONTROL_JWT_PUBLIC_KEY is required when CONTROL_AUTH_MODE=jwt.',
+      });
+    }
+
+    if (value.INGESTION_PARSER_BACKEND === 'gemini' && !value.GEMINI_API_KEY) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['GEMINI_API_KEY'],
+        message: 'GEMINI_API_KEY is required when INGESTION_PARSER_BACKEND=gemini.',
+      });
+    }
+
+    if (value.INGESTION_PARSER_BACKEND === 'gemini' && !value.LANGSMITH_API_KEY) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['LANGSMITH_API_KEY'],
+        message: 'LANGSMITH_API_KEY is required when INGESTION_PARSER_BACKEND=gemini.',
       });
     }
   });

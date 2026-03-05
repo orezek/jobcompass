@@ -7,6 +7,7 @@ Lightweight ingestion worker for V2 architecture.
 - Pub/Sub event consumption (`crawler.detail.captured`, `crawler.run.finished`)
 - MongoDB persistence (`ingestion_trigger_requests`, `ingestion_run_summaries`, `normalized_job_ads`)
 - GCS JSON output writes
+- V1-compatible full normalized job model (`listing`, `detail`, `rawDetailPage`, `ingestion`)
 
 ## Bootstrap `.env`
 
@@ -23,6 +24,9 @@ OUTPUTS_BUCKET=your-output-bucket
 OUTPUTS_PREFIX=ingestion
 MONGODB_URI=mongodb://localhost:27017
 MONGODB_DB_NAME=crawl-ops
+INGESTION_PARSER_BACKEND=gemini
+GEMINI_API_KEY=replace-me
+LANGSMITH_API_KEY=replace-me
 LOG_LEVEL=info
 MAX_CONCURRENT_RUNS=4
 ```
@@ -36,6 +40,17 @@ ENABLE_PUBSUB_CONSUMER=true
 MONGODB_INGESTION_RUN_SUMMARIES_COLLECTION=ingestion_run_summaries
 MONGODB_INGESTION_TRIGGER_REQUESTS_COLLECTION=ingestion_trigger_requests
 MONGODB_NORMALIZED_JOB_ADS_COLLECTION=normalized_job_ads
+LLM_EXTRACTOR_PROMPT_NAME=jobcompass-job-ad-structured-extractor
+LLM_CLEANER_PROMPT_NAME=jobcompass-job-ad-text-cleaner
+GEMINI_MODEL=gemini-3-flash-preview
+GEMINI_TEMPERATURE=0
+GEMINI_THINKING_LEVEL=LOW
+GEMINI_INPUT_PRICE_USD_PER_1M_TOKENS=0.5
+GEMINI_OUTPUT_PRICE_USD_PER_1M_TOKENS=3
+DETAIL_PAGE_MIN_RELEVANT_TEXT_CHARS=700
+LOG_TEXT_TRANSFORM_CONTENT=false
+LOG_TEXT_TRANSFORM_PREVIEW_CHARS=1200
+PARSER_VERSION=ingestion-worker-v2-v1-model
 ```
 
 ## Endpoints
@@ -52,6 +67,29 @@ MONGODB_NORMALIZED_JOB_ADS_COLLECTION=normalized_job_ads
 
 ```bash
 pnpm -C apps/ingestion-worker-v2 dev
+```
+
+## Run E2E tests (MongoDB Atlas/shared DB)
+
+The E2E suite is in `test/e2e` and uses editable stubs from `test/e2e/stubs` for Pub/Sub and
+GCS while writing real run data to MongoDB.
+
+Set these variables before running:
+
+```bash
+export INGESTION_WORKER_V2_E2E_MONGODB_URI='mongodb+srv://...'
+export INGESTION_WORKER_V2_E2E_DB_NAME='ingestion_worker_v2_shared_e2e'
+export INGESTION_WORKER_V2_E2E_CRAWL_RUN_SUMMARIES_COLLECTION='crawl_run_summaries'
+export INGESTION_WORKER_V2_E2E_INGESTION_RUN_SUMMARIES_COLLECTION='ingestion_run_summaries'
+export INGESTION_WORKER_V2_E2E_INGESTION_TRIGGER_REQUESTS_COLLECTION='ingestion_trigger_requests'
+export INGESTION_WORKER_V2_E2E_NORMALIZED_JOB_ADS_COLLECTION='normalized_job_ads'
+export INGESTION_PARSER_BACKEND='fixture'
+```
+
+Run:
+
+```bash
+pnpm -C apps/ingestion-worker-v2 test:e2e
 ```
 
 ## Start run via curl

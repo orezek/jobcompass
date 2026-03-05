@@ -245,6 +245,8 @@ async function main(): Promise<void> {
       subscription: subscriptionName,
       outputBucket: envs.OUTPUTS_BUCKET,
       mongoDb: envs.MONGODB_DB_NAME,
+      parserBackend: envs.INGESTION_PARSER_BACKEND,
+      parserVersion: envs.PARSER_VERSION,
     },
     'Ingestion worker v2 started.',
   );
