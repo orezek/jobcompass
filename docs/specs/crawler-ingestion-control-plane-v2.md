@@ -36,6 +36,14 @@ v2.0 should move from local process/file coupling to explicit service contracts:
 - services communicate through broker events and durable shared storage contracts
 - local filesystem state is dev-only and not production system-of-record
 
+platform decision (canonical for v2.0):
+
+- worker HTTP APIs use Fastify for low-overhead, schema-driven contracts
+- production infrastructure runs on Google Cloud Platform (GCP)
+- event transport uses GCP Pub/Sub
+- artifact/output blob storage uses GCP Cloud Storage buckets
+- services run as containerized workloads on GCP runtime services
+
 ### Service Boundaries
 
 #### 1. Control UI Service
@@ -193,6 +201,8 @@ All writes should be API-owned and idempotency-aware.
 - `PUBSUB_EVENTS_TOPIC` (crawler publish topic)
 - `ARTIFACTS_BUCKET`
 - `ARTIFACTS_PREFIX` (optional)
+- `MONGODB_URI`
+- `MONGODB_DB_NAME`
 - `LOG_LEVEL`
 - `MAX_CONCURRENT_RUNS`
 
@@ -207,8 +217,14 @@ All writes should be API-owned and idempotency-aware.
 - `PUBSUB_EVENTS_TOPIC`
 - `OUTPUTS_BUCKET`
 - `OUTPUTS_PREFIX` (optional)
+- `MONGODB_URI`
+- `MONGODB_DB_NAME`
 - `LOG_LEVEL`
 - `MAX_CONCURRENT_RUNS`
+
+implementation note:
+
+- crawler and ingestion REST APIs should be implemented with Fastify and JSON schema validation
 
 ### Crawler REST Endpoints
 
@@ -261,6 +277,13 @@ security constraint:
 - Buckets: HTML dumps + downloadable JSON payloads
 - MongoDB: control config + execution ledger + telemetry projections (source of truth), not
   Pub/Sub alone
+
+gcp mapping (canonical):
+
+- Pub/Sub = Google Cloud Pub/Sub topics/subscriptions
+- Buckets = Google Cloud Storage buckets for artifacts/outputs
+- Service runtime = GCP-managed container runtime
+- MongoDB can be hosted on Atlas or self-managed on GCP, but remains the persistence layer
 
 ## v2.0 Event Contract Shape
 
@@ -375,12 +398,12 @@ Collection and database naming remains unchanged in v2.0 routing:
 recommended production topology:
 
 - Control UI: Vercel (or equivalent web runtime)
-- Control API / Orchestrator: container runtime (Cloud Run or equivalent)
-- Crawler worker service: container runtime (job or service shape)
-- Ingestion worker service: container runtime (event/service shape)
-- Broker: managed queue/pubsub
+- Control API / Orchestrator: GCP Cloud Run
+- Crawler worker service: GCP Cloud Run (job or service shape)
+- Ingestion worker service: GCP Cloud Run (event/service shape)
+- Broker: GCP Pub/Sub
 - DB: managed MongoDB (initially)
-- Object storage: managed bucket(s)
+- Object storage: GCP Cloud Storage buckets
 
 non-goal for v2.0 production:
 
