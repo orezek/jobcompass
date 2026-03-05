@@ -27,6 +27,7 @@ INGESTION_PARSER_BACKEND=gemini
 GEMINI_API_KEY=replace-me
 LANGSMITH_API_KEY=replace-me
 LOG_LEVEL=info
+LOG_PRETTY=false
 MAX_CONCURRENT_RUNS=4
 ```
 
@@ -52,9 +53,26 @@ PARSER_VERSION=ingestion-worker-v2-v1-model
 When `ENABLE_PUBSUB_CONSUMER=true` and `PUBSUB_AUTO_CREATE_SUBSCRIPTION=true`, startup now
 auto-creates both the Pub/Sub topic and subscription if they do not exist.
 The runtime service account must have Pub/Sub create permissions.
+Set `LOG_PRETTY=true` for human-readable local logs (TTY only); otherwise logs stay structured JSON.
 
 The `.env.example` file is intentionally minimal and aligned with the v2 bootstrap spec.
 Use the optional block above for parser/runtime tuning.
+
+## Database routing policy
+
+`MONGODB_URI` is the only MongoDB bootstrap variable in `.env`.
+
+Database routing is provided per run through `StartRun.persistenceTargets.dbName` and must be
+owned by the control plane/orchestrator, not the worker bootstrap env.
+
+Recommended v2 policy:
+
+- map one logical database to one pipeline (isolation boundary)
+- derive database names from stable pipeline identity (pipeline id), not mutable display name
+- enforce backend-safe naming limits during generation (current hard safety target: max 38 chars)
+- keep generation deterministic (`same pipeline id -> same dbName`)
+- keep collection names stable (`crawl_run_summaries`, `ingestion_run_summaries`,
+  `ingestion_trigger_requests`, `normalized_job_ads`)
 
 ## Endpoints
 

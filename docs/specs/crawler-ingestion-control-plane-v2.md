@@ -289,6 +289,16 @@ security constraint:
 - workers receive credentials from bootstrap env/secrets only
 - control plane sends logical routing targets (db + collection names), not secrets
 
+database routing constraint (canonical for v2):
+
+- `persistenceTargets.dbName` is required in worker-facing `StartRun`
+- control plane/orchestrator owns db name creation and mapping
+- mapping rule: one logical database per pipeline
+- db identity must be based on stable pipeline id (not mutable pipeline display name)
+- db name generation must be deterministic and length-bounded (current safety target: max 38 chars)
+- workers must treat `dbName` as an input contract and must not synthesize fallback DB names from env
+- worker bootstrap env keeps only `MONGODB_URI` for credentials/connectivity
+
 ### Data Flow (Execution Runtime)
 
 - Pub/Sub: event stream (`crawler.run.started`, `crawler.detail.captured`,

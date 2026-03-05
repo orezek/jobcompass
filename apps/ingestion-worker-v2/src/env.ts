@@ -47,6 +47,7 @@ export const envSchema = z
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
+    LOG_PRETTY: toBoolean.default(false),
     MAX_CONCURRENT_RUNS: z.coerce.number().int().positive().max(128).default(4),
     CONTROL_AUTH_MODE: z.enum(['token', 'jwt']).default('token'),
     CONTROL_SHARED_TOKEN: optionalStringSchema,

@@ -238,6 +238,7 @@ function buildRuntimeEnv(): EnvSchema {
     SERVICE_NAME: 'ingestion-worker-v2-e2e',
     SERVICE_VERSION: '2.0.0-test',
     LOG_LEVEL: 'silent',
+    LOG_PRETTY: false,
     MAX_CONCURRENT_RUNS: 2,
     CONTROL_AUTH_MODE: 'token',
     CONTROL_SHARED_TOKEN: 'test-token',

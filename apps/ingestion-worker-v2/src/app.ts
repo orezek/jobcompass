@@ -42,9 +42,23 @@ function isAuthExemptPath(pathname: string): boolean {
 
 async function main(): Promise<void> {
   const app = Fastify({
-    logger: {
-      level: envs.LOG_LEVEL,
-    },
+    logger:
+      envs.LOG_PRETTY && process.stdout.isTTY
+        ? {
+            level: envs.LOG_LEVEL,
+            transport: {
+              target: 'pino-pretty',
+              options: {
+                colorize: true,
+                translateTime: 'SYS:standard',
+                ignore: 'pid,hostname',
+                singleLine: false,
+              },
+            },
+          }
+        : {
+            level: envs.LOG_LEVEL,
+          },
   });
 
   const mongoClient = new MongoClient(envs.MONGODB_URI);
