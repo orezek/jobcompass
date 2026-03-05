@@ -575,10 +575,10 @@ test(
       assert.equal(normalizedDocs.length, goldenParityCases.length);
 
       for (const fixtureCase of goldenParityCases) {
-        const expectedDedupeKey = `jobs.cz:search-space-e2e:${runId}:${fixtureCase.sourceId}`;
         const normalizedDoc = normalizedDocs.find((doc) => doc.sourceId === fixtureCase.sourceId);
         assert.ok(normalizedDoc, `Missing normalized doc for ${fixtureCase.sourceId}`);
-        assert.equal(normalizedDoc.dedupeKey, expectedDedupeKey);
+        assert.equal('dedupeKey' in normalizedDoc, false);
+        assert.equal('createdAt' in normalizedDoc, false);
         assert.equal(normalizedDoc.id, `jobs.cz:${fixtureCase.sourceId}`);
         assert.equal(normalizedDoc.source, 'jobs.cz');
         assert.equal(normalizedDoc.sourceId, fixtureCase.sourceId);
