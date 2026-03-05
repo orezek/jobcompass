@@ -12,29 +12,35 @@ Lightweight ingestion worker for V2 architecture.
 ## Bootstrap `.env`
 
 ```bash
+CONTROL_SHARED_TOKEN=replace-me
+GCP_PROJECT_ID=your-gcp-project
+PUBSUB_EVENTS_TOPIC=run-events
+OUTPUTS_BUCKET=your-output-bucket
+MONGODB_URI=mongodb://localhost:27017
+INGESTION_PARSER_BACKEND=fixture
+```
+
+Production parser backend (Gemini):
+
+```bash
+INGESTION_PARSER_BACKEND=gemini
+GEMINI_API_KEY=replace-me
+LANGSMITH_API_KEY=replace-me
+```
+
+Optional overrides:
+
+```bash
 PORT=3020
 SERVICE_NAME=ingestion-worker
 SERVICE_VERSION=2.0.0
 CONTROL_AUTH_MODE=token
-CONTROL_SHARED_TOKEN=replace-me
-GCP_PROJECT_ID=your-gcp-project
-PUBSUB_EVENTS_TOPIC=run-events
+CONTROL_JWT_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----...
 PUBSUB_EVENTS_SUBSCRIPTION=ingestion-worker-events-subscription
-OUTPUTS_BUCKET=your-output-bucket
 OUTPUTS_PREFIX=ingestion
-MONGODB_URI=mongodb://localhost:27017
-INGESTION_PARSER_BACKEND=gemini
-GEMINI_API_KEY=replace-me
-LANGSMITH_API_KEY=replace-me
 LOG_LEVEL=info
 LOG_PRETTY=false
 MAX_CONCURRENT_RUNS=4
-```
-
-Optional:
-
-```bash
-CONTROL_JWT_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----...
 PUBSUB_AUTO_CREATE_SUBSCRIPTION=true
 ENABLE_PUBSUB_CONSUMER=true
 LLM_EXTRACTOR_PROMPT_NAME=jobcompass-job-ad-structured-extractor
@@ -109,6 +115,19 @@ The worker supports two execution modes from the same `POST /v1/runs` endpoint:
 - Worker waits for `crawler.detail.captured` events to enqueue items.
 - Run finalizes only after `crawler.run.finished` is received and queue/active items are drained.
 - If `crawler.run.finished` is never received, run stays `running`.
+
+Current concurrency semantics:
+
+- The worker accepts multiple runs at once.
+- `MAX_CONCURRENT_RUNS` is a global item-processing pool across all runs.
+- `runtimeSnapshot.ingestionConcurrency` is currently persisted in summary telemetry and is not used
+  as a scheduler throttle.
+
+Event correlation safety:
+
+- In event-driven mode, each active run must use a unique `inputRef.crawlRunId`.
+- If multiple running runs match incoming crawler events by `crawlRunId`, those events are skipped
+  as ambiguous.
 
 ## Local run
 

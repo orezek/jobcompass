@@ -283,6 +283,21 @@ execution modes:
 - run finalization requires `crawler.run.finished` plus drained queue/active items
 - without `crawler.run.finished`, run remains `running`
 
+concurrency semantics (current runtime behavior):
+
+- worker can accept multiple `StartRun` requests and keep multiple runs in `running` state
+- scheduling is controlled by one global worker pool via `MAX_CONCURRENT_RUNS`
+- `runtimeSnapshot.ingestionConcurrency` is currently telemetry/projection metadata, not a scheduling
+  throttle
+- item execution order is from a shared queue across runs; there is no per-run isolated worker pool
+
+event correlation constraint (required for event-driven mode):
+
+- each active ingestion run must have a unique `inputRef.crawlRunId`
+- if multiple running runs match the same crawler event by `crawlRunId`, ingestion worker skips that
+  event as ambiguous
+- control plane/orchestrator must generate unique crawl run identifiers per run start
+
 security constraint:
 
 - `StartRun` must not include database credentials or secret material
@@ -761,6 +776,29 @@ Potential scope:
 The guiding rule is:
 
 - execution is run-based, not user-session-based
+
+### V3 Candidate: Provider/Model-Independent Ingestion
+
+V3 should decouple ingestion parsing from any single model provider and model name.
+
+Recommended direction:
+
+- keep worker bootstrap minimal and provider-neutral
+- introduce a parser provider interface (adapter contract) in ingestion worker runtime
+- move provider/model selection to control-plane managed runtime config (passed via `StartRun`)
+- allow multiple providers behind one contract (for example Gemini, OpenAI-compatible, local models)
+- make model routing explicit per pipeline/runtime profile without changing worker code
+
+Contract implications:
+
+- keep `StartRun` stable while adding a provider-agnostic parser config section
+- avoid provider-specific env variables as worker hard requirements in the long-term contract
+- keep secrets in runtime secret stores; pass only logical provider/model identifiers in `StartRun`
+
+Transition rule:
+
+- v2 can continue with current Gemini-first implementation
+- v3 introduces adapter-based provider independence without changing persistence schemas
 
 ### V3-V4 Candidate: Deeper Persistence Decoupling
 
