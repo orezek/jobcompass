@@ -85,7 +85,11 @@ pnpm -C apps/ingestion-worker-v2 dev
 
 The E2E suite is in `test/e2e` and uses editable stubs from `test/e2e/stubs` for Pub/Sub and
 GCS while writing real run data to MongoDB.
-The fixture `test/fixtures/job-detail.html` is copied from a real V1 HTML artifact.
+The fixtures use real V1 HTML dumps:
+
+- `test/fixtures/job-html-2001063102.html`
+- `test/fixtures/job-html-2001090812.html`
+- `test/fixtures/job-html-2001095645.html`
 
 Set these variables before running:
 
@@ -97,7 +101,11 @@ export INGESTION_WORKER_V2_E2E_INGESTION_RUN_SUMMARIES_COLLECTION='ingestion_run
 export INGESTION_WORKER_V2_E2E_INGESTION_TRIGGER_REQUESTS_COLLECTION='ingestion_trigger_requests'
 export INGESTION_WORKER_V2_E2E_NORMALIZED_JOB_ADS_COLLECTION='normalized_job_ads'
 export INGESTION_WORKER_V2_E2E_KEEP_ARTIFACTS='true'
-export INGESTION_PARSER_BACKEND='fixture'
+export INGESTION_WORKER_V2_E2E_PARSER_BACKEND='gemini'
+export INGESTION_WORKER_V2_E2E_GEMINI_API_KEY='...'
+export INGESTION_WORKER_V2_E2E_LANGSMITH_API_KEY='...'
+export INGESTION_WORKER_V2_E2E_GEMINI_MODEL='gemini-3-flash-preview'
+export INGESTION_WORKER_V2_E2E_PARSER_VERSION='ingestion-worker-v2-v1-model-test'
 ```
 
 Template file: `.env.e2e.example`

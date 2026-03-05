@@ -54,6 +54,26 @@ type RunCounters = {
   rejected: number;
 };
 
+type LlmStatsAccumulator = {
+  calls: number;
+  callDurations: number[];
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  inputCostUsd: number;
+  outputCostUsd: number;
+  totalCostUsd: number;
+};
+
+type RunMetricsAccumulator = {
+  parserVersion: string | null;
+  extractorModel: string | null;
+  timeToProcssSeconds: number[];
+  llmCleaner: LlmStatsAccumulator;
+  llmExtractor: LlmStatsAccumulator;
+  llmTotal: LlmStatsAccumulator;
+};
+
 type RunState = {
   request: IngestionStartRunRequestV2;
   runId: string;
@@ -68,6 +88,7 @@ type RunState = {
   queueDepth: number;
   activeItems: number;
   counters: RunCounters;
+  metrics: RunMetricsAccumulator;
   outputs: RunOutputRef[];
   seenDedupeKeys: Set<string>;
   lastHeartbeatAt: string;
@@ -104,6 +125,49 @@ export class NotFoundError extends Error {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function average(values: number[]): number {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function percentile(values: number[], ratio: number): number {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const rank = Math.ceil(sorted.length * ratio) - 1;
+  const safeIndex = Math.min(Math.max(rank, 0), sorted.length - 1);
+  return sorted[safeIndex] ?? 0;
+}
+
+function createLlmStatsAccumulator(): LlmStatsAccumulator {
+  return {
+    calls: 0,
+    callDurations: [],
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    inputCostUsd: 0,
+    outputCostUsd: 0,
+    totalCostUsd: 0,
+  };
+}
+
+function createRunMetricsAccumulator(): RunMetricsAccumulator {
+  return {
+    parserVersion: null,
+    extractorModel: null,
+    timeToProcssSeconds: [],
+    llmCleaner: createLlmStatsAccumulator(),
+    llmExtractor: createLlmStatsAccumulator(),
+    llmTotal: createLlmStatsAccumulator(),
+  };
 }
 
 function buildRunTriggerId(run: RunState): string {
@@ -218,6 +282,7 @@ export class IngestionWorkerRuntime {
         failed: 0,
         rejected: 0,
       },
+      metrics: createRunMetricsAccumulator(),
       outputs: [],
       seenDedupeKeys: new Set<string>(),
       lastHeartbeatAt: startedAt,
@@ -474,6 +539,7 @@ export class IngestionWorkerRuntime {
           contentType: 'application/json',
         });
 
+      this.recordRunMetrics(run, normalizedDoc);
       run.counters.processed += 1;
       run.outputs.push({
         sourceId: item.sourceId,
@@ -483,7 +549,10 @@ export class IngestionWorkerRuntime {
         createdAt: nowIso(),
       });
 
-      await this.markItemTriggerSucceeded(run, triggerId, run.runId);
+      await this.markItemTriggerSucceeded(run, triggerId, run.runId, {
+        totalTokensUsed: normalizedDoc.ingestion.llmTotalTokens,
+        totalEstimatedCostUsd: normalizedDoc.ingestion.llmTotalCostUsd,
+      });
       await this.publishIngestionItemEvent('ingestion.item.succeeded', run, item, {
         sinkResults: [
           {
@@ -517,6 +586,88 @@ export class IngestionWorkerRuntime {
         });
       }
     }
+  }
+
+  private recordLlmStats(
+    aggregate: LlmStatsAccumulator,
+    input: {
+      callDurationSeconds: number;
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      inputCostUsd: number;
+      outputCostUsd: number;
+      totalCostUsd: number;
+    },
+  ): void {
+    aggregate.calls += 1;
+    aggregate.callDurations.push(input.callDurationSeconds);
+    aggregate.inputTokens += input.inputTokens;
+    aggregate.outputTokens += input.outputTokens;
+    aggregate.totalTokens += input.totalTokens;
+    aggregate.inputCostUsd += input.inputCostUsd;
+    aggregate.outputCostUsd += input.outputCostUsd;
+    aggregate.totalCostUsd += input.totalCostUsd;
+  }
+
+  private recordRunMetrics(run: RunState, doc: UnifiedJobAd): void {
+    run.metrics.parserVersion = run.metrics.parserVersion ?? doc.ingestion.parserVersion;
+    run.metrics.extractorModel = run.metrics.extractorModel ?? doc.ingestion.extractorModel;
+    run.metrics.timeToProcssSeconds.push(doc.ingestion.timeToProcssSeconds);
+
+    this.recordLlmStats(run.metrics.llmCleaner, {
+      callDurationSeconds: doc.ingestion.llmCleanerCallDurationSeconds,
+      inputTokens: doc.ingestion.llmCleanerInputTokens,
+      outputTokens: doc.ingestion.llmCleanerOutputTokens,
+      totalTokens: doc.ingestion.llmCleanerTotalTokens,
+      inputCostUsd: doc.ingestion.llmCleanerInputCostUsd,
+      outputCostUsd: doc.ingestion.llmCleanerOutputCostUsd,
+      totalCostUsd: doc.ingestion.llmCleanerTotalCostUsd,
+    });
+    this.recordLlmStats(run.metrics.llmExtractor, {
+      callDurationSeconds: doc.ingestion.llmExtractorCallDurationSeconds,
+      inputTokens: doc.ingestion.llmExtractorInputTokens,
+      outputTokens: doc.ingestion.llmExtractorOutputTokens,
+      totalTokens: doc.ingestion.llmExtractorTotalTokens,
+      inputCostUsd: doc.ingestion.llmExtractorInputCostUsd,
+      outputCostUsd: doc.ingestion.llmExtractorOutputCostUsd,
+      totalCostUsd: doc.ingestion.llmExtractorTotalCostUsd,
+    });
+    this.recordLlmStats(run.metrics.llmTotal, {
+      callDurationSeconds: doc.ingestion.llmTotalCallDurationSeconds,
+      inputTokens: doc.ingestion.llmTotalInputTokens,
+      outputTokens: doc.ingestion.llmTotalOutputTokens,
+      totalTokens: doc.ingestion.llmTotalTokens,
+      inputCostUsd: doc.ingestion.llmTotalInputCostUsd,
+      outputCostUsd: doc.ingestion.llmTotalOutputCostUsd,
+      totalCostUsd: doc.ingestion.llmTotalCostUsd,
+    });
+  }
+
+  private buildLlmStatsProjection(aggregate: LlmStatsAccumulator): {
+    calls: number;
+    avgCallDurationSeconds: number;
+    p50CallDurationSeconds: number;
+    p95CallDurationSeconds: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    inputCostUsd: number;
+    outputCostUsd: number;
+    totalCostUsd: number;
+  } {
+    return {
+      calls: aggregate.calls,
+      avgCallDurationSeconds: average(aggregate.callDurations),
+      p50CallDurationSeconds: percentile(aggregate.callDurations, 0.5),
+      p95CallDurationSeconds: percentile(aggregate.callDurations, 0.95),
+      inputTokens: aggregate.inputTokens,
+      outputTokens: aggregate.outputTokens,
+      totalTokens: aggregate.totalTokens,
+      inputCostUsd: aggregate.inputCostUsd,
+      outputCostUsd: aggregate.outputCostUsd,
+      totalCostUsd: aggregate.totalCostUsd,
+    };
   }
 
   private async upsertRunTrigger(run: RunState): Promise<void> {
@@ -610,6 +761,10 @@ export class IngestionWorkerRuntime {
     run: RunState,
     id: string,
     ingestionRunId: string,
+    itemMetrics: {
+      totalTokensUsed: number;
+      totalEstimatedCostUsd: number;
+    },
   ): Promise<void> {
     const completedAt = nowIso();
     await this.getTriggerCollectionForRun(run).updateOne(
@@ -624,8 +779,8 @@ export class IngestionWorkerRuntime {
             jobsProcessed: 1,
             jobsSkippedIncomplete: 0,
             jobsFailed: 0,
-            totalTokensUsed: 0,
-            totalEstimatedCostUsd: 0,
+            totalTokensUsed: itemMetrics.totalTokensUsed,
+            totalEstimatedCostUsd: itemMetrics.totalEstimatedCostUsd,
             mongoWritesStructured: 1,
             mongoWritesRunSummary: 0,
           },
@@ -691,24 +846,53 @@ export class IngestionWorkerRuntime {
     run.finishedAt = finishedAt;
     run.lastHeartbeatAt = finishedAt;
 
+    const runDurationSeconds =
+      Math.max(new Date(finishedAt).getTime() - new Date(run.startedAt).getTime(), 0) / 1_000;
     const jobsTotal = run.counters.received;
     const jobsNonSuccess = run.counters.failed + run.counters.rejected;
+    const jobsSuccessRate = jobsTotal > 0 ? run.counters.processed / jobsTotal : 1;
+    const jobsNonSuccessRate = jobsTotal > 0 ? jobsNonSuccess / jobsTotal : 0;
+    const jobsFailedRate = jobsTotal > 0 ? run.counters.failed / jobsTotal : 0;
+    const llmCleanerStats = this.buildLlmStatsProjection(run.metrics.llmCleaner);
+    const llmExtractorStats = this.buildLlmStatsProjection(run.metrics.llmExtractor);
+    const llmTotalStats = this.buildLlmStatsProjection(run.metrics.llmTotal);
+
     const summary = ingestionRunSummaryProjectionV2Schema.parse({
       runId: run.runId,
       crawlRunId: run.request.inputRef.crawlRunId,
       status,
       startedAt: run.startedAt,
       completedAt: finishedAt,
-      parserVersion: this.deps.env.SERVICE_VERSION,
-      extractorModel: 'html-snapshot-normalizer',
+      runDurationSeconds,
+      parserVersion: run.metrics.parserVersion ?? this.deps.env.PARSER_VERSION,
+      extractorModel: run.metrics.extractorModel ?? this.deps.env.GEMINI_MODEL,
+      llmExtractorPromptName: this.deps.env.LLM_EXTRACTOR_PROMPT_NAME,
+      llmCleanerPromptName: this.deps.env.LLM_CLEANER_PROMPT_NAME,
+      concurrency: run.request.runtimeSnapshot.ingestionConcurrency,
       jobsTotal,
       jobsProcessed: run.counters.processed,
-      jobsSkippedIncomplete: 0,
-      jobsFailed: jobsNonSuccess,
-      jobsSuccessRate: jobsTotal > 0 ? run.counters.processed / jobsTotal : 1,
-      jobsNonSuccessRate: jobsTotal > 0 ? jobsNonSuccess / jobsTotal : 0,
-      totalTokens: 0,
-      totalEstimatedCostUsd: 0,
+      jobsSkippedIncomplete: run.counters.rejected,
+      jobsFailed: run.counters.failed,
+      jobsNonSuccess,
+      jobsSuccessRate,
+      jobsNonSuccessRate,
+      jobsSkippedIncompleteRate: jobsTotal > 0 ? run.counters.rejected / jobsTotal : 0,
+      jobsFailedRate,
+      llmCleanerStats,
+      llmExtractorStats,
+      llmTotalStats,
+      totalInputTokens: llmTotalStats.inputTokens,
+      totalOutputTokens: llmTotalStats.outputTokens,
+      totalTokens: llmTotalStats.totalTokens,
+      totalEstimatedCostUsd: llmTotalStats.totalCostUsd,
+      avgTimeToProcssSeconds: average(run.metrics.timeToProcssSeconds),
+      p50TimeToProcssSeconds: percentile(run.metrics.timeToProcssSeconds, 0.5),
+      p95TimeToProcssSeconds: percentile(run.metrics.timeToProcssSeconds, 0.95),
+      avgLlmCleanerCallDurationSeconds: llmCleanerStats.avgCallDurationSeconds,
+      avgLlmExtractorCallDurationSeconds: llmExtractorStats.avgCallDurationSeconds,
+      avgLlmTotalCallDurationSeconds: llmTotalStats.avgCallDurationSeconds,
+      p50LlmTotalCallDurationSeconds: llmTotalStats.p50CallDurationSeconds,
+      p95LlmTotalCallDurationSeconds: llmTotalStats.p95CallDurationSeconds,
     });
 
     await this.getRunSummaryCollectionForRun(run).updateOne(
@@ -730,10 +914,10 @@ export class IngestionWorkerRuntime {
           ingestionRunId: run.runId,
           result: {
             jobsProcessed: run.counters.processed,
-            jobsSkippedIncomplete: 0,
-            jobsFailed: jobsNonSuccess,
-            totalTokensUsed: 0,
-            totalEstimatedCostUsd: 0,
+            jobsSkippedIncomplete: run.counters.rejected,
+            jobsFailed: run.counters.failed,
+            totalTokensUsed: llmTotalStats.totalTokens,
+            totalEstimatedCostUsd: llmTotalStats.totalCostUsd,
             mongoWritesStructured: run.counters.processed,
             mongoWritesRunSummary: 1,
           },
