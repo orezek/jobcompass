@@ -74,6 +74,18 @@ if (parserBackend === 'gemini' && (!langsmithApiKey || langsmithApiKey.trim().le
   );
 }
 const skipReason = skipReasons.length > 0 ? skipReasons.join(' ') : undefined;
+const runTimeoutMs = Number(
+  process.env.INGESTION_WORKER_V2_E2E_RUN_TIMEOUT_MS ??
+    (parserBackend === 'gemini' ? '180000' : '12000'),
+);
+const docTimeoutMs = Number(
+  process.env.INGESTION_WORKER_V2_E2E_DOC_TIMEOUT_MS ??
+    (parserBackend === 'gemini' ? '180000' : '12000'),
+);
+const eventTimeoutMs = Number(
+  process.env.INGESTION_WORKER_V2_E2E_EVENT_TIMEOUT_MS ??
+    (parserBackend === 'gemini' ? '30000' : '5000'),
+);
 
 const sharedDbName =
   process.env.INGESTION_WORKER_V2_E2E_DB_NAME?.trim() || 'ingestion_worker_v2_shared_e2e';
@@ -389,7 +401,7 @@ async function waitForRunStatus(
   runId: string,
   expected: RunView['status'],
 ): Promise<RunView> {
-  const timeoutMs = 12_000;
+  const timeoutMs = runTimeoutMs;
   const pollIntervalMs = 40;
   const start = Date.now();
 
@@ -412,7 +424,7 @@ async function waitForDocument<T>(input: {
   timeoutMs?: number;
   pollIntervalMs?: number;
 }): Promise<T> {
-  const timeoutMs = input.timeoutMs ?? 12_000;
+  const timeoutMs = input.timeoutMs ?? docTimeoutMs;
   const pollIntervalMs = input.pollIntervalMs ?? 50;
   const start = Date.now();
 
@@ -433,7 +445,7 @@ async function waitForDocument<T>(input: {
 async function waitForEventType(
   topic: FakePubSubTopic,
   eventType: string,
-  timeoutMs = 5_000,
+  timeoutMs = eventTimeoutMs,
 ): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
