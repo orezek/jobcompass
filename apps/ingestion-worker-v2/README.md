@@ -184,11 +184,8 @@ curl -X POST http://127.0.0.1:3020/v1/runs \
   -H "Content-Type: application/json" \
   -d '{
     "contractVersion": "v2",
-    "workerType": "ingestion",
     "runId": "crawl-run-local-001",
     "idempotencyKey": "idmp-crawl-run-local-001",
-    "requestedAt": "2026-03-05T10:00:00.000Z",
-    "correlationId": "corr-crawl-run-local-001",
     "runtimeSnapshot": {
       "ingestionConcurrency": 2
     },

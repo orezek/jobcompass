@@ -35,6 +35,17 @@ describe('v2 control-plane contracts', () => {
     expect(result.success).toBe(false);
   });
 
+  it('rejects removed StartRun metadata fields on ingestion requests', () => {
+    const invalidRequest = {
+      ...ingestionStartRunRequestV2Fixture,
+      workerType: 'ingestion',
+      requestedAt: '2026-03-06T10:00:00.000Z',
+      correlationId: 'corr-legacy-fixture',
+    };
+    const result = ingestionStartRunRequestV2Schema.safeParse(invalidRequest);
+    expect(result.success).toBe(false);
+  });
+
   it('validates v2 StartRun response fixture', () => {
     expect(startRunResponseV2Schema.parse(startRunAcceptedResponseV2Fixture)).toEqual(
       startRunAcceptedResponseV2Fixture,

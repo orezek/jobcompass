@@ -79,7 +79,6 @@ type RunState = {
   runId: string;
   idempotencyKey: string;
   status: 'running' | 'succeeded' | 'completed_with_errors' | 'failed' | 'stopped';
-  requestedAt: string;
   startedAt: string;
   finishedAt: string | null;
   cancelRequested: boolean;
@@ -274,7 +273,6 @@ export class IngestionWorkerRuntime {
       runId: parsedRequest.runId,
       idempotencyKey: parsedRequest.idempotencyKey,
       status: 'running',
-      requestedAt: parsedRequest.requestedAt,
       startedAt,
       finishedAt: null,
       cancelRequested: false,
@@ -339,7 +337,6 @@ export class IngestionWorkerRuntime {
     return {
       runId: run.runId,
       status: run.status,
-      requestedAt: run.requestedAt,
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,
       cancelRequested: run.cancelRequested,
@@ -871,7 +868,7 @@ export class IngestionWorkerRuntime {
       eventType: 'ingestion.run.started',
       occurredAt: nowIso(),
       runId: run.runId,
-      correlationId: run.request.correlationId,
+      correlationId: run.runId,
       producer: this.deps.env.SERVICE_NAME,
       payload: {
         runId: run.runId,
@@ -895,7 +892,7 @@ export class IngestionWorkerRuntime {
       eventType: 'ingestion.run.finished',
       occurredAt: nowIso(),
       runId: run.runId,
-      correlationId: run.request.correlationId,
+      correlationId: run.runId,
       producer: this.deps.env.SERVICE_NAME,
       payload: {
         runId: run.runId,
@@ -931,18 +928,41 @@ export class IngestionWorkerRuntime {
       reason?: string;
     },
   ): Promise<void> {
-    const event = buildIngestionLifecycleEventV2({
-      eventType,
+    const baseEventInput = {
       runId: run.runId,
       crawlRunId: item.crawlRunId,
       source: item.source,
       sourceId: item.sourceId,
       dedupeKey: item.dedupeKey,
-      ...(options?.documentId ? { documentId: options.documentId } : {}),
-      ...(options?.error ? { error: options.error } : {}),
-      ...(options?.reason ? { reason: options.reason } : {}),
       producer: this.deps.env.SERVICE_NAME,
-    });
+    };
+
+    const event =
+      eventType === 'ingestion.item.started'
+        ? buildIngestionLifecycleEventV2({
+            eventType,
+            ...baseEventInput,
+          })
+        : eventType === 'ingestion.item.succeeded'
+          ? buildIngestionLifecycleEventV2({
+              eventType,
+              ...baseEventInput,
+              documentId: options?.documentId ?? item.dedupeKey,
+            })
+          : eventType === 'ingestion.item.failed'
+            ? buildIngestionLifecycleEventV2({
+                eventType,
+                ...baseEventInput,
+                error: options?.error ?? {
+                  name: 'IngestionItemError',
+                  message: 'Unknown ingestion item failure.',
+                },
+              })
+            : buildIngestionLifecycleEventV2({
+                eventType,
+                ...baseEventInput,
+                reason: options?.reason ?? 'rejected',
+              });
 
     await this.publishEvent(event);
   }

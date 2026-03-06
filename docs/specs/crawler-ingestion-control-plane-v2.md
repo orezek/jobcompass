@@ -279,9 +279,9 @@ implementation note:
 
 ### `POST /v1/runs` (`StartRun`) Required Payload Shape
 
-- `runId`, `idempotencyKey`, `requestedAt`, `correlationId`
-- `runtimeSnapshot` (execution-only concurrency settings)
+- `runId`, `idempotencyKey`
 - crawler `StartRun` only:
+  - `runtimeSnapshot` (`crawlerMaxConcurrency`, `crawlerMaxRequestsPerMinute`)
   - `inputRef`
   - `inputRef.source`
   - `inputRef.searchSpaceId`
@@ -292,6 +292,7 @@ implementation note:
   - `persistenceTargets.dbName`
   - optional `timeouts`
 - ingestion `StartRun` only:
+  - `runtimeSnapshot` (`ingestionConcurrency`)
   - `inputRef` (crawler dataset/artifact refs)
   - each `inputRef.records[]` must carry `source`, `sourceId`, `dedupeKey`,
     `detailHtmlPath`, and full `listingRecord` snapshot from crawler output
@@ -303,6 +304,7 @@ control-plane note:
 
 - control-plane can keep full `pipelineSnapshot` in its own run ledger for audit/replay
 - worker-facing `StartRun` payload is intentionally minimal and must not include unused config blobs
+- worker-facing `StartRun` excludes `workerType`, `requestedAt`, and `correlationId`
 - see `docs/specs/crawler-worker-v2.md`
 - MongoDB writes to canonical collections are implicit worker behavior; `outputSinks` only toggles
   optional downloadable JSON output

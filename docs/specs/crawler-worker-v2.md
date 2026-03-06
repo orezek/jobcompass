@@ -90,14 +90,17 @@ The command must contain:
 
 - `runId`
 - `idempotencyKey`
-- `requestedAt`
-- `correlationId`
+- crawler `runtimeSnapshot`
+- `inputRef`
+- `artifactSink`
+- `persistenceTargets.dbName`
 
 Semantics:
 
 - `runId` identifies one concrete execution instance
 - for crawler/integration purposes, `runId` is also the canonical `crawlRunId`
 - pipeline provenance remains in the control-plane run ledger, not in the worker-facing command
+- the worker-facing command excludes `workerType`, `requestedAt`, and `correlationId`
 
 ### Crawler `inputRef`
 
@@ -124,7 +127,7 @@ Rationale:
 
 ### Runtime Snapshot
 
-Crawler-relevant runtime fields:
+Crawler `runtimeSnapshot` fields:
 
 - `crawlerMaxConcurrency`
 - `crawlerMaxRequestsPerMinute`

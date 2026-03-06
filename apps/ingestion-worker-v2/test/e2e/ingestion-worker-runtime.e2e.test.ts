@@ -281,11 +281,8 @@ function buildStartRunPayload(
 ) {
   return ingestionStartRunRequestV2Schema.parse({
     contractVersion: 'v2',
-    workerType: 'ingestion',
     runId,
     idempotencyKey: `idmp-${runId}`,
-    requestedAt: new Date().toISOString(),
-    correlationId: `corr-${runId}`,
     runtimeSnapshot: {
       ingestionConcurrency: 2,
     },

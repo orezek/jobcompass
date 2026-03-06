@@ -20,6 +20,10 @@ Exports:
 Notes:
 
 - v2 worker command ingress is REST `StartRun`, not broker command delivery.
+- worker-facing `StartRun` excludes `workerType`, `requestedAt`, and `correlationId`.
+- `runtimeSnapshot` is worker-specific:
+  - crawler: `crawlerMaxConcurrency`, `crawlerMaxRequestsPerMinute`
+  - ingestion: `ingestionConcurrency`
 - `crawler.run.requested` remains exported for legacy/v1 compatibility and control-plane replay
   helpers; it is not the canonical v2 worker command path.
 - V2 runtime broker events now live in `src/v2.ts`.

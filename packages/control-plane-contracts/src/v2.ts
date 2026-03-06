@@ -36,9 +36,12 @@ export const v2PipelineSnapshotSchema = z.object({
   structuredOutputDestinationIds: z.array(nonEmptyStringSchema).default([]),
 });
 
-export const v2RuntimeSnapshotSchema = z.object({
+export const crawlerRuntimeSnapshotV2Schema = z.object({
   crawlerMaxConcurrency: z.number().int().positive().optional(),
   crawlerMaxRequestsPerMinute: z.number().int().positive().optional(),
+});
+
+export const ingestionRuntimeSnapshotV2Schema = z.object({
   ingestionConcurrency: z.number().int().positive().optional(),
 });
 
@@ -135,27 +138,27 @@ const v2StartRunRequestBaseSchema = z.object({
   contractVersion: v2ContractVersionSchema.default('v2'),
   runId: nonEmptyStringSchema,
   idempotencyKey: nonEmptyStringSchema,
-  requestedAt: isoDateTimeSchema,
-  correlationId: nonEmptyStringSchema,
-  runtimeSnapshot: v2RuntimeSnapshotSchema,
   persistenceTargets: v2PersistenceTargetsSchema,
-  artifactSink: v2ArtifactSinkSchema.optional(),
   timeouts: v2RunTimeoutsSchema.optional(),
 });
 
-export const crawlerStartRunRequestV2Schema = v2StartRunRequestBaseSchema.extend({
-  workerType: z.literal('crawler'),
-  inputRef: v2CrawlerInputRefSchema,
-  artifactSink: v2ArtifactSinkSchema,
-});
+export const crawlerStartRunRequestV2Schema = v2StartRunRequestBaseSchema
+  .extend({
+    runtimeSnapshot: crawlerRuntimeSnapshotV2Schema,
+    inputRef: v2CrawlerInputRefSchema,
+    artifactSink: v2ArtifactSinkSchema,
+  })
+  .strict();
 
-export const ingestionStartRunRequestV2Schema = v2StartRunRequestBaseSchema.extend({
-  workerType: z.literal('ingestion'),
-  inputRef: v2IngestionInputRefSchema,
-  outputSinks: z.array(v2OutputSinkSchema).default([]),
-});
+export const ingestionStartRunRequestV2Schema = v2StartRunRequestBaseSchema
+  .extend({
+    runtimeSnapshot: ingestionRuntimeSnapshotV2Schema,
+    inputRef: v2IngestionInputRefSchema,
+    outputSinks: z.array(v2OutputSinkSchema).default([]),
+  })
+  .strict();
 
-export const startRunRequestV2Schema = z.discriminatedUnion('workerType', [
+export const startRunRequestV2Schema = z.union([
   crawlerStartRunRequestV2Schema,
   ingestionStartRunRequestV2Schema,
 ]);
@@ -426,11 +429,8 @@ export const ingestionRunSummaryProjectionV2Schema = z.object({
 
 export const crawlerStartRunRequestV2Fixture = crawlerStartRunRequestV2Schema.parse({
   contractVersion: 'v2',
-  workerType: 'crawler',
   runId: 'crawl-run-v2-fixture-001',
   idempotencyKey: 'idmp-crawler-v2-fixture-001',
-  requestedAt: '2026-03-05T10:00:00.000Z',
-  correlationId: 'corr-v2-fixture-001',
   runtimeSnapshot: {
     crawlerMaxConcurrency: 3,
     crawlerMaxRequestsPerMinute: 60,
@@ -466,11 +466,8 @@ export const crawlerStartRunRequestV2Fixture = crawlerStartRunRequestV2Schema.pa
 
 export const ingestionStartRunRequestV2Fixture = ingestionStartRunRequestV2Schema.parse({
   contractVersion: 'v2',
-  workerType: 'ingestion',
   runId: 'ingestion-run-v2-fixture-001',
   idempotencyKey: 'idmp-ingestion-v2-fixture-001',
-  requestedAt: '2026-03-05T10:00:00.000Z',
-  correlationId: 'corr-v2-fixture-001',
   runtimeSnapshot: {
     ingestionConcurrency: 4,
   },
@@ -523,7 +520,7 @@ export const workerLifecycleEventV2Fixtures = [
     eventType: 'crawler.run.started',
     occurredAt: '2026-03-05T10:00:05.000Z',
     runId: 'crawl-run-v2-fixture-001',
-    correlationId: 'corr-v2-fixture-001',
+    correlationId: 'crawl-run-v2-fixture-001',
     producer: 'crawler-worker',
     payload: {
       runId: 'crawl-run-v2-fixture-001',
@@ -539,11 +536,11 @@ export const workerLifecycleEventV2Fixtures = [
     eventVersion: 'v2',
     eventType: 'ingestion.run.finished',
     occurredAt: '2026-03-05T10:18:10.000Z',
-    runId: 'crawl-run-v2-fixture-001',
-    correlationId: 'corr-v2-fixture-001',
+    runId: 'ingestion-run-v2-fixture-001',
+    correlationId: 'ingestion-run-v2-fixture-001',
     producer: 'ingestion-worker',
     payload: {
-      runId: 'crawl-run-v2-fixture-001',
+      runId: 'ingestion-run-v2-fixture-001',
       workerType: 'ingestion',
       status: 'completed_with_errors',
       counters: {
@@ -597,7 +594,7 @@ export const runtimeBrokerEventV2Fixtures = [
     eventType: 'crawler.run.finished',
     occurredAt: '2026-03-05T10:10:15.000Z',
     runId: 'crawl-run-v2-fixture-001',
-    correlationId: 'corr-v2-fixture-001',
+    correlationId: 'crawl-run-v2-fixture-001',
     producer: 'crawler-worker',
     payload: {
       crawlRunId: 'crawl-run-v2-fixture-001',
