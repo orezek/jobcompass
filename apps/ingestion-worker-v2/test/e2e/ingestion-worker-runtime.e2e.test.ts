@@ -17,9 +17,7 @@ import { FakeStorage } from './stubs/fake-storage.js';
 import { FakePubSubTopic } from './stubs/fake-topic.js';
 
 type CollectionNames = {
-  crawlRunSummaries: string;
   ingestionRunSummaries: string;
-  ingestionTriggerRequests: string;
   normalizedJobAds: string;
 };
 
@@ -90,15 +88,9 @@ const sharedDbName =
   process.env.INGESTION_WORKER_V2_E2E_DB_NAME?.trim() || 'ingestion_worker_v2_shared_e2e';
 
 const collections: CollectionNames = {
-  crawlRunSummaries:
-    process.env.INGESTION_WORKER_V2_E2E_CRAWL_RUN_SUMMARIES_COLLECTION?.trim() ||
-    'crawl_run_summaries',
   ingestionRunSummaries:
     process.env.INGESTION_WORKER_V2_E2E_INGESTION_RUN_SUMMARIES_COLLECTION?.trim() ||
     'ingestion_run_summaries',
-  ingestionTriggerRequests:
-    process.env.INGESTION_WORKER_V2_E2E_INGESTION_TRIGGER_REQUESTS_COLLECTION?.trim() ||
-    'ingestion_trigger_requests',
   normalizedJobAds:
     process.env.INGESTION_WORKER_V2_E2E_NORMALIZED_JOB_ADS_COLLECTION?.trim() ||
     'normalized_job_ads',
@@ -433,7 +425,6 @@ async function cleanupRunDocuments(runId: string): Promise<void> {
   const db = getMongoClient().db(sharedDbName);
   await Promise.all([
     db.collection(collections.ingestionRunSummaries).deleteMany({ runId }),
-    db.collection(collections.ingestionTriggerRequests).deleteMany({ crawlRunId: runId }),
     db.collection(collections.normalizedJobAds).deleteMany({ 'ingestion.runId': runId }),
   ]);
 }
@@ -452,7 +443,7 @@ function logKeptRunDocuments(runId: string): void {
 const maybeSkip = skipReason ? { skip: skipReason } : {};
 
 test(
-  'processes StartRun input records and persists summary, triggers, and normalized documents',
+  'processes StartRun input records and persists summary and normalized documents',
   maybeSkip,
   async () => {
     const runId = buildRunId('e2e-start-run');
@@ -489,6 +480,14 @@ test(
       assert.equal(summary.status, 'succeeded');
       assert.equal(summary.jobsProcessed, goldenParityCases.length);
       assert.equal(summary.jobsFailed, 0);
+      assert.deepEqual(summary.processedJobIds.sort(), [
+        'jobs.cz:2001063102',
+        'jobs.cz:2001090812',
+        'jobs.cz:2001095645',
+      ]);
+      assert.deepEqual(summary.failedJobIds, []);
+      assert.deepEqual(summary.skippedIncompleteJobIds, []);
+      assert.deepEqual(summary.nonSuccessJobIds, []);
       assert.equal(summary.parserVersion, parserVersion);
       assert.equal(
         summary.extractorModel,
@@ -503,29 +502,6 @@ test(
           'Expected totalEstimatedCostUsd > 0 for gemini backend',
         );
       }
-
-      const itemTriggers = await db
-        .collection(collections.ingestionTriggerRequests)
-        .find({ crawlRunId: runId, triggerType: 'item', status: 'succeeded' })
-        .toArray();
-      assert.equal(itemTriggers.length, goldenParityCases.length);
-      for (const itemTrigger of itemTriggers) {
-        assert.ok(itemTrigger.result);
-        if (parserBackend === 'gemini') {
-          assert.ok(
-            Number(itemTrigger.result.totalTokensUsed) > 0,
-            'Expected per-item totalTokensUsed > 0 for gemini backend',
-          );
-        }
-      }
-
-      const runTrigger = await db
-        .collection(collections.ingestionTriggerRequests)
-        .findOne({ crawlRunId: runId, triggerType: 'run' });
-      assert.ok(runTrigger);
-      assert.ok(runTrigger.result);
-      assert.equal(runTrigger.result.totalTokensUsed, summary.totalTokens);
-      assert.equal(runTrigger.result.totalEstimatedCostUsd, summary.totalEstimatedCostUsd);
 
       const normalizedDocs = await db
         .collection(collections.normalizedJobAds)
@@ -671,6 +647,10 @@ test(
         read: async () => db.collection(collections.ingestionRunSummaries).findOne({ runId }),
       });
       assert.equal(summary.status, 'succeeded');
+      assert.deepEqual(summary.processedJobIds, ['jobs.cz:2001090812']);
+      assert.deepEqual(summary.failedJobIds, []);
+      assert.deepEqual(summary.skippedIncompleteJobIds, []);
+      assert.deepEqual(summary.nonSuccessJobIds, []);
       logKeptRunDocuments(runId);
     } finally {
       await cleanupRunDocuments(runId);
@@ -750,10 +730,12 @@ test(
       });
       assert.equal(summary.status, 'succeeded');
       assert.equal(summary.crawlRunId, crawlRunId);
+      assert.deepEqual(summary.processedJobIds, ['jobs.cz:2001063102']);
+      assert.deepEqual(summary.failedJobIds, []);
+      assert.deepEqual(summary.skippedIncompleteJobIds, []);
+      assert.deepEqual(summary.nonSuccessJobIds, []);
       logKeptRunDocuments(runId);
     } finally {
-      const db = getMongoClient().db(sharedDbName);
-      await db.collection(collections.ingestionTriggerRequests).deleteMany({ crawlRunId });
       await cleanupRunDocuments(runId);
     }
   },
@@ -808,13 +790,10 @@ test(
       assert.equal(summary.status, 'completed_with_errors');
       assert.equal(summary.jobsProcessed, 0);
       assert.equal(summary.jobsFailed, 1);
-
-      const itemTrigger = await db
-        .collection(collections.ingestionTriggerRequests)
-        .findOne({ crawlRunId: runId, triggerType: 'item', sourceId });
-      assert.ok(itemTrigger);
-      assert.equal(itemTrigger.status, 'failed');
-      assert.match(String(itemTrigger.errorMessage), /ENOENT/);
+      assert.deepEqual(summary.processedJobIds, []);
+      assert.deepEqual(summary.failedJobIds, [`jobs.cz:${sourceId}`]);
+      assert.deepEqual(summary.skippedIncompleteJobIds, []);
+      assert.deepEqual(summary.nonSuccessJobIds, [`jobs.cz:${sourceId}`]);
 
       const publishedEventTypes = topic.published.map((entry) => {
         const parsed = JSON.parse(entry.payload) as { eventType: string };

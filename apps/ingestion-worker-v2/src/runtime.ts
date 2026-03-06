@@ -10,11 +10,9 @@ import {
   ingestionRunStartedEventV2Schema,
   ingestionRunSummaryProjectionV2Schema,
   ingestionStartRunRequestV2Schema,
-  ingestionTriggerRequestProjectionV2Schema,
   startRunAcceptedResponseV2Schema,
   startRunRejectedResponseV2Schema,
   type V2IngestionRunSummaryProjection,
-  type V2IngestionTriggerRequestProjection,
 } from '@repo/control-plane-contracts';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Collection, MongoClient } from 'mongodb';
@@ -90,6 +88,10 @@ type RunState = {
   counters: RunCounters;
   metrics: RunMetricsAccumulator;
   outputs: RunOutputRef[];
+  processedJobIds: string[];
+  failedJobIds: string[];
+  skippedIncompleteJobIds: string[];
+  nonSuccessJobIds: string[];
   seenDedupeKeys: Set<string>;
   lastHeartbeatAt: string;
 };
@@ -112,7 +114,6 @@ type PersistedNormalizedJobAdDoc = UnifiedJobAd;
 
 type StartRunResponse = z.infer<typeof startRunAcceptedResponseV2Schema>;
 
-const INGESTION_TRIGGER_REQUESTS_COLLECTION = 'ingestion_trigger_requests';
 const INGESTION_RUN_SUMMARIES_COLLECTION = 'ingestion_run_summaries';
 const NORMALIZED_JOB_ADS_COLLECTION = 'normalized_job_ads';
 const MONGODB_WRITE_MODE = 'upsert' as const;
@@ -173,12 +174,14 @@ function createRunMetricsAccumulator(): RunMetricsAccumulator {
   };
 }
 
-function buildRunTriggerId(run: RunState): string {
-  return `run:${run.request.inputRef.searchSpaceId}:${run.request.inputRef.crawlRunId}:${run.runId}`;
+function buildJobId(item: Pick<ItemInput, 'source' | 'sourceId'>): string {
+  return `${item.source}:${item.sourceId}`;
 }
 
-function buildItemTriggerId(item: ItemInput): string {
-  return `item:${item.source}:${item.searchSpaceId}:${item.crawlRunId}:${item.sourceId}`;
+function pushUnique(values: string[], value: string): void {
+  if (!values.includes(value)) {
+    values.push(value);
+  }
 }
 
 export class IngestionWorkerRuntime {
@@ -287,13 +290,16 @@ export class IngestionWorkerRuntime {
       },
       metrics: createRunMetricsAccumulator(),
       outputs: [],
+      processedJobIds: [],
+      failedJobIds: [],
+      skippedIncompleteJobIds: [],
+      nonSuccessJobIds: [],
       seenDedupeKeys: new Set<string>(),
       lastHeartbeatAt: startedAt,
     };
 
     this.runs.set(run.runId, run);
     await this.ensureIndexesForRun(run);
-    await this.upsertRunTrigger(run);
     await this.publishRunStarted(run);
 
     for (const record of parsedRequest.inputRef.records) {
@@ -454,8 +460,26 @@ export class IngestionWorkerRuntime {
       'crawlRunId' in event.payload ? event.payload.crawlRunId : undefined,
     );
     if (!run) {
+      this.deps.logger.warn(
+        {
+          eventRunId: event.runId,
+          crawlRunId: 'crawlRunId' in event.payload ? event.payload.crawlRunId : undefined,
+        },
+        'Skipping crawler.run.finished event because no active ingestion run matched.',
+      );
       return;
     }
+
+    this.deps.logger.info(
+      {
+        runId: run.runId,
+        crawlRunId: run.request.inputRef.crawlRunId,
+        crawlerStatus: event.payload.status,
+        queueDepth: run.queueDepth,
+        activeItems: run.activeItems,
+      },
+      'Received crawler.run.finished event.',
+    );
 
     run.crawlerFinished = true;
     run.lastHeartbeatAt = nowIso();
@@ -504,8 +528,6 @@ export class IngestionWorkerRuntime {
     run.seenDedupeKeys.add(item.dedupeKey);
     run.counters.received += 1;
     run.lastHeartbeatAt = nowIso();
-
-    await this.upsertItemTriggerPending(run, item);
     run.queueDepth += 1;
     this.itemQueue.push({ runId: run.runId, item });
     this.drainQueue();
@@ -542,17 +564,16 @@ export class IngestionWorkerRuntime {
   }
 
   private async processQueueItem(run: RunState, item: ItemInput): Promise<void> {
-    const triggerId = buildItemTriggerId(item);
+    const jobId = buildJobId(item);
     if (run.cancelRequested) {
       run.counters.rejected += 1;
-      await this.markItemTriggerFailed(run, triggerId, 'Run cancelled before item processing.');
+      pushUnique(run.nonSuccessJobIds, jobId);
       await this.publishIngestionItemEvent('ingestion.item.rejected', run, item, {
         reason: 'run_cancelled',
       });
       return;
     }
 
-    await this.markItemTriggerRunning(run, triggerId);
     await this.publishIngestionItemEvent('ingestion.item.started', run, item);
 
     try {
@@ -588,6 +609,7 @@ export class IngestionWorkerRuntime {
 
       this.recordRunMetrics(run, normalizedDoc);
       run.counters.processed += 1;
+      pushUnique(run.processedJobIds, normalizedDoc.id);
       const mongoTargetRef = `${run.request.persistenceTargets.dbName}.${NORMALIZED_JOB_ADS_COLLECTION}`;
       run.outputs.push({
         sourceId: item.sourceId,
@@ -597,10 +619,6 @@ export class IngestionWorkerRuntime {
         createdAt: nowIso(),
       });
 
-      await this.markItemTriggerSucceeded(run, triggerId, run.runId, {
-        totalTokensUsed: normalizedDoc.ingestion.llmTotalTokens,
-        totalEstimatedCostUsd: normalizedDoc.ingestion.llmTotalCostUsd,
-      });
       const sinkResults: Array<{
         sinkType: 'mongodb' | 'downloadable_json';
         targetRef: string;
@@ -626,13 +644,15 @@ export class IngestionWorkerRuntime {
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof IncompleteDetailPageError) {
         run.counters.rejected += 1;
-        await this.markItemTriggerFailed(run, triggerId, message);
+        pushUnique(run.skippedIncompleteJobIds, jobId);
+        pushUnique(run.nonSuccessJobIds, jobId);
         await this.publishIngestionItemEvent('ingestion.item.rejected', run, item, {
           reason: 'incomplete_detail_page',
         });
       } else {
         run.counters.failed += 1;
-        await this.markItemTriggerFailed(run, triggerId, message);
+        pushUnique(run.failedJobIds, jobId);
+        pushUnique(run.nonSuccessJobIds, jobId);
         await this.publishIngestionItemEvent('ingestion.item.failed', run, item, {
           error: {
             name: error instanceof Error ? error.name : 'IngestionItemError',
@@ -725,143 +745,6 @@ export class IngestionWorkerRuntime {
     };
   }
 
-  private async upsertRunTrigger(run: RunState): Promise<void> {
-    const id = buildRunTriggerId(run);
-    const now = nowIso();
-    const runSource = run.request.inputRef.records[0]?.source ?? 'unknown';
-    const seed = ingestionTriggerRequestProjectionV2Schema.parse({
-      id,
-      triggerType: 'run',
-      source: runSource,
-      crawlRunId: run.request.inputRef.crawlRunId,
-      searchSpaceId: run.request.inputRef.searchSpaceId,
-      mongoDbName: run.request.persistenceTargets.dbName,
-      status: 'running',
-      requestedAt: run.requestedAt,
-      startedAt: run.startedAt,
-      updatedAt: now,
-      attemptCount: 1,
-    });
-    const seedOnInsert = {
-      id: seed.id,
-      triggerType: seed.triggerType,
-      source: seed.source,
-      crawlRunId: seed.crawlRunId,
-      searchSpaceId: seed.searchSpaceId,
-      mongoDbName: seed.mongoDbName,
-      requestedAt: seed.requestedAt,
-    };
-
-    await this.getTriggerCollectionForRun(run).updateOne(
-      { id },
-      {
-        $setOnInsert: seedOnInsert,
-        $set: {
-          status: 'running',
-          startedAt: run.startedAt,
-          updatedAt: now,
-          attemptCount: 1,
-        },
-      },
-      { upsert: true },
-    );
-  }
-
-  private async upsertItemTriggerPending(run: RunState, item: ItemInput): Promise<void> {
-    const requestedAt = nowIso();
-    const id = buildItemTriggerId(item);
-    const seed = ingestionTriggerRequestProjectionV2Schema.parse({
-      id,
-      triggerType: 'item',
-      source: item.source,
-      crawlRunId: item.crawlRunId,
-      searchSpaceId: item.searchSpaceId,
-      mongoDbName: run.request.persistenceTargets.dbName,
-      sourceId: item.sourceId,
-      detailHtmlPath: item.detailHtmlPath,
-      status: 'pending',
-      requestedAt,
-      updatedAt: requestedAt,
-      attemptCount: 0,
-    });
-
-    await this.getTriggerCollectionForRun(run).updateOne(
-      { id },
-      {
-        $setOnInsert: seed,
-      },
-      { upsert: true },
-    );
-  }
-
-  private async markItemTriggerRunning(run: RunState, id: string): Promise<void> {
-    const startedAt = nowIso();
-    await this.getTriggerCollectionForRun(run).updateOne(
-      { id },
-      {
-        $set: {
-          status: 'running',
-          startedAt,
-          updatedAt: startedAt,
-        },
-        $inc: {
-          attemptCount: 1,
-        },
-      },
-    );
-  }
-
-  private async markItemTriggerSucceeded(
-    run: RunState,
-    id: string,
-    ingestionRunId: string,
-    itemMetrics: {
-      totalTokensUsed: number;
-      totalEstimatedCostUsd: number;
-    },
-  ): Promise<void> {
-    const completedAt = nowIso();
-    await this.getTriggerCollectionForRun(run).updateOne(
-      { id },
-      {
-        $set: {
-          status: 'succeeded',
-          completedAt,
-          updatedAt: completedAt,
-          ingestionRunId,
-          result: {
-            jobsProcessed: 1,
-            jobsSkippedIncomplete: 0,
-            jobsFailed: 0,
-            totalTokensUsed: itemMetrics.totalTokensUsed,
-            totalEstimatedCostUsd: itemMetrics.totalEstimatedCostUsd,
-            mongoWritesStructured: 1,
-            mongoWritesRunSummary: 0,
-          },
-        },
-      },
-    );
-  }
-
-  private async markItemTriggerFailed(
-    run: RunState,
-    id: string,
-    errorMessage: string,
-  ): Promise<void> {
-    const completedAt = nowIso();
-    await this.getTriggerCollectionForRun(run).updateOne(
-      { id },
-      {
-        $set: {
-          status: 'failed',
-          completedAt,
-          updatedAt: completedAt,
-          errorMessage,
-        },
-      },
-    );
-  }
-
   private async tryFinalizeRun(run: RunState, stopReason?: string): Promise<void> {
     if (run.status !== 'running') {
       return;
@@ -878,7 +761,7 @@ export class IngestionWorkerRuntime {
       return;
     }
 
-    const hasErrors = run.counters.failed > 0 || run.counters.rejected > 0;
+    const hasErrors = run.nonSuccessJobIds.length > 0;
     await this.finalizeRun(
       run,
       hasErrors ? 'completed_with_errors' : 'succeeded',
@@ -903,10 +786,13 @@ export class IngestionWorkerRuntime {
     const runDurationSeconds =
       Math.max(new Date(finishedAt).getTime() - new Date(run.startedAt).getTime(), 0) / 1_000;
     const jobsTotal = run.counters.received;
-    const jobsNonSuccess = run.counters.failed + run.counters.rejected;
-    const jobsSuccessRate = jobsTotal > 0 ? run.counters.processed / jobsTotal : 1;
+    const jobsProcessed = run.processedJobIds.length;
+    const jobsSkippedIncomplete = run.skippedIncompleteJobIds.length;
+    const jobsFailed = run.failedJobIds.length;
+    const jobsNonSuccess = run.nonSuccessJobIds.length;
+    const jobsSuccessRate = jobsTotal > 0 ? jobsProcessed / jobsTotal : 1;
     const jobsNonSuccessRate = jobsTotal > 0 ? jobsNonSuccess / jobsTotal : 0;
-    const jobsFailedRate = jobsTotal > 0 ? run.counters.failed / jobsTotal : 0;
+    const jobsFailedRate = jobsTotal > 0 ? jobsFailed / jobsTotal : 0;
     const llmCleanerStats = this.buildLlmStatsProjection(run.metrics.llmCleaner);
     const llmExtractorStats = this.buildLlmStatsProjection(run.metrics.llmExtractor);
     const llmTotalStats = this.buildLlmStatsProjection(run.metrics.llmTotal);
@@ -924,13 +810,17 @@ export class IngestionWorkerRuntime {
       llmCleanerPromptName: this.deps.env.LLM_CLEANER_PROMPT_NAME,
       concurrency: run.request.runtimeSnapshot.ingestionConcurrency,
       jobsTotal,
-      jobsProcessed: run.counters.processed,
-      jobsSkippedIncomplete: run.counters.rejected,
-      jobsFailed: run.counters.failed,
+      jobsProcessed,
+      processedJobIds: run.processedJobIds,
+      jobsSkippedIncomplete,
+      skippedIncompleteJobIds: run.skippedIncompleteJobIds,
+      jobsFailed,
+      failedJobIds: run.failedJobIds,
       jobsNonSuccess,
+      nonSuccessJobIds: run.nonSuccessJobIds,
       jobsSuccessRate,
       jobsNonSuccessRate,
-      jobsSkippedIncompleteRate: jobsTotal > 0 ? run.counters.rejected / jobsTotal : 0,
+      jobsSkippedIncompleteRate: jobsTotal > 0 ? jobsSkippedIncomplete / jobsTotal : 0,
       jobsFailedRate,
       llmCleanerStats,
       llmExtractorStats,
@@ -957,28 +847,19 @@ export class IngestionWorkerRuntime {
       { upsert: true },
     );
 
-    const runTriggerId = buildRunTriggerId(run);
-    await this.getTriggerCollectionForRun(run).updateOne(
-      { id: runTriggerId },
+    this.deps.logger.info(
       {
-        $set: {
-          status: status === 'stopped' ? 'failed' : status,
-          completedAt: finishedAt,
-          updatedAt: finishedAt,
-          ingestionRunId: run.runId,
-          result: {
-            jobsProcessed: run.counters.processed,
-            jobsSkippedIncomplete: run.counters.rejected,
-            jobsFailed: run.counters.failed,
-            totalTokensUsed: llmTotalStats.totalTokens,
-            totalEstimatedCostUsd: llmTotalStats.totalCostUsd,
-            mongoWritesStructured: run.counters.processed,
-            mongoWritesRunSummary: 1,
-          },
-          ...(stopReason ? { errorMessage: stopReason } : {}),
-        },
+        runId: run.runId,
+        crawlRunId: run.request.inputRef.crawlRunId,
+        status,
+        jobsTotal,
+        jobsProcessed,
+        jobsFailed,
+        jobsSkippedIncomplete,
+        jobsNonSuccess,
+        dbName: run.request.persistenceTargets.dbName,
       },
-      { upsert: true },
+      'Finalized ingestion run summary.',
     );
 
     await this.publishRunFinished(run, status, stopReason);
@@ -1091,15 +972,6 @@ export class IngestionWorkerRuntime {
     }
   }
 
-  private getTriggerCollectionForRun(
-    run: RunState,
-  ): Collection<V2IngestionTriggerRequestProjection> {
-    const targets = run.request.persistenceTargets;
-    return this.deps.mongoClient
-      .db(targets.dbName)
-      .collection<V2IngestionTriggerRequestProjection>(INGESTION_TRIGGER_REQUESTS_COLLECTION);
-  }
-
   private getRunSummaryCollectionForRun(
     run: RunState,
   ): Collection<V2IngestionRunSummaryProjection> {
@@ -1117,14 +989,6 @@ export class IngestionWorkerRuntime {
   }
 
   private async ensureIndexesForRun(run: RunState): Promise<void> {
-    await this.getTriggerCollectionForRun(run).createIndex(
-      { id: 1 },
-      { unique: true, name: 'id_unique' },
-    );
-    await this.getTriggerCollectionForRun(run).createIndex(
-      { status: 1, updatedAt: -1 },
-      { name: 'status_updatedAt' },
-    );
     await this.getRunSummaryCollectionForRun(run).createIndex(
       { runId: 1 },
       { unique: true, name: 'runId_unique' },

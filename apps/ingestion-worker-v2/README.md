@@ -5,7 +5,7 @@ Lightweight ingestion worker for V2 architecture.
 - minimal bootstrap from `.env`
 - Fastify REST API for run lifecycle
 - Pub/Sub event consumption (`crawler.detail.captured`, `crawler.run.finished`)
-- MongoDB persistence (`ingestion_trigger_requests`, `ingestion_run_summaries`, `normalized_job_ads`)
+- MongoDB persistence (`ingestion_run_summaries`, `normalized_job_ads`)
 - GCS JSON output writes
 - V1-compatible full normalized job model (`listing`, `detail`, `rawDetailPage`, `ingestion`)
 
@@ -78,7 +78,7 @@ Recommended v2 policy:
 - enforce backend-safe naming limits during generation (current hard safety target: max 38 chars)
 - keep generation deterministic (`same pipeline id -> same dbName`)
 - keep collection names stable (`crawl_run_summaries`, `ingestion_run_summaries`,
-  `ingestion_trigger_requests`, `normalized_job_ads`)
+  `normalized_job_ads`)
 
 output routing rule:
 
@@ -157,9 +157,7 @@ Set these variables before running:
 ```bash
 export INGESTION_WORKER_V2_E2E_MONGODB_URI='mongodb+srv://...'
 export INGESTION_WORKER_V2_E2E_DB_NAME='ingestion_worker_v2_shared_e2e'
-export INGESTION_WORKER_V2_E2E_CRAWL_RUN_SUMMARIES_COLLECTION='crawl_run_summaries'
 export INGESTION_WORKER_V2_E2E_INGESTION_RUN_SUMMARIES_COLLECTION='ingestion_run_summaries'
-export INGESTION_WORKER_V2_E2E_INGESTION_TRIGGER_REQUESTS_COLLECTION='ingestion_trigger_requests'
 export INGESTION_WORKER_V2_E2E_NORMALIZED_JOB_ADS_COLLECTION='normalized_job_ads'
 export INGESTION_WORKER_V2_E2E_KEEP_ARTIFACTS='true'
 export INGESTION_WORKER_V2_E2E_PARSER_BACKEND='gemini'

@@ -102,7 +102,6 @@ collections:
 
 - `crawl_run_summaries`
 - `ingestion_run_summaries`
-- `ingestion_trigger_requests`
 
 ### Domain 2: Control-Plane Configuration (Desired State)
 
@@ -405,15 +404,15 @@ Design rule:
 
 ### Event Routing Matrix
 
-| Event Type                 | Produced By              | Publish To                 | Primary Consumers                                | Persistent Projections (Mongo)                                                                                            | Blob/Bucket Side Effects                                              |
-| -------------------------- | ------------------------ | -------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `crawler.run.requested`    | Control API/Orchestrator | Pub/Sub `run-events` topic | Crawler worker, Control projection worker        | `control_plane_runs` status transition (`queued` -> `running` intent), `control_plane_run_event_index`                    | None                                                                  |
-| `crawler.detail.captured`  | Crawler worker           | Pub/Sub `run-events` topic | Ingestion worker, Control projection worker      | `control_plane_run_event_index`, optional `control_plane_artifact_index` (runId/sourceId -> artifact ref)                 | Crawler already wrote HTML dump + dataset metadata to artifact bucket |
-| `crawler.run.finished`     | Crawler worker           | Pub/Sub `run-events` topic | Control projection worker, Ingestion worker gate | `crawl_run_summaries`, `control_plane_runs` crawler phase status, `control_plane_run_event_index`                         | None (summary references bucket/object paths as metadata)             |
-| `ingestion.item.started`   | Ingestion worker         | Pub/Sub `run-events` topic | Control projection worker                        | `control_plane_run_event_index`, optional in-flight counters projection on `control_plane_runs`                           | None                                                                  |
-| `ingestion.item.succeeded` | Ingestion worker         | Pub/Sub `run-events` topic | Control projection worker                        | `ingestion_trigger_requests` update, `ingestion_run_summaries` incremental projection, `control_plane_run_event_index`    | Ingestion writes normalized JSON object to output bucket (if enabled) |
-| `ingestion.item.failed`    | Ingestion worker         | Pub/Sub `run-events` topic | Control projection worker                        | `ingestion_trigger_requests` failure update, `ingestion_run_summaries` failure counters, `control_plane_run_event_index`  | None direct; failure metadata persisted                               |
-| `ingestion.item.rejected`  | Ingestion worker         | Pub/Sub `run-events` topic | Control projection worker                        | `ingestion_trigger_requests` rejected update, `ingestion_run_summaries` skipped counters, `control_plane_run_event_index` | None direct; rejection metadata persisted                             |
+| Event Type                 | Produced By              | Publish To                 | Primary Consumers                                | Persistent Projections (Mongo)                                                                            | Blob/Bucket Side Effects                                              |
+| -------------------------- | ------------------------ | -------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `crawler.run.requested`    | Control API/Orchestrator | Pub/Sub `run-events` topic | Crawler worker, Control projection worker        | `control_plane_runs` status transition (`queued` -> `running` intent), `control_plane_run_event_index`    | None                                                                  |
+| `crawler.detail.captured`  | Crawler worker           | Pub/Sub `run-events` topic | Ingestion worker, Control projection worker      | `control_plane_run_event_index`, optional `control_plane_artifact_index` (runId/sourceId -> artifact ref) | Crawler already wrote HTML dump + dataset metadata to artifact bucket |
+| `crawler.run.finished`     | Crawler worker           | Pub/Sub `run-events` topic | Control projection worker, Ingestion worker gate | `crawl_run_summaries`, `control_plane_runs` crawler phase status, `control_plane_run_event_index`         | None (summary references bucket/object paths as metadata)             |
+| `ingestion.item.started`   | Ingestion worker         | Pub/Sub `run-events` topic | Control projection worker                        | `control_plane_run_event_index`, optional in-flight counters projection on `control_plane_runs`           | None                                                                  |
+| `ingestion.item.succeeded` | Ingestion worker         | Pub/Sub `run-events` topic | Control projection worker                        | `ingestion_run_summaries` incremental projection, `control_plane_run_event_index`                         | Ingestion writes normalized JSON object to output bucket (if enabled) |
+| `ingestion.item.failed`    | Ingestion worker         | Pub/Sub `run-events` topic | Control projection worker                        | `ingestion_run_summaries` failure counters + failed job ids, `control_plane_run_event_index`              | None direct; failure metadata persisted                               |
+| `ingestion.item.rejected`  | Ingestion worker         | Pub/Sub `run-events` topic | Control projection worker                        | `ingestion_run_summaries` skipped/non-success job ids, `control_plane_run_event_index`                    | None direct; rejection metadata persisted                             |
 
 ### Crawler-To-Ingestion Handoff
 
@@ -453,7 +452,6 @@ Behavior:
 - writes production output payloads (`normalized_job_ads`, downloadable JSON blobs)
 - writes ingestion telemetry to:
   - `ingestion_run_summaries`
-  - `ingestion_trigger_requests`
   - `normalized_job_ads`
 
 ### Canonical Naming Contract (v2.0)
@@ -464,7 +462,6 @@ Collection and database naming remains unchanged in v2.0 routing:
 - collection names stay:
   - `crawl_run_summaries`
   - `ingestion_run_summaries`
-  - `ingestion_trigger_requests`
   - `normalized_job_ads`
 
 ## v2.0 Deployment Topology

@@ -7,8 +7,6 @@ import {
   ingestionRunSummaryProjectionV2Schema,
   ingestionStartRunRequestV2Fixture,
   ingestionStartRunRequestV2Schema,
-  ingestionTriggerRequestProjectionV2Fixture,
-  ingestionTriggerRequestProjectionV2Schema,
   startRunAcceptedResponseV2Fixture,
   startRunResponseV2Schema,
   workerLifecycleEventV2Fixtures,
@@ -55,8 +53,5 @@ describe('v2 control-plane contracts', () => {
     expect(
       ingestionRunSummaryProjectionV2Schema.parse(ingestionRunSummaryProjectionV2Fixture),
     ).toEqual(ingestionRunSummaryProjectionV2Fixture);
-    expect(
-      ingestionTriggerRequestProjectionV2Schema.parse(ingestionTriggerRequestProjectionV2Fixture),
-    ).toEqual(ingestionTriggerRequestProjectionV2Fixture);
   });
 });

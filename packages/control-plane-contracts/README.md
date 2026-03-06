@@ -14,5 +14,4 @@ Exports:
   - projection schemas for:
     - `crawl_run_summaries`
     - `ingestion_run_summaries`
-    - `ingestion_trigger_requests`
   - validated fixture payloads for the schemas above

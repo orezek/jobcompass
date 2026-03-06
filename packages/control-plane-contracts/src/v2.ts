@@ -256,9 +256,13 @@ export const ingestionRunSummaryProjectionV2Schema = z.object({
   concurrency: z.number().int().positive().optional(),
   jobsTotal: z.number().int().nonnegative(),
   jobsProcessed: z.number().int().nonnegative(),
+  processedJobIds: z.array(nonEmptyStringSchema).default([]),
   jobsSkippedIncomplete: z.number().int().nonnegative(),
+  skippedIncompleteJobIds: z.array(nonEmptyStringSchema).default([]),
   jobsFailed: z.number().int().nonnegative(),
+  failedJobIds: z.array(nonEmptyStringSchema).default([]),
   jobsNonSuccess: z.number().int().nonnegative().optional(),
+  nonSuccessJobIds: z.array(nonEmptyStringSchema).default([]),
   jobsSuccessRate: z.number().min(0).max(1).optional(),
   jobsNonSuccessRate: z.number().min(0).max(1).optional(),
   jobsSkippedIncompleteRate: z.number().min(0).max(1).optional(),
@@ -315,36 +319,6 @@ export const ingestionRunSummaryProjectionV2Schema = z.object({
       inputCostUsd: z.number().nonnegative(),
       outputCostUsd: z.number().nonnegative(),
       totalCostUsd: z.number().nonnegative(),
-    })
-    .optional(),
-});
-
-export const ingestionTriggerRequestProjectionV2Schema = z.object({
-  id: nonEmptyStringSchema,
-  triggerType: z.enum(['run', 'item']),
-  source: nonEmptyStringSchema,
-  crawlRunId: nonEmptyStringSchema,
-  searchSpaceId: nonEmptyStringSchema,
-  mongoDbName: nonEmptyStringSchema,
-  sourceId: optionalStringSchema,
-  detailHtmlPath: optionalStringSchema,
-  status: z.enum(['pending', 'running', 'succeeded', 'completed_with_errors', 'failed']),
-  requestedAt: isoDateTimeSchema,
-  startedAt: isoDateTimeSchema.optional(),
-  completedAt: isoDateTimeSchema.optional(),
-  updatedAt: isoDateTimeSchema,
-  attemptCount: z.number().int().nonnegative(),
-  ingestionRunId: optionalStringSchema,
-  errorMessage: optionalStringSchema,
-  result: z
-    .object({
-      jobsProcessed: z.number().int().nonnegative(),
-      jobsSkippedIncomplete: z.number().int().nonnegative(),
-      jobsFailed: z.number().int().nonnegative(),
-      totalTokensUsed: z.number().int().nonnegative(),
-      totalEstimatedCostUsd: z.number().nonnegative(),
-      mongoWritesStructured: z.number().int().nonnegative(),
-      mongoWritesRunSummary: z.number().int().nonnegative(),
     })
     .optional(),
 });
@@ -488,48 +462,21 @@ export const ingestionRunSummaryProjectionV2Fixture = ingestionRunSummaryProject
   extractorModel: 'gemini-3-flash-preview',
   jobsTotal: 15,
   jobsProcessed: 14,
+  processedJobIds: Array.from({ length: 14 }, (_, index) => `jobs.cz:${2000905700 + index}`),
   jobsSkippedIncomplete: 0,
+  skippedIncompleteJobIds: [],
   jobsFailed: 1,
+  failedJobIds: ['jobs.cz:2000905774'],
   jobsSuccessRate: 14 / 15,
   jobsNonSuccessRate: 1 / 15,
+  jobsNonSuccess: 1,
+  nonSuccessJobIds: ['jobs.cz:2000905774'],
   totalTokens: 183_220,
   totalEstimatedCostUsd: 0.7421,
 });
-
-export const ingestionTriggerRequestProjectionV2Fixture =
-  ingestionTriggerRequestProjectionV2Schema.parse({
-    id: 'item:jobs.cz:prague-tech-jobs:crawl-run-v2-fixture-001:2000905774',
-    triggerType: 'item',
-    source: 'jobs.cz',
-    crawlRunId: 'crawl-run-v2-fixture-001',
-    searchSpaceId: 'prague-tech-jobs',
-    mongoDbName: 'crawl-ops-prague-tech',
-    sourceId: '2000905774',
-    detailHtmlPath:
-      'gs://crawl-ops-artifacts/runs/crawl-run-v2-fixture-001/records/job-html-2000905774.html',
-    status: 'succeeded',
-    requestedAt: '2026-03-05T10:10:25.000Z',
-    startedAt: '2026-03-05T10:10:27.000Z',
-    completedAt: '2026-03-05T10:10:44.000Z',
-    updatedAt: '2026-03-05T10:10:44.000Z',
-    attemptCount: 1,
-    ingestionRunId: 'ingestion-run-v2-fixture-001',
-    result: {
-      jobsProcessed: 1,
-      jobsSkippedIncomplete: 0,
-      jobsFailed: 0,
-      totalTokensUsed: 11_420,
-      totalEstimatedCostUsd: 0.0413,
-      mongoWritesStructured: 1,
-      mongoWritesRunSummary: 1,
-    },
-  });
 
 export type V2StartRunRequest = z.infer<typeof startRunRequestV2Schema>;
 export type V2StartRunResponse = z.infer<typeof startRunResponseV2Schema>;
 export type V2WorkerLifecycleEvent = z.infer<typeof workerLifecycleEventV2Schema>;
 export type V2CrawlRunSummaryProjection = z.infer<typeof crawlRunSummaryProjectionV2Schema>;
 export type V2IngestionRunSummaryProjection = z.infer<typeof ingestionRunSummaryProjectionV2Schema>;
-export type V2IngestionTriggerRequestProjection = z.infer<
-  typeof ingestionTriggerRequestProjectionV2Schema
->;
