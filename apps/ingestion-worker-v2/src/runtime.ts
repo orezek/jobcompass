@@ -36,8 +36,6 @@ type ItemInput = {
   sourceId: string;
   dedupeKey: string;
   detailHtmlPath: string;
-  datasetFileName?: string;
-  datasetRecordIndex?: number;
   listingRecord: SourceListingRecord;
 };
 
@@ -113,6 +111,12 @@ type RuntimeDeps = {
 type PersistedNormalizedJobAdDoc = UnifiedJobAd;
 
 type StartRunResponse = z.infer<typeof startRunAcceptedResponseV2Schema>;
+
+const INGESTION_TRIGGER_REQUESTS_COLLECTION = 'ingestion_trigger_requests';
+const INGESTION_RUN_SUMMARIES_COLLECTION = 'ingestion_run_summaries';
+const NORMALIZED_JOB_ADS_COLLECTION = 'normalized_job_ads';
+const MONGODB_WRITE_MODE = 'upsert' as const;
+const DOWNLOADABLE_JSON_WRITE_MODE = 'overwrite' as const;
 
 export class ConflictError extends Error {
   public readonly statusCode = 409;
@@ -300,8 +304,6 @@ export class IngestionWorkerRuntime {
         sourceId: record.sourceId,
         dedupeKey: record.dedupeKey,
         detailHtmlPath: record.detailHtmlPath,
-        datasetFileName: record.datasetFileName,
-        datasetRecordIndex: record.datasetRecordIndex,
         listingRecord: record.listingRecord,
       };
 
@@ -554,21 +556,8 @@ export class IngestionWorkerRuntime {
     await this.publishIngestionItemEvent('ingestion.item.started', run, item);
 
     try {
-      const mongoSink = run.request.outputSinks.find(
-        (sink): sink is Extract<(typeof run.request.outputSinks)[number], { type: 'mongodb' }> =>
-          sink.type === 'mongodb',
-      ) ?? {
-        type: 'mongodb' as const,
-        collection: run.request.persistenceTargets.normalizedJobAdsCollection,
-        writeMode: 'upsert' as const,
-      };
-      const downloadableJsonSink = run.request.outputSinks.find(
-        (
-          sink,
-        ): sink is Extract<
-          (typeof run.request.outputSinks)[number],
-          { type: 'downloadable_json' }
-        > => sink.type === 'downloadable_json',
+      const downloadableJsonEnabled = run.request.outputSinks.some(
+        (sink) => sink.type === 'downloadable_json',
       );
 
       const unifiedDoc = await this.fullModelParser.parse({
@@ -576,8 +565,6 @@ export class IngestionWorkerRuntime {
         crawlRunId: item.crawlRunId,
         searchSpaceId: item.searchSpaceId,
         detailHtmlPath: item.detailHtmlPath,
-        datasetFileName: item.datasetFileName ?? 'dataset.json',
-        datasetRecordIndex: item.datasetRecordIndex ?? 0,
         listingRecord: item.listingRecord,
       });
       const normalizedDoc: PersistedNormalizedJobAdDoc = unifiedDoc;
@@ -589,8 +576,7 @@ export class IngestionWorkerRuntime {
       );
 
       let downloadableJsonPath: string | undefined;
-      let downloadableJsonWriteMode: 'upsert' | 'overwrite' | undefined;
-      if (downloadableJsonSink) {
+      if (downloadableJsonEnabled) {
         const downloadablePath = this.buildDownloadablePath(run, item);
         await this.deps.outputsBucket
           .file(downloadablePath)
@@ -598,12 +584,11 @@ export class IngestionWorkerRuntime {
             contentType: 'application/json',
           });
         downloadableJsonPath = `gs://${this.deps.env.OUTPUTS_BUCKET}/${downloadablePath}`;
-        downloadableJsonWriteMode = downloadableJsonSink.writeMode;
       }
 
       this.recordRunMetrics(run, normalizedDoc);
       run.counters.processed += 1;
-      const mongoTargetRef = `${run.request.persistenceTargets.dbName}.${mongoSink.collection}`;
+      const mongoTargetRef = `${run.request.persistenceTargets.dbName}.${NORMALIZED_JOB_ADS_COLLECTION}`;
       run.outputs.push({
         sourceId: item.sourceId,
         dedupeKey: item.dedupeKey,
@@ -624,14 +609,14 @@ export class IngestionWorkerRuntime {
         {
           sinkType: 'mongodb',
           targetRef: mongoTargetRef,
-          writeMode: mongoSink.writeMode,
+          writeMode: MONGODB_WRITE_MODE,
         },
       ];
-      if (downloadableJsonPath && downloadableJsonWriteMode) {
+      if (downloadableJsonPath) {
         sinkResults.push({
           sinkType: 'downloadable_json',
           targetRef: downloadableJsonPath,
-          writeMode: downloadableJsonWriteMode,
+          writeMode: DOWNLOADABLE_JSON_WRITE_MODE,
         });
       }
       await this.publishIngestionItemEvent('ingestion.item.succeeded', run, item, {
@@ -794,8 +779,6 @@ export class IngestionWorkerRuntime {
       mongoDbName: run.request.persistenceTargets.dbName,
       sourceId: item.sourceId,
       detailHtmlPath: item.detailHtmlPath,
-      datasetFileName: item.datasetFileName,
-      datasetRecordIndex: item.datasetRecordIndex,
       status: 'pending',
       requestedAt,
       updatedAt: requestedAt,
@@ -1114,7 +1097,7 @@ export class IngestionWorkerRuntime {
     const targets = run.request.persistenceTargets;
     return this.deps.mongoClient
       .db(targets.dbName)
-      .collection<V2IngestionTriggerRequestProjection>(targets.ingestionTriggerRequestsCollection);
+      .collection<V2IngestionTriggerRequestProjection>(INGESTION_TRIGGER_REQUESTS_COLLECTION);
   }
 
   private getRunSummaryCollectionForRun(
@@ -1123,14 +1106,14 @@ export class IngestionWorkerRuntime {
     const targets = run.request.persistenceTargets;
     return this.deps.mongoClient
       .db(targets.dbName)
-      .collection<V2IngestionRunSummaryProjection>(targets.ingestionRunSummariesCollection);
+      .collection<V2IngestionRunSummaryProjection>(INGESTION_RUN_SUMMARIES_COLLECTION);
   }
 
   private getNormalizedCollectionForRun(run: RunState): Collection<PersistedNormalizedJobAdDoc> {
     const targets = run.request.persistenceTargets;
     return this.deps.mongoClient
       .db(targets.dbName)
-      .collection<PersistedNormalizedJobAdDoc>(targets.normalizedJobAdsCollection);
+      .collection<PersistedNormalizedJobAdDoc>(NORMALIZED_JOB_ADS_COLLECTION);
   }
 
   private async ensureIndexesForRun(run: RunState): Promise<void> {

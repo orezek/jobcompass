@@ -80,6 +80,13 @@ Recommended v2 policy:
 - keep collection names stable (`crawl_run_summaries`, `ingestion_run_summaries`,
   `ingestion_trigger_requests`, `normalized_job_ads`)
 
+output routing rule:
+
+- MongoDB writes to canonical `normalized_job_ads` are always on
+- `outputSinks` is ingestion-only and only enables optional downloadable JSON writes
+- `outputSinks` does not carry bucket paths or collection names; those stay in worker bootstrap/env
+  and fixed platform conventions
+
 ## Endpoints
 
 - `GET /healthz`
@@ -186,10 +193,8 @@ curl -X POST http://127.0.0.1:3020/v1/runs \
     "idempotencyKey": "idmp-crawl-run-local-001",
     "requestedAt": "2026-03-05T10:00:00.000Z",
     "correlationId": "corr-crawl-run-local-001",
-    "manifestVersion": 2,
     "runtimeSnapshot": {
-      "ingestionConcurrency": 2,
-      "ingestionEnabled": true
+      "ingestionConcurrency": 2
     },
     "inputRef": {
       "crawlRunId": "crawl-run-local-001",
@@ -197,25 +202,13 @@ curl -X POST http://127.0.0.1:3020/v1/runs \
       "records": []
     },
     "persistenceTargets": {
-      "dbName": "crawl-ops",
-      "crawlRunSummariesCollection": "crawl_run_summaries",
-      "ingestionRunSummariesCollection": "ingestion_run_summaries",
-      "ingestionTriggerRequestsCollection": "ingestion_trigger_requests",
-      "normalizedJobAdsCollection": "normalized_job_ads"
+      "dbName": "crawl-ops"
     },
     "outputSinks": [
       {
-        "type": "mongodb",
-        "collection": "normalized_job_ads",
-        "writeMode": "upsert"
+        "type": "downloadable_json"
       }
-    ],
-    "eventContext": {
-      "requestedBy": "operator",
-      "tags": {
-        "env": "local"
-      }
-    }
+    ]
   }'
 ```
 

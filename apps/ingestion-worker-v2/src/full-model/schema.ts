@@ -467,8 +467,6 @@ export const unifiedJobAdSchema = z.object({
   rawDetailPage: rawDetailPageSchema,
   ingestion: z.object({
     runId: z.string(),
-    datasetFileName: z.string(),
-    datasetRecordIndex: z.number().int().nonnegative(),
     detailHtmlPath: z.string(),
     detailHtmlSha256: z.string(),
     extractorModel: z.string(),

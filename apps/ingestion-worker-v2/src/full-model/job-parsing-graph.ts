@@ -104,8 +104,6 @@ const buildDocument = (
     },
     ingestion: {
       runId: context.runId,
-      datasetFileName: inputRecord.datasetFileName,
-      datasetRecordIndex: inputRecord.datasetRecordIndex,
       detailHtmlPath: inputRecord.detailHtmlPath,
       detailHtmlSha256: loadedDetailPage.htmlSha256,
       extractorModel,

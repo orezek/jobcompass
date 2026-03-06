@@ -23,10 +23,6 @@ export const v2RunStatusSchema = z.enum([
 
 export const v2PersistenceTargetsSchema = z.object({
   dbName: nonEmptyStringSchema,
-  crawlRunSummariesCollection: nonEmptyStringSchema.default('crawl_run_summaries'),
-  ingestionRunSummariesCollection: nonEmptyStringSchema.default('ingestion_run_summaries'),
-  ingestionTriggerRequestsCollection: nonEmptyStringSchema.default('ingestion_trigger_requests'),
-  normalizedJobAdsCollection: nonEmptyStringSchema.default('normalized_job_ads'),
 });
 
 export const v2PipelineSnapshotSchema = z.object({
@@ -43,8 +39,6 @@ export const v2RuntimeSnapshotSchema = z.object({
   crawlerMaxConcurrency: z.number().int().positive().optional(),
   crawlerMaxRequestsPerMinute: z.number().int().positive().optional(),
   ingestionConcurrency: z.number().int().positive().optional(),
-  ingestionEnabled: z.boolean().optional(),
-  debugLog: z.boolean().optional(),
 });
 
 export const v2ArtifactSinkSchema = z.discriminatedUnion('type', [
@@ -59,19 +53,9 @@ export const v2ArtifactSinkSchema = z.discriminatedUnion('type', [
   }),
 ]);
 
-export const v2OutputSinkSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('mongodb'),
-    collection: nonEmptyStringSchema.default('normalized_job_ads'),
-    writeMode: z.enum(['upsert', 'overwrite']).default('upsert'),
-  }),
-  z.object({
-    type: z.literal('downloadable_json'),
-    storageType: z.enum(['local_filesystem', 'gcs']),
-    targetPath: nonEmptyStringSchema,
-    writeMode: z.enum(['upsert', 'overwrite']).default('overwrite'),
-  }),
-]);
+export const v2OutputSinkSchema = z.object({
+  type: z.literal('downloadable_json'),
+});
 
 const v2SourceListingRecordSchema = z.object({
   sourceId: nonEmptyStringSchema,
@@ -93,8 +77,6 @@ const v2IngestionInputRecordSchema = z
     dedupeKey: nonEmptyStringSchema,
     detailHtmlPath: nonEmptyStringSchema,
     listingRecord: v2SourceListingRecordSchema,
-    datasetFileName: nonEmptyStringSchema.default('dataset.json'),
-    datasetRecordIndex: z.number().int().nonnegative(),
   })
   .superRefine((value, context) => {
     if (value.source !== value.listingRecord.source) {
@@ -125,26 +107,15 @@ export const v2RunTimeoutsSchema = z.object({
   idleTimeoutSeconds: z.number().int().positive().optional(),
 });
 
-export const v2EventContextSchema = z.object({
-  requestedBy: nonEmptyStringSchema.default('control-plane'),
-  tags: z.record(z.string(), z.string()).default({}),
-});
-
 const v2StartRunRequestBaseSchema = z.object({
   contractVersion: v2ContractVersionSchema.default('v2'),
   runId: nonEmptyStringSchema,
   idempotencyKey: nonEmptyStringSchema,
   requestedAt: isoDateTimeSchema,
   correlationId: nonEmptyStringSchema,
-  manifestVersion: z.number().int().positive(),
   runtimeSnapshot: v2RuntimeSnapshotSchema,
   persistenceTargets: v2PersistenceTargetsSchema,
   artifactSink: v2ArtifactSinkSchema.optional(),
-  outputSinks: z.array(v2OutputSinkSchema).default([]),
-  eventContext: v2EventContextSchema.default({
-    requestedBy: 'control-plane',
-    tags: {},
-  }),
   timeouts: v2RunTimeoutsSchema.optional(),
 });
 
@@ -156,6 +127,7 @@ export const crawlerStartRunRequestV2Schema = v2StartRunRequestBaseSchema.extend
 export const ingestionStartRunRequestV2Schema = v2StartRunRequestBaseSchema.extend({
   workerType: z.literal('ingestion'),
   inputRef: v2IngestionInputRefSchema,
+  outputSinks: z.array(v2OutputSinkSchema).default([]),
 });
 
 export const startRunRequestV2Schema = z.discriminatedUnion('workerType', [
@@ -356,8 +328,6 @@ export const ingestionTriggerRequestProjectionV2Schema = z.object({
   mongoDbName: nonEmptyStringSchema,
   sourceId: optionalStringSchema,
   detailHtmlPath: optionalStringSchema,
-  datasetFileName: optionalStringSchema,
-  datasetRecordIndex: z.number().int().nonnegative().optional(),
   status: z.enum(['pending', 'running', 'succeeded', 'completed_with_errors', 'failed']),
   requestedAt: isoDateTimeSchema,
   startedAt: isoDateTimeSchema.optional(),
@@ -386,38 +356,17 @@ export const crawlerStartRunRequestV2Fixture = crawlerStartRunRequestV2Schema.pa
   idempotencyKey: 'idmp-crawler-v2-fixture-001',
   requestedAt: '2026-03-05T10:00:00.000Z',
   correlationId: 'corr-v2-fixture-001',
-  manifestVersion: 2,
   runtimeSnapshot: {
     crawlerMaxConcurrency: 3,
     crawlerMaxRequestsPerMinute: 60,
-    ingestionConcurrency: 4,
-    ingestionEnabled: true,
-    debugLog: false,
   },
   persistenceTargets: {
     dbName: 'crawl-ops-prague-tech',
-    crawlRunSummariesCollection: 'crawl_run_summaries',
-    ingestionRunSummariesCollection: 'ingestion_run_summaries',
-    ingestionTriggerRequestsCollection: 'ingestion_trigger_requests',
-    normalizedJobAdsCollection: 'normalized_job_ads',
   },
   artifactSink: {
     type: 'gcs',
     bucket: 'crawl-ops-artifacts',
     prefix: 'runs/',
-  },
-  outputSinks: [
-    {
-      type: 'mongodb',
-      collection: 'normalized_job_ads',
-      writeMode: 'upsert',
-    },
-  ],
-  eventContext: {
-    requestedBy: 'ops-control-plane',
-    tags: {
-      env: 'staging',
-    },
   },
   timeouts: {
     hardTimeoutSeconds: 7200,
@@ -426,8 +375,18 @@ export const crawlerStartRunRequestV2Fixture = crawlerStartRunRequestV2Schema.pa
 });
 
 export const ingestionStartRunRequestV2Fixture = ingestionStartRunRequestV2Schema.parse({
-  ...crawlerStartRunRequestV2Fixture,
+  contractVersion: 'v2',
   workerType: 'ingestion',
+  runId: 'ingestion-run-v2-fixture-001',
+  idempotencyKey: 'idmp-ingestion-v2-fixture-001',
+  requestedAt: '2026-03-05T10:00:00.000Z',
+  correlationId: 'corr-v2-fixture-001',
+  runtimeSnapshot: {
+    ingestionConcurrency: 4,
+  },
+  persistenceTargets: {
+    dbName: 'crawl-ops-prague-tech',
+  },
   inputRef: {
     crawlRunId: 'crawl-run-v2-fixture-001',
     searchSpaceId: 'prague-tech-jobs',
@@ -450,11 +409,10 @@ export const ingestionStartRunRequestV2Fixture = ingestionStartRunRequestV2Schem
           source: 'jobs.cz',
           htmlDetailPageKey: 'job-html-2000905774.html',
         },
-        datasetFileName: 'dataset.json',
-        datasetRecordIndex: 0,
       },
     ],
   },
+  outputSinks: [{ type: 'downloadable_json' }],
 });
 
 export const startRunAcceptedResponseV2Fixture = startRunAcceptedResponseV2Schema.parse({
@@ -549,8 +507,6 @@ export const ingestionTriggerRequestProjectionV2Fixture =
     sourceId: '2000905774',
     detailHtmlPath:
       'gs://crawl-ops-artifacts/runs/crawl-run-v2-fixture-001/records/job-html-2000905774.html',
-    datasetFileName: 'dataset.json',
-    datasetRecordIndex: 0,
     status: 'succeeded',
     requestedAt: '2026-03-05T10:10:25.000Z',
     startedAt: '2026-03-05T10:10:27.000Z',

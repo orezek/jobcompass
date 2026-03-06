@@ -38,14 +38,10 @@ export type ParseFullModelInput = {
   crawlRunId: string | null;
   searchSpaceId: string;
   detailHtmlPath: string;
-  datasetFileName: string;
-  datasetRecordIndex: number;
   listingRecord: SourceListingRecord;
 };
 
 type LocalInputRecord = {
-  datasetFileName: string;
-  datasetRecordIndex: number;
   listingRecord: ReturnType<typeof sourceListingRecordSchema.parse>;
   detailHtmlPath: string;
 };
@@ -61,8 +57,6 @@ export class FullModelParser {
     const listingRecord = sourceListingRecordSchema.parse(input.listingRecord);
 
     const inputRecord: LocalInputRecord = {
-      datasetFileName: input.datasetFileName,
-      datasetRecordIndex: input.datasetRecordIndex,
       listingRecord,
       detailHtmlPath: input.detailHtmlPath,
     };

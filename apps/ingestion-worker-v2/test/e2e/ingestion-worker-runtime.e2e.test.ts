@@ -285,8 +285,6 @@ function buildStartRunPayload(
       source: string;
       htmlDetailPageKey: string;
     };
-    datasetFileName?: string;
-    datasetRecordIndex?: number;
   }>,
 ) {
   return ingestionStartRunRequestV2Schema.parse({
@@ -296,51 +294,24 @@ function buildStartRunPayload(
     idempotencyKey: `idmp-${runId}`,
     requestedAt: new Date().toISOString(),
     correlationId: `corr-${runId}`,
-    manifestVersion: 2,
     runtimeSnapshot: {
       ingestionConcurrency: 2,
-      ingestionEnabled: true,
-      debugLog: false,
     },
     inputRef: {
       crawlRunId: runId,
       searchSpaceId: 'search-space-e2e',
-      records: records.map((record, index) => ({
+      records: records.map((record) => ({
         source: record.source,
         sourceId: record.sourceId,
         dedupeKey: record.dedupeKey,
         detailHtmlPath: record.detailHtmlPath,
         listingRecord: record.listingRecord,
-        datasetFileName: record.datasetFileName ?? 'dataset.json',
-        datasetRecordIndex: record.datasetRecordIndex ?? index,
       })),
     },
     persistenceTargets: {
       dbName: sharedDbName,
-      crawlRunSummariesCollection: collections.crawlRunSummaries,
-      ingestionRunSummariesCollection: collections.ingestionRunSummaries,
-      ingestionTriggerRequestsCollection: collections.ingestionTriggerRequests,
-      normalizedJobAdsCollection: collections.normalizedJobAds,
     },
-    outputSinks: [
-      {
-        type: 'mongodb',
-        collection: collections.normalizedJobAds,
-        writeMode: 'upsert',
-      },
-      {
-        type: 'downloadable_json',
-        storageType: 'gcs',
-        targetPath: `gs://test-output-bucket/e2e/${runId}`,
-        writeMode: 'overwrite',
-      },
-    ],
-    eventContext: {
-      requestedBy: 'ingestion-worker-v2-e2e',
-      tags: {
-        suite: 'runtime',
-      },
-    },
+    outputSinks: [{ type: 'downloadable_json' }],
   });
 }
 
@@ -491,13 +462,12 @@ test(
       const { runtime, outputBucket, topic } = await createRuntimeFixture();
       const payload = buildStartRunPayload(
         runId,
-        goldenParityCases.map((fixtureCase, index) => ({
+        goldenParityCases.map((fixtureCase) => ({
           source: 'jobs.cz',
           sourceId: fixtureCase.sourceId,
           dedupeKey: `jobs.cz:search-space-e2e:${runId}:${fixtureCase.sourceId}`,
           detailHtmlPath: fixturePathBySourceId.get(fixtureCase.sourceId)!,
           listingRecord: fixtureCase.listingRecord,
-          datasetRecordIndex: index,
         })),
       );
 
@@ -576,7 +546,8 @@ test(
         assert.equal(normalizedDoc.listing.jobTitle, fixtureCase.listingRecord.jobTitle);
         assert.equal(normalizedDoc.listing.companyName, fixtureCase.listingRecord.companyName);
         assert.equal(normalizedDoc.ingestion.runId, runId);
-        assert.equal(normalizedDoc.ingestion.datasetFileName, 'dataset.json');
+        assert.equal('datasetFileName' in normalizedDoc.ingestion, false);
+        assert.equal('datasetRecordIndex' in normalizedDoc.ingestion, false);
         assert.ok(
           Number(normalizedDoc.ingestion.llmTotalTokens) >= 0,
           `Invalid llmTotalTokens for ${fixtureCase.sourceId}`,
@@ -708,7 +679,7 @@ test(
 );
 
 test(
-  'correlates crawler events by crawlRunId and succeeds with mongodb-only output sink',
+  'correlates crawler events by crawlRunId and succeeds without downloadable json output',
   maybeSkip,
   async () => {
     const runId = buildRunId('e2e-crawler-correlation');
@@ -719,13 +690,7 @@ test(
       const { runtime, outputBucket } = await createRuntimeFixture();
       const payload = buildStartRunPayload(runId, []);
       payload.inputRef.crawlRunId = crawlRunId;
-      payload.outputSinks = [
-        {
-          type: 'mongodb',
-          collection: collections.normalizedJobAds,
-          writeMode: 'upsert',
-        },
-      ];
+      payload.outputSinks = [];
 
       await runtime.startRun(payload);
 
