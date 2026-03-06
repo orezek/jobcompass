@@ -187,6 +187,29 @@ The crawler must not know:
 - control-plane CRUD semantics
 - non-execution audit metadata
 
+## Crawl Phases
+
+Crawler execution has two distinct phases:
+
+1. phase 1: list collection and reconciliation
+2. phase 2: detail capture for listings not yet present in `normalized_job_ads`
+
+Phase 1:
+
+- crawls the configured list/search URLs
+- builds the current seen listing set
+- reconciles that seen set against existing `normalized_job_ads`
+- refreshes existing seen records (`lastSeenAt`, `lastSeenRunId`, `isActive=true`)
+- marks inactive only those existing active records not present in the current seen set
+- determines which listings are new and must enter phase 2
+
+Phase 2:
+
+- captures detail HTML only for listings not yet represented in `normalized_job_ads`
+- writes artifacts
+- emits `crawler.detail.captured` when enabled
+- does not participate in inactive marking decisions
+
 ## Reconciliation And Inactive Marking
 
 Inactive marking remains a crawler responsibility in v2.
@@ -201,9 +224,25 @@ If those conditions are violated, inactive marking becomes invalid and must not 
 
 Operational rule:
 
-- inactive marking must only execute on a successful full crawl run when
-  `searchSpaceSnapshot.allowInactiveMarking=true`
-- failed, stopped, or partial runs must not mark records inactive
+- inactive marking is governed by phase-1 list integrity, not by phase-2 detail capture or
+  ingestion outcome
+- inactive marking may execute only when `searchSpaceSnapshot.allowInactiveMarking=true` and the
+  phase-1 seen set is trustworthy
+- a trustworthy phase-1 seen set requires:
+  - list collection completed
+  - no failed list requests
+  - no list-scope truncation/partial-list guard condition
+  - reconciliation itself succeeded
+- if phase 1 is incomplete or untrustworthy, inactive marking must be skipped
+- phase-2 failure after a successful phase 1 does not invalidate already-applied inactive marking
+- ingestion success/failure for newly discovered jobs does not affect inactive marking
+
+Resulting semantics:
+
+- existing jobs are reconciled from list visibility alone
+- new jobs become active only after successful ingestion creates the normalized document
+- if a run fails during phase 2, reconciled existing jobs remain correct and the next run can
+  ingest any still-missing new jobs
 
 ## Artifact Rules
 
@@ -232,7 +271,15 @@ Publication rules:
 
 - `crawler.detail.captured` only when `emitDetailCapturedEvents=true`
 - `crawler.detail.captured` only after artifact write success
-- `crawler.run.finished` always includes final status and counters
+- `crawler.run.finished` is a minimal projection event, not a telemetry dump
+- `crawler.run.finished` payload should contain only:
+  - `crawlRunId`
+  - `source`
+  - `searchSpaceId`
+  - `status`
+  - `stopReason`
+- detailed crawl counters, guard flags, and reconciliation telemetry belong in
+  `crawl_run_summaries`, not on the event bus
 
 ## Summary Persistence
 

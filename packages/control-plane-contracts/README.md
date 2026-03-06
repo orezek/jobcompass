@@ -11,6 +11,7 @@ Exports:
 - v2 worker contracts:
   - `startRunRequestV2Schema` and `startRunResponseV2Schema`
   - `workerLifecycleEventV2Schema`
+  - `runtimeBrokerEventV2Schema`
   - projection schemas for:
     - `crawl_run_summaries`
     - `ingestion_run_summaries`
@@ -21,7 +22,6 @@ Notes:
 - v2 worker command ingress is REST `StartRun`, not broker command delivery.
 - `crawler.run.requested` remains exported for legacy/v1 compatibility and control-plane replay
   helpers; it is not the canonical v2 worker command path.
-- current runtime broker events are still split:
-  - `startRunRequestV2Schema`, `startRunResponseV2Schema`, and summary projections live in
-    `src/v2.ts`
-  - item/capture broker events currently live in `src/index.ts`
+- V2 runtime broker events now live in `src/v2.ts`.
+- `src/index.ts` remains the legacy/v1 compatibility surface for older broker event builders and
+  readers still used by v1-era apps.

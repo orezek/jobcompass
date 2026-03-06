@@ -113,6 +113,8 @@ Consequences:
   `normalized_job_ads` collection
 - changing the search scope of an existing pipeline is forbidden because it would corrupt that
   dataset boundary
+- inactive marking is decided from crawler phase-1 list visibility against that stable dataset,
+  not from later detail-capture or ingestion success
 
 ## Control-Plane Persistence Model
 

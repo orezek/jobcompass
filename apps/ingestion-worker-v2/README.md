@@ -212,12 +212,17 @@ curl -X POST http://127.0.0.1:3020/v1/runs \
 
 Use a local HTML path in `artifact.storagePath` or a `gs://` URI.
 
+V2 note:
+
+- canonical runtime broker event shape is V2 (`eventVersion: "v2"`)
+- the worker still accepts legacy V1 crawler events during the transition period
+
 ```bash
 gcloud pubsub topics publish run-events \
   --message='{
     "eventId":"evt-local-1",
     "eventType":"crawler.detail.captured",
-    "eventVersion":"v1",
+    "eventVersion":"v2",
     "occurredAt":"2026-03-05T10:01:00.000Z",
     "runId":"crawl-run-local-001",
     "correlationId":"jobs.cz:default:crawl-run-local-001:2000905774",
@@ -258,30 +263,24 @@ gcloud pubsub topics publish run-events \
   --message='{
     "eventId":"evt-local-2",
     "eventType":"crawler.run.finished",
-    "eventVersion":"v1",
+    "eventVersion":"v2",
     "occurredAt":"2026-03-05T10:02:00.000Z",
     "runId":"crawl-run-local-001",
     "correlationId":"crawl-run-local-001",
     "producer":"crawler-worker",
     "payload":{
       "crawlRunId":"crawl-run-local-001",
+      "source":"jobs.cz",
       "searchSpaceId":"default",
       "status":"succeeded",
-      "summaryPath":"",
-      "datasetPath":"",
-      "newJobsCount":1,
-      "failedRequests":0,
       "stopReason":"completed"
     }
   }'
 ```
 
-Inspect run and outputs:
+Inspect outputs:
 
 ```bash
-curl -H "Authorization: Bearer $CONTROL_SHARED_TOKEN" \
-  http://127.0.0.1:3020/v1/runs/crawl-run-local-001
-
 curl -H "Authorization: Bearer $CONTROL_SHARED_TOKEN" \
   http://127.0.0.1:3020/v1/runs/crawl-run-local-001/outputs
 ```

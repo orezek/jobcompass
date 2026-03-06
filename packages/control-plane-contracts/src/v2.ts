@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 const isoDateTimeSchema = z.iso.datetime();
@@ -72,7 +73,7 @@ export const v2CrawlerInputRefSchema = z.object({
   emitDetailCapturedEvents: z.boolean(),
 });
 
-const v2SourceListingRecordSchema = z.object({
+export const v2SourceListingRecordSchema = z.object({
   sourceId: nonEmptyStringSchema,
   adUrl: z.url(),
   jobTitle: nonEmptyStringSchema,
@@ -83,6 +84,14 @@ const v2SourceListingRecordSchema = z.object({
   scrapedAt: isoDateTimeSchema,
   source: nonEmptyStringSchema,
   htmlDetailPageKey: nonEmptyStringSchema,
+});
+
+export const v2StoredArtifactRefSchema = z.object({
+  artifactType: z.literal('html'),
+  storageType: z.enum(['local_filesystem', 'gcs']),
+  storagePath: nonEmptyStringSchema,
+  checksum: nonEmptyStringSchema,
+  sizeBytes: z.number().int().positive(),
 });
 
 const v2IngestionInputRecordSchema = z
@@ -195,7 +204,7 @@ export const workerLifecyclePayloadV2Schema = z.object({
     .optional(),
 });
 
-const v2WorkerLifecycleEnvelopeSchema = z.object({
+export const v2WorkerLifecycleEnvelopeSchema = z.object({
   eventId: nonEmptyStringSchema,
   eventVersion: v2ContractVersionSchema.default('v2'),
   occurredAt: isoDateTimeSchema,
@@ -212,12 +221,32 @@ export const crawlerRunStartedEventV2Schema = v2WorkerLifecycleEnvelopeSchema.ex
   }),
 });
 
+export const crawlerDetailCapturedPayloadV2Schema = z.object({
+  crawlRunId: nonEmptyStringSchema,
+  searchSpaceId: nonEmptyStringSchema,
+  source: nonEmptyStringSchema,
+  sourceId: nonEmptyStringSchema,
+  listingRecord: v2SourceListingRecordSchema,
+  artifact: v2StoredArtifactRefSchema,
+  dedupeKey: nonEmptyStringSchema,
+});
+
+export const crawlerDetailCapturedEventV2Schema = v2WorkerLifecycleEnvelopeSchema.extend({
+  eventType: z.literal('crawler.detail.captured'),
+  payload: crawlerDetailCapturedPayloadV2Schema,
+});
+
+export const crawlerRunFinishedPayloadV2Schema = z.object({
+  crawlRunId: nonEmptyStringSchema,
+  source: nonEmptyStringSchema,
+  searchSpaceId: nonEmptyStringSchema,
+  status: z.enum(['succeeded', 'completed_with_errors', 'failed', 'stopped']),
+  stopReason: optionalStringSchema,
+});
+
 export const crawlerRunFinishedEventV2Schema = v2WorkerLifecycleEnvelopeSchema.extend({
   eventType: z.literal('crawler.run.finished'),
-  payload: workerLifecyclePayloadV2Schema.extend({
-    workerType: z.literal('crawler'),
-    status: z.enum(['succeeded', 'completed_with_errors', 'failed', 'stopped']),
-  }),
+  payload: crawlerRunFinishedPayloadV2Schema,
 });
 
 export const ingestionRunStartedEventV2Schema = v2WorkerLifecycleEnvelopeSchema.extend({
@@ -236,10 +265,66 @@ export const ingestionRunFinishedEventV2Schema = v2WorkerLifecycleEnvelopeSchema
   }),
 });
 
+export const ingestionLifecyclePayloadV2Schema = z.object({
+  crawlRunId: nonEmptyStringSchema,
+  source: nonEmptyStringSchema,
+  sourceId: nonEmptyStringSchema,
+  dedupeKey: nonEmptyStringSchema,
+  documentId: optionalStringSchema,
+  sinkResults: z
+    .array(
+      z.object({
+        sinkType: z.enum(['mongodb', 'downloadable_json']),
+        targetRef: nonEmptyStringSchema,
+        writeMode: z.enum(['upsert', 'overwrite']),
+      }),
+    )
+    .optional(),
+  error: z
+    .object({
+      name: nonEmptyStringSchema,
+      message: nonEmptyStringSchema,
+    })
+    .optional(),
+  reason: optionalStringSchema,
+});
+
+export const ingestionItemStartedEventV2Schema = v2WorkerLifecycleEnvelopeSchema.extend({
+  eventType: z.literal('ingestion.item.started'),
+  payload: ingestionLifecyclePayloadV2Schema,
+});
+
+export const ingestionItemSucceededEventV2Schema = v2WorkerLifecycleEnvelopeSchema.extend({
+  eventType: z.literal('ingestion.item.succeeded'),
+  payload: ingestionLifecyclePayloadV2Schema,
+});
+
+export const ingestionItemFailedEventV2Schema = v2WorkerLifecycleEnvelopeSchema.extend({
+  eventType: z.literal('ingestion.item.failed'),
+  payload: ingestionLifecyclePayloadV2Schema,
+});
+
+export const ingestionItemRejectedEventV2Schema = v2WorkerLifecycleEnvelopeSchema.extend({
+  eventType: z.literal('ingestion.item.rejected'),
+  payload: ingestionLifecyclePayloadV2Schema,
+});
+
 export const workerLifecycleEventV2Schema = z.discriminatedUnion('eventType', [
   crawlerRunStartedEventV2Schema,
   crawlerRunFinishedEventV2Schema,
   ingestionRunStartedEventV2Schema,
+  ingestionRunFinishedEventV2Schema,
+]);
+
+export const runtimeBrokerEventV2Schema = z.discriminatedUnion('eventType', [
+  crawlerRunStartedEventV2Schema,
+  crawlerDetailCapturedEventV2Schema,
+  crawlerRunFinishedEventV2Schema,
+  ingestionRunStartedEventV2Schema,
+  ingestionItemStartedEventV2Schema,
+  ingestionItemSucceededEventV2Schema,
+  ingestionItemFailedEventV2Schema,
+  ingestionItemRejectedEventV2Schema,
   ingestionRunFinishedEventV2Schema,
 ]);
 
@@ -469,6 +554,84 @@ export const workerLifecycleEventV2Fixtures = [
   }),
 ] as const;
 
+export const runtimeBrokerEventV2Fixtures = [
+  crawlerDetailCapturedEventV2Schema.parse({
+    eventId: 'evt-v2-crawler-detail-001',
+    eventVersion: 'v2',
+    eventType: 'crawler.detail.captured',
+    occurredAt: '2026-03-05T10:02:30.000Z',
+    runId: 'crawl-run-v2-fixture-001',
+    correlationId: 'jobs.cz:prague-tech-jobs:crawl-run-v2-fixture-001:2000905774',
+    producer: 'crawler-worker',
+    payload: {
+      crawlRunId: 'crawl-run-v2-fixture-001',
+      searchSpaceId: 'prague-tech-jobs',
+      source: 'jobs.cz',
+      sourceId: '2000905774',
+      listingRecord: {
+        sourceId: '2000905774',
+        adUrl: 'https://www.jobs.cz/rpd/2000905774/',
+        jobTitle: 'Senior Software Engineer',
+        companyName: 'JobCompass Labs',
+        location: 'Prague',
+        salary: null,
+        publishedInfoText: 'Aktualizováno dnes',
+        scrapedAt: '2026-03-05T10:02:29.000Z',
+        source: 'jobs.cz',
+        htmlDetailPageKey: 'job-html-2000905774.html',
+      },
+      artifact: {
+        artifactType: 'html',
+        storageType: 'gcs',
+        storagePath:
+          'gs://crawl-ops-artifacts/runs/crawl-run-v2-fixture-001/records/job-html-2000905774.html',
+        checksum: 'sha256:fixture',
+        sizeBytes: 2048,
+      },
+      dedupeKey: 'jobs.cz:prague-tech-jobs:crawl-run-v2-fixture-001:2000905774',
+    },
+  }),
+  crawlerRunFinishedEventV2Schema.parse({
+    eventId: 'evt-v2-crawler-finished-001',
+    eventVersion: 'v2',
+    eventType: 'crawler.run.finished',
+    occurredAt: '2026-03-05T10:10:15.000Z',
+    runId: 'crawl-run-v2-fixture-001',
+    correlationId: 'corr-v2-fixture-001',
+    producer: 'crawler-worker',
+    payload: {
+      crawlRunId: 'crawl-run-v2-fixture-001',
+      source: 'jobs.cz',
+      searchSpaceId: 'prague-tech-jobs',
+      status: 'succeeded',
+      stopReason: 'completed',
+    },
+  }),
+  ingestionItemSucceededEventV2Schema.parse({
+    eventId: 'evt-v2-ingestion-item-succeeded-001',
+    eventVersion: 'v2',
+    eventType: 'ingestion.item.succeeded',
+    occurredAt: '2026-03-05T10:12:10.000Z',
+    runId: 'ingestion-run-v2-fixture-001',
+    correlationId: 'jobs.cz:prague-tech-jobs:crawl-run-v2-fixture-001:2000905774',
+    producer: 'ingestion-worker',
+    payload: {
+      crawlRunId: 'crawl-run-v2-fixture-001',
+      source: 'jobs.cz',
+      sourceId: '2000905774',
+      dedupeKey: 'jobs.cz:prague-tech-jobs:crawl-run-v2-fixture-001:2000905774',
+      documentId: 'jobs.cz:2000905774',
+      sinkResults: [
+        {
+          sinkType: 'mongodb',
+          targetRef: 'crawl-ops-prague-tech.normalized_job_ads/jobs.cz:2000905774',
+          writeMode: 'upsert',
+        },
+      ],
+    },
+  }),
+] as const;
+
 export const crawlRunSummaryProjectionV2Fixture = crawlRunSummaryProjectionV2Schema.parse({
   crawlRunId: 'crawl-run-v2-fixture-001',
   source: 'jobs.cz',
@@ -506,8 +669,110 @@ export const ingestionRunSummaryProjectionV2Fixture = ingestionRunSummaryProject
   totalEstimatedCostUsd: 0.7421,
 });
 
+const nowIso = (): string => new Date().toISOString();
+
+export const buildCrawlerDetailCapturedEventV2 = (input: {
+  runId: string;
+  crawlRunId: string;
+  searchSpaceId: string;
+  source: string;
+  sourceId: string;
+  listingRecord: z.infer<typeof v2SourceListingRecordSchema>;
+  artifact: z.infer<typeof v2StoredArtifactRefSchema>;
+  producer?: string;
+}) =>
+  crawlerDetailCapturedEventV2Schema.parse({
+    eventId: `evt-${randomUUID()}`,
+    eventVersion: 'v2',
+    eventType: 'crawler.detail.captured',
+    occurredAt: nowIso(),
+    runId: input.runId,
+    correlationId: `${input.source}:${input.searchSpaceId}:${input.crawlRunId}:${input.sourceId}`,
+    producer: input.producer ?? 'crawler-worker',
+    payload: {
+      crawlRunId: input.crawlRunId,
+      searchSpaceId: input.searchSpaceId,
+      source: input.source,
+      sourceId: input.sourceId,
+      listingRecord: input.listingRecord,
+      artifact: input.artifact,
+      dedupeKey: `${input.source}:${input.searchSpaceId}:${input.crawlRunId}:${input.sourceId}`,
+    },
+  });
+
+export const buildCrawlerRunFinishedEventV2 = (input: {
+  runId: string;
+  crawlRunId: string;
+  source: string;
+  searchSpaceId: string;
+  status: z.infer<typeof crawlerRunFinishedPayloadV2Schema>['status'];
+  stopReason?: string;
+  producer?: string;
+}) =>
+  crawlerRunFinishedEventV2Schema.parse({
+    eventId: `evt-${randomUUID()}`,
+    eventVersion: 'v2',
+    eventType: 'crawler.run.finished',
+    occurredAt: nowIso(),
+    runId: input.runId,
+    correlationId: input.runId,
+    producer: input.producer ?? 'crawler-worker',
+    payload: {
+      crawlRunId: input.crawlRunId,
+      source: input.source,
+      searchSpaceId: input.searchSpaceId,
+      status: input.status,
+      stopReason: input.stopReason,
+    },
+  });
+
+export const buildIngestionLifecycleEventV2 = (input: {
+  eventType:
+    | 'ingestion.item.started'
+    | 'ingestion.item.succeeded'
+    | 'ingestion.item.failed'
+    | 'ingestion.item.rejected';
+  runId: string;
+  crawlRunId: string;
+  source: string;
+  sourceId: string;
+  dedupeKey: string;
+  documentId?: string;
+  sinkResults?: Array<{
+    sinkType: 'mongodb' | 'downloadable_json';
+    targetRef: string;
+    writeMode: 'upsert' | 'overwrite';
+  }>;
+  error?: {
+    name: string;
+    message: string;
+  };
+  reason?: string;
+  producer?: string;
+}) =>
+  runtimeBrokerEventV2Schema.parse({
+    eventId: `evt-${randomUUID()}`,
+    eventVersion: 'v2',
+    eventType: input.eventType,
+    occurredAt: nowIso(),
+    runId: input.runId,
+    correlationId: input.dedupeKey,
+    producer: input.producer ?? 'ingestion-worker',
+    payload: {
+      crawlRunId: input.crawlRunId,
+      source: input.source,
+      sourceId: input.sourceId,
+      dedupeKey: input.dedupeKey,
+      documentId: input.documentId,
+      sinkResults: input.sinkResults,
+      error: input.error,
+      reason: input.reason,
+    },
+  });
+
 export type V2StartRunRequest = z.infer<typeof startRunRequestV2Schema>;
 export type V2StartRunResponse = z.infer<typeof startRunResponseV2Schema>;
 export type V2WorkerLifecycleEvent = z.infer<typeof workerLifecycleEventV2Schema>;
+export type V2RuntimeBrokerEvent = z.infer<typeof runtimeBrokerEventV2Schema>;
 export type V2CrawlRunSummaryProjection = z.infer<typeof crawlRunSummaryProjectionV2Schema>;
 export type V2IngestionRunSummaryProjection = z.infer<typeof ingestionRunSummaryProjectionV2Schema>;

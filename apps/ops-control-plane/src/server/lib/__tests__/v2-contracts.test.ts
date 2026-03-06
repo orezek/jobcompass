@@ -5,6 +5,8 @@ import {
   crawlerStartRunRequestV2Schema,
   ingestionRunSummaryProjectionV2Fixture,
   ingestionRunSummaryProjectionV2Schema,
+  runtimeBrokerEventV2Fixtures,
+  runtimeBrokerEventV2Schema,
   ingestionStartRunRequestV2Fixture,
   ingestionStartRunRequestV2Schema,
   startRunAcceptedResponseV2Fixture,
@@ -43,6 +45,13 @@ describe('v2 control-plane contracts', () => {
     expect(workerLifecycleEventV2Fixtures).toHaveLength(2);
     for (const event of workerLifecycleEventV2Fixtures) {
       expect(workerLifecycleEventV2Schema.parse(event)).toEqual(event);
+    }
+  });
+
+  it('validates v2 runtime broker event fixtures', () => {
+    expect(runtimeBrokerEventV2Fixtures).toHaveLength(3);
+    for (const event of runtimeBrokerEventV2Fixtures) {
+      expect(runtimeBrokerEventV2Schema.parse(event)).toEqual(event);
     }
   });
 

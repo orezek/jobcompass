@@ -376,6 +376,11 @@ gcp mapping (canonical):
 
 ## v2.0 Event Contract Shape
 
+Canonical contract source:
+
+- V2 runtime broker event schemas live in `packages/control-plane-contracts/src/v2.ts`
+- `packages/control-plane-contracts/src/index.ts` remains legacy/v1 compatibility surface only
+
 minimum event families:
 
 - `crawler.run.started`
@@ -396,6 +401,17 @@ Each event should include:
 - `correlationId`
 - `producer`
 - payload with versioned schema
+
+`crawler.run.finished` v2 payload should stay minimal:
+
+- `crawlRunId`
+- `source`
+- `searchSpaceId`
+- `status`
+- `stopReason`
+
+Detailed crawler counters and reconciliation telemetry must be read from `crawl_run_summaries`,
+not duplicated into the runtime event payload.
 
 ## v2.0 Detailed Event And Persistence Map
 
@@ -465,6 +481,15 @@ Behavior:
 - reconciles inactive jobs against the pipeline-owned `normalized_job_ads` collection when enabled
 - must not mutate control-plane configuration collections
 - must rely on pipeline-stable database boundaries for reconciliation correctness
+
+crawler execution semantics:
+
+- phase 1 collects list visibility and reconciles existing `normalized_job_ads`
+- phase 1 may refresh seen existing records and mark unseen existing records inactive
+- phase 2 captures detail HTML only for listings not yet present in `normalized_job_ads`
+- phase-2 capture or ingestion failure does not invalidate inactive marking already decided from a
+  trustworthy phase 1
+- inactive marking must be skipped when the phase-1 seen set is incomplete or untrustworthy
 
 #### Ingestion Worker
 

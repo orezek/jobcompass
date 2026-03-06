@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import type { Topic } from '@google-cloud/pubsub';
 import type { Bucket, Storage } from '@google-cloud/storage';
 import {
-  buildIngestionLifecycleEvent,
-  crawlerDetailCapturedEventSchema,
-  crawlerRunFinishedEventSchema,
+  buildIngestionLifecycleEventV2,
+  crawlerDetailCapturedEventSchema as legacyCrawlerDetailCapturedEventSchema,
+  crawlerDetailCapturedEventV2Schema,
+  crawlerRunFinishedEventSchema as legacyCrawlerRunFinishedEventSchema,
   crawlerRunFinishedEventV2Schema,
   ingestionRunFinishedEventV2Schema,
   ingestionRunStartedEventV2Schema,
@@ -23,8 +24,9 @@ import { FullModelParser } from './full-model/parser.js';
 import type { SourceListingRecord, UnifiedJobAd } from './full-model/schema.js';
 
 type IngestionStartRunRequestV2 = z.infer<typeof ingestionStartRunRequestV2Schema>;
-type CrawlerDetailCapturedEvent = z.infer<typeof crawlerDetailCapturedEventSchema>;
-type CrawlerRunFinishedEvent = z.infer<typeof crawlerRunFinishedEventSchema>;
+type LegacyCrawlerDetailCapturedEvent = z.infer<typeof legacyCrawlerDetailCapturedEventSchema>;
+type CrawlerDetailCapturedEventV2 = z.infer<typeof crawlerDetailCapturedEventV2Schema>;
+type LegacyCrawlerRunFinishedEvent = z.infer<typeof legacyCrawlerRunFinishedEventSchema>;
 type CrawlerRunFinishedEventV2 = z.infer<typeof crawlerRunFinishedEventV2Schema>;
 
 type ItemInput = {
@@ -396,29 +398,38 @@ export class IngestionWorkerRuntime {
         : null;
 
     if (eventType === 'crawler.detail.captured') {
-      const parsedEvent = crawlerDetailCapturedEventSchema.safeParse(parsedJson);
-      if (!parsedEvent.success) {
+      const parsedEventV2 = crawlerDetailCapturedEventV2Schema.safeParse(parsedJson);
+      if (parsedEventV2.success) {
+        await this.handleCrawlerDetailCapturedEvent(parsedEventV2.data);
+        return;
+      }
+
+      const parsedEventV1 = legacyCrawlerDetailCapturedEventSchema.safeParse(parsedJson);
+      if (!parsedEventV1.success) {
         this.deps.logger.warn(
-          { issues: parsedEvent.error.issues },
+          {
+            issuesV2: parsedEventV2.error.issues,
+            issuesV1: parsedEventV1.error.issues,
+          },
           'Skipping malformed crawler.detail.captured event.',
         );
         return;
       }
 
-      await this.handleCrawlerDetailCapturedEvent(parsedEvent.data);
+      await this.handleCrawlerDetailCapturedEvent(parsedEventV1.data);
       return;
     }
 
     if (eventType === 'crawler.run.finished') {
-      const parsedEventV1 = crawlerRunFinishedEventSchema.safeParse(parsedJson);
-      if (parsedEventV1.success) {
-        await this.handleCrawlerRunFinishedEvent(parsedEventV1.data);
-        return;
-      }
-
       const parsedEventV2 = crawlerRunFinishedEventV2Schema.safeParse(parsedJson);
       if (parsedEventV2.success) {
         await this.handleCrawlerRunFinishedEvent(parsedEventV2.data);
+        return;
+      }
+
+      const parsedEventV1 = legacyCrawlerRunFinishedEventSchema.safeParse(parsedJson);
+      if (parsedEventV1.success) {
+        await this.handleCrawlerRunFinishedEvent(parsedEventV1.data);
         return;
       }
 
@@ -433,7 +444,9 @@ export class IngestionWorkerRuntime {
     }
   }
 
-  private async handleCrawlerDetailCapturedEvent(event: CrawlerDetailCapturedEvent): Promise<void> {
+  private async handleCrawlerDetailCapturedEvent(
+    event: LegacyCrawlerDetailCapturedEvent | CrawlerDetailCapturedEventV2,
+  ): Promise<void> {
     const run = this.resolveRunForCrawlerEvent(event.runId, event.payload.crawlRunId);
     if (!run) {
       return;
@@ -453,7 +466,7 @@ export class IngestionWorkerRuntime {
   }
 
   private async handleCrawlerRunFinishedEvent(
-    event: CrawlerRunFinishedEvent | CrawlerRunFinishedEventV2,
+    event: LegacyCrawlerRunFinishedEvent | CrawlerRunFinishedEventV2,
   ): Promise<void> {
     const run = this.resolveRunForCrawlerEvent(
       event.runId,
@@ -942,7 +955,7 @@ export class IngestionWorkerRuntime {
       reason?: string;
     },
   ): Promise<void> {
-    const event = buildIngestionLifecycleEvent({
+    const event = buildIngestionLifecycleEventV2({
       eventType,
       runId: run.runId,
       crawlRunId: item.crawlRunId,
