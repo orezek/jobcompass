@@ -56,10 +56,17 @@ platform decision (canonical for v2.0):
 #### 2. Control API / Orchestrator Service
 
 - canonical write boundary for control-plane domain
-- owns configuration CRUD, run creation, scheduling, lifecycle transitions
+- owns pipeline-centric configuration CRUD, run creation, scheduling, lifecycle transitions
 - publishes run/work commands to broker
 - validates and persists execution state transitions
 - exposes machine-readable API contract (OpenAPI)
+
+canonical v2 control-plane rule:
+
+- the pipeline is the primary production boundary
+- live execution config is pipeline-owned and immutable after create except for naming, scheduling,
+  and operational state
+- see `docs/specs/control-plane-v2-pipeline-first.md`
 
 #### 3. Crawler Worker Service
 
@@ -101,14 +108,20 @@ collections:
 
 purpose:
 
-- operator-managed run definitions and execution policies
+- operator-managed pipeline definitions and execution policies
 
 collections:
 
-- `control_plane_search_spaces`
-- `control_plane_runtime_profiles`
 - `control_plane_pipelines`
-- `control_plane_structured_output_destinations`
+
+v2 control-plane rule:
+
+- pipeline documents own embedded execution config snapshots
+- `source`, `searchSpace`, `runtimeProfile`, and `structuredOutput` are pipeline-owned and immutable
+  after create
+- standalone editable search-space/runtime-profile/structured-output collections are not the
+  authoritative runtime model in v2
+- see `docs/specs/control-plane-v2-pipeline-first.md`
 
 ### Domain 3: System Bootstrap / Config Packs
 
@@ -167,10 +180,7 @@ storage:
 Control API should expose:
 
 - configuration resources:
-  - `search-spaces`
-  - `runtime-profiles`
   - `pipelines`
-  - `structured-output-destinations`
 - bootstrap resources:
   - `bootstrap-profiles`
   - `bootstrap-apply`
@@ -187,6 +197,12 @@ Control API should expose:
   - `schedules/{id}/resume`
 
 All writes should be API-owned and idempotency-aware.
+
+v2 control-plane rule:
+
+- the primary configuration API is pipeline-first
+- source/search-space/runtime/output config for live pipelines is created inside pipeline creation,
+  not as globally mutable runtime resources
 
 ## v2.0 Worker Bootstrap And Runtime Contracts
 
@@ -249,6 +265,12 @@ implementation note:
 - `runId`, `idempotencyKey`, `requestedAt`, `correlationId`
 - `manifestVersion`
 - `runtimeSnapshot` (concurrency, limits, flags)
+- crawler `inputRef`:
+  - `source`
+  - `searchSpaceId`
+  - `searchSpaceSnapshot` (`name`, `description`, `startUrls`, `maxItems`,
+    `allowInactiveMarking`)
+  - `emitDetailCapturedEvents`
 - `inputRef` (for ingestion: crawler dataset/artifact refs)
   - each ingestion `inputRef.records[]` must carry `source`, `sourceId`, `dedupeKey`,
     `detailHtmlPath`, and full `listingRecord` snapshot from crawler output
@@ -267,6 +289,9 @@ control-plane note:
 
 - control-plane can keep full `pipelineSnapshot` in its own run ledger for audit/replay
 - worker-facing `StartRun` payload is intentionally minimal and must not include unused config blobs
+- crawler worker should receive `pipelineId` and `pipelineVersion` as provenance, but not the full
+  pipeline aggregate
+- see `docs/specs/crawler-worker-v2.md`
 
 execution modes:
 
@@ -313,6 +338,10 @@ database routing constraint (canonical for v2):
 - db name generation must be deterministic and length-bounded (current safety target: max 38 chars)
 - workers must treat `dbName` as an input contract and must not synthesize fallback DB names from env
 - worker bootstrap env keeps only `MONGODB_URI` for credentials/connectivity
+- pipeline execution identity must remain stable:
+  - `source` is immutable after pipeline creation
+  - `searchSpace` is immutable after pipeline creation
+  - if source/search scope changes, a new pipeline must be created
 
 ### Data Flow (Execution Runtime)
 
@@ -415,7 +444,9 @@ Behavior:
 - emits crawler lifecycle/capture events
 - writes artifact blobs and dataset metadata
 - writes crawler telemetry summary to `crawl_run_summaries`
+- reconciles inactive jobs against the pipeline-owned `normalized_job_ads` collection when enabled
 - must not mutate control-plane configuration collections
+- must rely on pipeline-stable database boundaries for reconciliation correctness
 
 #### Ingestion Worker
 
@@ -488,6 +519,8 @@ non-goal for v2.0 production:
 - OpenAPI contract published and validated in CI
 - documented bootstrap profile workflow available for environment bring-up
 - production deployment can run with `ops-control-plane` on Vercel plus backend services
+- pipeline-first controller model documented and adopted as the canonical v2 write model
+- crawler worker contract updated to assume immutable pipeline identity and one-db-per-pipeline
 
 ## Deferred Features
 
