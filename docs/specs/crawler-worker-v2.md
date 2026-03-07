@@ -55,11 +55,17 @@ Minimal bootstrap env:
 - `CONTROL_SHARED_TOKEN` or `CONTROL_JWT_PUBLIC_KEY`
 - `GCP_PROJECT_ID`
 - `PUBSUB_EVENTS_TOPIC`
-- `ARTIFACTS_BUCKET`
-- `ARTIFACTS_PREFIX`
 - `MONGODB_URI`
 - `LOG_LEVEL`
 - `MAX_CONCURRENT_RUNS`
+
+Not part of bootstrap env:
+
+- artifact bucket/path settings
+
+Reason:
+
+- artifact storage is worker execution input and is carried per run in `artifactSink`
 
 V3 candidate:
 

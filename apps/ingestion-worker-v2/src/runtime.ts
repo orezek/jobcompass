@@ -444,6 +444,15 @@ export class IngestionWorkerRuntime {
   ): Promise<void> {
     const run = this.resolveRunForCrawlerEvent(event.runId, event.payload.crawlRunId);
     if (!run) {
+      this.deps.logger.warn(
+        {
+          eventRunId: event.runId,
+          crawlRunId: event.payload.crawlRunId,
+          sourceId: event.payload.sourceId,
+          dedupeKey: event.payload.dedupeKey,
+        },
+        'Skipping crawler.detail.captured event because no active ingestion run matched.',
+      );
       return;
     }
 

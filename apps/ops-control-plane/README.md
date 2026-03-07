@@ -53,6 +53,14 @@ Control-plane execution modes:
 - `CONTROL_PLANE_EXECUTION_MODE=local_cli`
   - launches the local crawler and ingestion worker adapters
   - still relies on the current crawler behavior, including Mongo-backed reconciliation
+- `CONTROL_PLANE_EXECUTION_MODE=worker_http`
+  - calls standalone `crawler-worker-v2` and `ingestion-worker-v2` over HTTP
+  - requires `CONTROL_PLANE_CRAWLER_WORKER_BASE_URL`
+  - requires `CONTROL_PLANE_WORKER_AUTH_TOKEN`
+  - requires `CONTROL_PLANE_INGESTION_WORKER_BASE_URL` when ingestion is enabled
+  - starts ingestion first, then crawler, using the same `runId`
+  - current limitation: live run history and event history remain transitional until the
+    control-plane projection consumer persists worker Pub/Sub events into DB-backed read models
 
 Execution mode is env-driven in v1. The `/control-plane` route shows the active mode in the
 header, but does not provide a runtime selector.

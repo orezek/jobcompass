@@ -2,7 +2,7 @@ import { loadEnv } from '@repo/env-config';
 import { z } from 'zod';
 
 const dataModeSchema = z.enum(['mongo', 'fixture']);
-const executionModeSchema = z.enum(['fixture', 'local_cli']);
+const executionModeSchema = z.enum(['fixture', 'local_cli', 'worker_http']);
 const brokerBackendSchema = z.enum(['local', 'gcp_pubsub']);
 const managedStorageBackendSchema = z.enum(['local_filesystem', 'gcs']);
 const ingestionParserBackendSchema = z.enum(['gemini', 'fixture']);
@@ -48,6 +48,10 @@ const envSchema = z.object({
   CONTROL_PLANE_GCP_PROJECT_ID: optionalStringSchema,
   CONTROL_PLANE_GCP_PUBSUB_TOPIC: z.string().default('jobcompass-control-plane-events'),
   CONTROL_PLANE_GCP_PUBSUB_SUBSCRIPTION_PREFIX: z.string().default('jobcompass-control-plane-run'),
+  CONTROL_PLANE_CRAWLER_WORKER_BASE_URL: optionalStringSchema,
+  CONTROL_PLANE_INGESTION_WORKER_BASE_URL: optionalStringSchema,
+  CONTROL_PLANE_WORKER_AUTH_TOKEN: optionalStringSchema,
+  CONTROL_PLANE_WORKER_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
   CONTROL_PLANE_PNPM_BIN: z.string().default('pnpm'),
 });
 

@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ControlPlaneRun } from '@repo/control-plane-contracts';
 
 let tempRootDir: string;
 
@@ -43,6 +44,20 @@ function buildManifest(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function buildRun(overrides: Partial<ControlPlaneRun> = {}): ControlPlaneRun {
+  return {
+    runId: 'crawl-run-test',
+    pipelineId: 'pipeline-test',
+    pipelineVersion: 1,
+    status: 'running',
+    requestedAt: '2026-03-03T00:00:00.000Z',
+    startedAt: '2026-03-03T00:00:01.000Z',
+    stopReason: null,
+    summary: {},
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   Object.assign(process.env, {
     DASHBOARD_DATA_MODE: 'fixture',
@@ -65,6 +80,159 @@ beforeEach(() => {
   });
   Reflect.deleteProperty(process.env, 'GEMINI_API_KEY');
   vi.resetModules();
+});
+
+describe('control-plane worker_http execution', () => {
+  it('requires worker endpoints and auth token during preflight', async () => {
+    Object.assign(process.env, {
+      CONTROL_PLANE_EXECUTION_MODE: 'worker_http',
+    });
+    Reflect.deleteProperty(process.env, 'CONTROL_PLANE_CRAWLER_WORKER_BASE_URL');
+    Reflect.deleteProperty(process.env, 'CONTROL_PLANE_INGESTION_WORKER_BASE_URL');
+    Reflect.deleteProperty(process.env, 'CONTROL_PLANE_WORKER_AUTH_TOKEN');
+    vi.resetModules();
+
+    const { assertExecutableRunPrerequisites } = await import('@/server/control-plane/execution');
+
+    await expect(assertExecutableRunPrerequisites(buildManifest())).rejects.toThrow(
+      /CONTROL_PLANE_CRAWLER_WORKER_BASE_URL/i,
+    );
+
+    Object.assign(process.env, {
+      CONTROL_PLANE_CRAWLER_WORKER_BASE_URL: 'http://127.0.0.1:3010',
+      CONTROL_PLANE_WORKER_AUTH_TOKEN: 'dev-control-token',
+    });
+    vi.resetModules();
+
+    const workerHttpExecution = await import('@/server/control-plane/execution');
+    await expect(
+      workerHttpExecution.assertExecutableRunPrerequisites(
+        buildManifest({
+          mode: 'crawl_and_ingest',
+          runtimeProfileSnapshot: {
+            id: 'runtime-test',
+            name: 'Runtime test',
+            crawlerMaxConcurrency: 1,
+            crawlerMaxRequestsPerMinute: 30,
+            ingestionConcurrency: 1,
+            ingestionEnabled: true,
+            debugLog: false,
+          },
+        }),
+      ),
+    ).rejects.toThrow(/CONTROL_PLANE_INGESTION_WORKER_BASE_URL/i);
+  });
+
+  it('maps the current manifest into the simplified v2 worker start-run requests', async () => {
+    Object.assign(process.env, {
+      CONTROL_PLANE_EXECUTION_MODE: 'worker_http',
+      JOB_COMPASS_DB_PREFIX: 'jcpl',
+    });
+    vi.resetModules();
+
+    const { buildCrawlerWorkerStartRunRequestV2, buildIngestionWorkerStartRunRequestV2 } =
+      await import('@/server/control-plane/execution');
+
+    const manifest = buildManifest({
+      mode: 'crawl_and_ingest',
+      searchSpaceSnapshot: {
+        id: 'test-vyvoj',
+        name: 'Test Vyvoj',
+        sourceType: 'jobs_cz' as const,
+        startUrls: [
+          'https://www.jobs.cz/prace/praha/is-it-vyvoj-aplikaci-a-systemu/?locality%5Bradius%5D=0',
+        ],
+        maxItemsDefault: 30,
+        allowInactiveMarkingOnPartialRuns: false,
+        version: 1,
+      },
+      runtimeProfileSnapshot: {
+        id: 'runtime-test',
+        name: 'Runtime test',
+        crawlerMaxConcurrency: 1,
+        crawlerMaxRequestsPerMinute: 30,
+        ingestionConcurrency: 1,
+        ingestionEnabled: true,
+        debugLog: false,
+      },
+    });
+
+    const crawlerRequest = buildCrawlerWorkerStartRunRequestV2(manifest);
+    const ingestionRequest = buildIngestionWorkerStartRunRequestV2(manifest);
+
+    expect(crawlerRequest.runId).toBe(manifest.runId);
+    expect(crawlerRequest.inputRef.source).toBe('jobs.cz');
+    expect(crawlerRequest.inputRef.searchSpaceId).toBe('test-vyvoj');
+    expect(crawlerRequest.inputRef.searchSpaceSnapshot.maxItems).toBe(30);
+    expect(crawlerRequest.inputRef.emitDetailCapturedEvents).toBe(true);
+    expect(crawlerRequest.persistenceTargets.dbName).toBe('jcpl-pipeline-test');
+
+    expect(ingestionRequest.runId).toBe(manifest.runId);
+    expect(ingestionRequest.inputRef.crawlRunId).toBe(manifest.runId);
+    expect(ingestionRequest.outputSinks).toEqual([]);
+    expect(ingestionRequest.persistenceTargets.dbName).toBe('jcpl-pipeline-test');
+  });
+
+  it('starts ingestion first and then crawler when worker_http mode is enabled', async () => {
+    Object.assign(process.env, {
+      CONTROL_PLANE_EXECUTION_MODE: 'worker_http',
+      CONTROL_PLANE_CRAWLER_WORKER_BASE_URL: 'http://127.0.0.1:3010',
+      CONTROL_PLANE_INGESTION_WORKER_BASE_URL: 'http://127.0.0.1:3020',
+      CONTROL_PLANE_WORKER_AUTH_TOKEN: 'dev-control-token',
+      JOB_COMPASS_DB_PREFIX: 'jcpl',
+    });
+    vi.resetModules();
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      return new Response(
+        JSON.stringify({
+          contractVersion: 'v2',
+          ok: true,
+          runId: 'crawl-run-test',
+          workerType: url.includes(':3020') ? 'ingestion' : 'crawler',
+          accepted: true,
+          deduplicated: false,
+          state: 'accepted',
+          message: 'Run accepted for execution.',
+        }),
+        {
+          status: 202,
+          headers: {
+            'content-type': 'application/json',
+          },
+        },
+      );
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const { executeRun } = await import('@/server/control-plane/execution');
+
+      await executeRun({
+        run: buildRun(),
+        manifest: buildManifest({
+          mode: 'crawl_and_ingest',
+          runtimeProfileSnapshot: {
+            id: 'runtime-test',
+            name: 'Runtime test',
+            crawlerMaxConcurrency: 1,
+            crawlerMaxRequestsPerMinute: 30,
+            ingestionConcurrency: 1,
+            ingestionEnabled: true,
+            debugLog: false,
+          },
+        }),
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0]?.[0].toString()).toContain('127.0.0.1:3020/v1/runs');
+      expect(fetchMock.mock.calls[1]?.[0].toString()).toContain('127.0.0.1:3010/v1/runs');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 afterEach(async () => {
@@ -206,35 +374,51 @@ describe('control-plane local_cli env overrides', () => {
     Reflect.deleteProperty(process.env, 'LANGSMITH_API_KEY');
     vi.resetModules();
 
-    const { assertExecutableRunPrerequisites } = await import('@/server/control-plane/execution');
+    tempRootDir = await mkdtemp(path.join(os.tmpdir(), 'jobcompass-execution-empty-env-'));
+    vi.doMock('@/server/control-plane/paths', async () => {
+      const actual = await vi.importActual<typeof import('@/server/control-plane/paths')>(
+        '@/server/control-plane/paths',
+      );
 
-    await expect(
-      assertExecutableRunPrerequisites(
-        buildManifest({
-          mode: 'crawl_and_ingest',
-          runtimeProfileSnapshot: {
-            id: 'runtime-test',
-            name: 'Runtime test',
-            crawlerMaxConcurrency: 1,
-            crawlerMaxRequestsPerMinute: 30,
-            ingestionConcurrency: 1,
-            ingestionEnabled: true,
-            debugLog: false,
-          },
-          structuredOutputDestinationSnapshots: [
-            {
-              id: 'json-download',
-              name: 'Downloadable JSON',
-              type: 'downloadable_json' as const,
-              config: {
-                storageType: 'local_filesystem' as const,
-                basePath: '/tmp/jobcompass-control-plane-execution-test/json-output',
-              },
+      return {
+        ...actual,
+        ingestionAppRootDir: tempRootDir,
+      };
+    });
+
+    try {
+      const { assertExecutableRunPrerequisites } = await import('@/server/control-plane/execution');
+
+      await expect(
+        assertExecutableRunPrerequisites(
+          buildManifest({
+            mode: 'crawl_and_ingest',
+            runtimeProfileSnapshot: {
+              id: 'runtime-test',
+              name: 'Runtime test',
+              crawlerMaxConcurrency: 1,
+              crawlerMaxRequestsPerMinute: 30,
+              ingestionConcurrency: 1,
+              ingestionEnabled: true,
+              debugLog: false,
             },
-          ],
-        }),
-      ),
-    ).rejects.toThrow(/LANGSMITH_API_KEY/i);
+            structuredOutputDestinationSnapshots: [
+              {
+                id: 'json-download',
+                name: 'Downloadable JSON',
+                type: 'downloadable_json' as const,
+                config: {
+                  storageType: 'local_filesystem' as const,
+                  basePath: '/tmp/jobcompass-control-plane-execution-test/json-output',
+                },
+              },
+            ],
+          }),
+        ),
+      ).rejects.toThrow(/LANGSMITH_API_KEY/i);
+    } finally {
+      vi.doUnmock('@/server/control-plane/paths');
+    }
   });
 
   it('allows local_cli fixture ingestion preflight without LLM secrets', async () => {

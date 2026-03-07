@@ -1,0 +1,41 @@
+{
+  "name": "crawler-worker-v2",
+  "version": "1.0.0",
+  "description": "Standalone crawler worker v2 with Fastify, Crawlee, Pub/Sub, and MongoDB.",
+  "license": "ISC",
+  "author": "Oldrich Rezek oldrich.rezek@oldrichrezek.com",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.13.1",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/app.js",
+    "dev": "tsx watch src/app.ts",
+    "lint": "eslint . --max-warnings 0",
+    "check-types": "tsc --noEmit",
+    "test:e2e": "tsx --test test/e2e/**/*.test.ts"
+  },
+  "dependencies": {
+    "@google-cloud/pubsub": "catalog:",
+    "@repo/control-plane-adapters": "workspace:*",
+    "@repo/control-plane-contracts": "workspace:*",
+    "@repo/env-config": "workspace:*",
+    "crawlee": "catalog:",
+    "fastify": "catalog:",
+    "mongodb": "catalog:",
+    "playwright": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "pino-pretty": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:"
+  }
+}

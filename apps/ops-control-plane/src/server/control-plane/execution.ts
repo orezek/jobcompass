@@ -28,7 +28,10 @@ import {
   buildCrawlerRunFinishedEvent,
   buildCrawlerRunRequestedEvent,
   buildIngestionLifecycleEvent,
+  crawlerStartRunRequestV2Schema,
+  ingestionStartRunRequestV2Schema,
   nowIso,
+  startRunResponseV2Schema,
 } from '@repo/control-plane-contracts';
 import { env } from '@/server/env';
 import {
@@ -93,8 +96,20 @@ function getBrokerTransportConfig(): BrokerTransportConfig {
 function getMongoDbName(manifest: RunManifest): string {
   return deriveMongoDbName({
     dbPrefix: env.JOB_COMPASS_DB_PREFIX,
-    searchSpaceId: manifest.searchSpaceSnapshot.id,
+    searchSpaceId:
+      env.CONTROL_PLANE_EXECUTION_MODE === 'worker_http'
+        ? manifest.pipelineId
+        : manifest.searchSpaceSnapshot.id,
   });
+}
+
+function mapSourceTypeToWorkerSource(manifest: RunManifest): string {
+  switch (manifest.sourceType) {
+    case 'jobs_cz':
+      return 'jobs.cz';
+    default:
+      throw new Error(`Unsupported source type "${manifest.sourceType}".`);
+  }
 }
 
 function hasMongoSink(manifest: RunManifest): boolean {
@@ -265,7 +280,31 @@ export function buildIngestionWorkerEnvOverrides(
 }
 
 export async function assertExecutableRunPrerequisites(manifest: RunManifest): Promise<void> {
-  if (env.CONTROL_PLANE_EXECUTION_MODE !== 'local_cli') {
+  if (env.CONTROL_PLANE_EXECUTION_MODE === 'fixture') {
+    return;
+  }
+
+  if (env.CONTROL_PLANE_EXECUTION_MODE === 'worker_http') {
+    if (!env.CONTROL_PLANE_CRAWLER_WORKER_BASE_URL) {
+      throw new Error(
+        'CONTROL_PLANE_EXECUTION_MODE=worker_http requires CONTROL_PLANE_CRAWLER_WORKER_BASE_URL.',
+      );
+    }
+
+    if (!env.CONTROL_PLANE_WORKER_AUTH_TOKEN) {
+      throw new Error(
+        'CONTROL_PLANE_EXECUTION_MODE=worker_http requires CONTROL_PLANE_WORKER_AUTH_TOKEN.',
+      );
+    }
+
+    const shouldRunIngestion =
+      manifest.mode === 'crawl_and_ingest' && manifest.runtimeProfileSnapshot.ingestionEnabled;
+    if (shouldRunIngestion && !env.CONTROL_PLANE_INGESTION_WORKER_BASE_URL) {
+      throw new Error(
+        'CONTROL_PLANE_EXECUTION_MODE=worker_http with ingestion enabled requires CONTROL_PLANE_INGESTION_WORKER_BASE_URL.',
+      );
+    }
+
     return;
   }
 
@@ -304,6 +343,216 @@ export async function assertExecutableRunPrerequisites(manifest: RunManifest): P
 
 async function updateRuntimeStatus(runId: string, runtime: WorkerRuntime): Promise<void> {
   await writeWorkerRuntime(runId, runtime);
+}
+
+function buildWorkerAuthHeaders(): HeadersInit {
+  if (!env.CONTROL_PLANE_WORKER_AUTH_TOKEN) {
+    throw new Error('CONTROL_PLANE_WORKER_AUTH_TOKEN is not configured.');
+  }
+
+  return {
+    Authorization: `Bearer ${env.CONTROL_PLANE_WORKER_AUTH_TOKEN}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+function mapArtifactStorageSnapshotToV2Sink(manifest: RunManifest) {
+  const snapshot = manifest.artifactStorageSnapshot;
+  if (snapshot.type === 'local_filesystem') {
+    return {
+      type: 'local_filesystem' as const,
+      basePath: path.resolve(snapshot.config.basePath),
+    };
+  }
+
+  return {
+    type: 'gcs' as const,
+    bucket: snapshot.config.bucket,
+    prefix: snapshot.config.prefix ?? '',
+  };
+}
+
+export function buildCrawlerWorkerStartRunRequestV2(manifest: RunManifest) {
+  return crawlerStartRunRequestV2Schema.parse({
+    contractVersion: 'v2',
+    runId: manifest.runId,
+    idempotencyKey: `idmp-${manifest.runId}`,
+    runtimeSnapshot: {
+      crawlerMaxConcurrency: manifest.runtimeProfileSnapshot.crawlerMaxConcurrency,
+      crawlerMaxRequestsPerMinute: manifest.runtimeProfileSnapshot.crawlerMaxRequestsPerMinute,
+    },
+    inputRef: {
+      source: mapSourceTypeToWorkerSource(manifest),
+      searchSpaceId: manifest.searchSpaceSnapshot.id,
+      searchSpaceSnapshot: {
+        name: manifest.searchSpaceSnapshot.name,
+        description: manifest.searchSpaceSnapshot.name,
+        startUrls: manifest.searchSpaceSnapshot.startUrls,
+        maxItems: manifest.searchSpaceSnapshot.maxItemsDefault,
+        // The current control-plane manifest does not carry a separate "disable inactive marking"
+        // flag, only the removed partial-run override from v1. V2 workers therefore treat
+        // inactive marking as enabled by default and gate it by phase-1 integrity instead.
+        allowInactiveMarking: true,
+      },
+      emitDetailCapturedEvents:
+        manifest.mode === 'crawl_and_ingest' && manifest.runtimeProfileSnapshot.ingestionEnabled,
+    },
+    persistenceTargets: {
+      dbName: getMongoDbName(manifest),
+    },
+    artifactSink: mapArtifactStorageSnapshotToV2Sink(manifest),
+  });
+}
+
+export function buildIngestionWorkerStartRunRequestV2(manifest: RunManifest) {
+  return ingestionStartRunRequestV2Schema.parse({
+    contractVersion: 'v2',
+    runId: manifest.runId,
+    idempotencyKey: `idmp-${manifest.runId}`,
+    runtimeSnapshot: {
+      ingestionConcurrency: manifest.runtimeProfileSnapshot.ingestionConcurrency,
+    },
+    inputRef: {
+      crawlRunId: manifest.runId,
+      searchSpaceId: manifest.searchSpaceSnapshot.id,
+      records: [],
+    },
+    persistenceTargets: {
+      dbName: getMongoDbName(manifest),
+    },
+    outputSinks: manifest.structuredOutputDestinationSnapshots.some(
+      (destination) => destination.type === 'downloadable_json',
+    )
+      ? [{ type: 'downloadable_json' as const }]
+      : [],
+  });
+}
+
+async function postWorkerStartRun(input: {
+  baseUrl: string;
+  payload: unknown;
+}): Promise<ReturnType<typeof startRunResponseV2Schema.parse>> {
+  const response = await fetch(new URL('/v1/runs', input.baseUrl), {
+    method: 'POST',
+    headers: buildWorkerAuthHeaders(),
+    body: JSON.stringify(input.payload),
+    signal: AbortSignal.timeout(env.CONTROL_PLANE_WORKER_HTTP_TIMEOUT_MS),
+  });
+
+  const text = await response.text();
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`Worker returned non-JSON response (${response.status}): ${text}`);
+  }
+
+  const parsed = startRunResponseV2Schema.safeParse(json);
+  if (!parsed.success) {
+    throw new Error(`Worker returned invalid StartRun response (${response.status}).`);
+  }
+
+  if (!response.ok || !parsed.data.ok || !parsed.data.accepted) {
+    const errorMessage = parsed.data.ok
+      ? 'Worker rejected StartRun request.'
+      : parsed.data.error.message;
+    throw new Error(errorMessage);
+  }
+
+  return parsed.data;
+}
+
+async function postWorkerCancelRun(input: { baseUrl: string; runId: string }): Promise<void> {
+  try {
+    await fetch(new URL(`/v1/runs/${input.runId}/cancel`, input.baseUrl), {
+      method: 'POST',
+      headers: buildWorkerAuthHeaders(),
+      signal: AbortSignal.timeout(env.CONTROL_PLANE_WORKER_HTTP_TIMEOUT_MS),
+    });
+  } catch {
+    // Best-effort rollback for partially started orchestrations.
+  }
+}
+
+async function startWorkerHttpExecution({ run, manifest }: ExecuteRunInput): Promise<void> {
+  const dbName = getMongoDbName(manifest);
+  const artifactRoot = getManagedStorageRootLabel(manifest.artifactStorageSnapshot);
+  const shouldRunIngestion =
+    manifest.mode === 'crawl_and_ingest' && manifest.runtimeProfileSnapshot.ingestionEnabled;
+  const now = nowIso();
+
+  let ingestionAccepted = false;
+
+  try {
+    if (shouldRunIngestion) {
+      const ingestionBaseUrl = env.CONTROL_PLANE_INGESTION_WORKER_BASE_URL;
+      if (!ingestionBaseUrl) {
+        throw new Error('CONTROL_PLANE_INGESTION_WORKER_BASE_URL is not configured.');
+      }
+
+      const ingestionResponse = await postWorkerStartRun({
+        baseUrl: ingestionBaseUrl,
+        payload: buildIngestionWorkerStartRunRequestV2(manifest),
+      });
+      ingestionAccepted = true;
+
+      await updateRuntimeStatus(run.runId, {
+        workerType: 'ingestion',
+        status: ingestionResponse.state === 'queued' ? 'queued' : 'running',
+        startedAt: ingestionResponse.state === 'queued' ? undefined : now,
+        lastHeartbeatAt: now,
+        counters: {
+          endpoint: ingestionBaseUrl,
+          dbName,
+          acceptedState: ingestionResponse.state,
+        },
+      });
+    }
+
+    const crawlerBaseUrl = env.CONTROL_PLANE_CRAWLER_WORKER_BASE_URL;
+    if (!crawlerBaseUrl) {
+      throw new Error('CONTROL_PLANE_CRAWLER_WORKER_BASE_URL is not configured.');
+    }
+
+    const crawlerResponse = await postWorkerStartRun({
+      baseUrl: crawlerBaseUrl,
+      payload: buildCrawlerWorkerStartRunRequestV2(manifest),
+    });
+
+    await updateRuntimeStatus(run.runId, {
+      workerType: 'crawler',
+      status: crawlerResponse.state === 'queued' ? 'queued' : 'running',
+      startedAt: crawlerResponse.state === 'queued' ? undefined : now,
+      lastHeartbeatAt: now,
+      counters: {
+        endpoint: crawlerBaseUrl,
+        dbName,
+        artifactRoot,
+        acceptedState: crawlerResponse.state,
+      },
+    });
+  } catch (error) {
+    if (ingestionAccepted && env.CONTROL_PLANE_INGESTION_WORKER_BASE_URL) {
+      await postWorkerCancelRun({
+        baseUrl: env.CONTROL_PLANE_INGESTION_WORKER_BASE_URL,
+        runId: manifest.runId,
+      });
+    }
+
+    await writeRunRecord({
+      ...run,
+      status: 'failed',
+      finishedAt: nowIso(),
+      stopReason: 'start_run_failed',
+      summary: {
+        ...run.summary,
+        executionMode: env.CONTROL_PLANE_EXECUTION_MODE,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      },
+    });
+
+    throw error;
+  }
 }
 
 function buildGeneratedActorInput(manifest: RunManifest) {
@@ -701,6 +950,11 @@ async function startLocalCliExecution({ run, manifest }: ExecuteRunInput): Promi
 export async function executeRun(input: ExecuteRunInput): Promise<void> {
   if (env.CONTROL_PLANE_EXECUTION_MODE === 'fixture') {
     await simulateFixtureExecution(input);
+    return;
+  }
+
+  if (env.CONTROL_PLANE_EXECUTION_MODE === 'worker_http') {
+    await startWorkerHttpExecution(input);
     return;
   }
 

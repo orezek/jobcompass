@@ -107,6 +107,9 @@ current implementation note:
   event JSON files under `CONTROL_PLANE_BROKER_DIR`
 - that file-backed archive is a current implementation detail, not the target v2 control-plane
   event model
+- the current transitional `ops-control-plane` wiring can issue standalone worker `StartRun`
+  commands over HTTP (`worker_http` mode), but live run/event projection is still pending the
+  dedicated control-plane projection consumer
 
 ## v2.0 Data Domain Model
 
@@ -237,11 +240,17 @@ v2 control-plane rule:
 - `CONTROL_JWT_PUBLIC_KEY` or `CONTROL_SHARED_TOKEN`
 - `GCP_PROJECT_ID`
 - `PUBSUB_EVENTS_TOPIC` (crawler publish topic)
-- `ARTIFACTS_BUCKET`
-- `ARTIFACTS_PREFIX` (optional)
 - `MONGODB_URI`
 - `LOG_LEVEL`
 - `MAX_CONCURRENT_RUNS`
+
+Not part of crawler bootstrap env:
+
+- artifact bucket/path settings
+
+reason:
+
+- crawler artifact storage is provided per run via `artifactSink`
 
 ### Ingestion Service `.env` Bootstrap (Minimal)
 
