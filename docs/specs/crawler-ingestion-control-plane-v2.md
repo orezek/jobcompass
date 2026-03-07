@@ -22,7 +22,7 @@ For v2.0, this document also defines the target production architecture and deli
 - naming and configuration cleanup
 - published machine-readable API contracts
 - persistence convergence and explicit domain boundaries
-- standalone deployability of control plane, crawler worker, and ingestion worker
+- standalone deployability of control UI, control service, crawler worker, and ingestion worker
 
 ## Core Terms
 
@@ -42,8 +42,10 @@ Examples:
 
 v2.0 should move from local process/file coupling to explicit service contracts:
 
-- `ops-control-plane` runs as a standalone UI (for example on Vercel)
-- a dedicated control API/orchestrator service owns control-plane write workflows
+- `control-center-v2` runs as a standalone Next.js app (for example on Vercel)
+- `control-center-v2` is UI-only and submits operator commands to `control-service`
+- `control-service` owns synchronous command handling, worker orchestration, runtime event
+  ingestion, and read-model maintenance
 - crawler and ingestion run as standalone worker services
 - services communicate through broker events and durable shared storage contracts
 - local filesystem state is dev-only and not production system-of-record
@@ -58,20 +60,28 @@ platform decision (canonical for v2.0):
 
 ### Service Boundaries
 
-#### 1. Control UI Service
+#### 1. Control Center UI
 
 - scope: operator-facing Next.js app only
-- no direct worker spawning
-- no direct ownership of execution side effects
-- reads/writes through Control API only
+- owns pipeline-centric forms, lists, detail pages, and operator workflows
+- submits pipeline and run commands to `control-service`
+- reads live data from `control-service` only
+- does not talk to workers directly
+- does not consume Pub/Sub subscriptions
 
-#### 2. Control API / Orchestrator Service
+#### 2. Control Service
 
-- canonical write boundary for control-plane domain
-- owns pipeline-centric configuration CRUD, run creation, scheduling, lifecycle transitions
+- canonical backend boundary for the control plane
+- exposes the API used by `control-center-v2`
+- owns pipeline-centric CRUD and run creation/cancel flows
+- writes initial run-ledger state (`control_plane_runs`, `control_plane_run_manifests`)
 - issues worker `StartRun` commands over REST
-- validates and persists execution state transitions
-- exposes machine-readable API contract (OpenAPI)
+- subscribes to Pub/Sub
+- validates event contracts
+- writes `control_plane_run_event_index`
+- reduces runtime events into `control_plane_runs`
+- exposes live read APIs backed by MongoDB, including SSE or WebSocket streams
+- is a long-lived service and must not depend on Vercel request lifecycles
 
 canonical v2 control-plane rule:
 
@@ -97,8 +107,9 @@ canonical v2 control-plane rule:
 
 ### Integration Contract
 
-- sync command path: REST API for operator actions and worker `StartRun`
+- command path: `control-center-v2` -> `control-service` REST API -> worker REST `StartRun`
 - async runtime path: broker topics/queues for lifecycle and handoff events
+- live read path: `control-service` -> `control-center-v2` via REST plus SSE or WebSocket
 - all services must be able to operate without monorepo-relative filesystem assumptions
 
 current implementation note:
@@ -108,8 +119,13 @@ current implementation note:
 - that file-backed archive is a current implementation detail, not the target v2 control-plane
   event model
 - the current transitional `ops-control-plane` wiring can issue standalone worker `StartRun`
-  commands over HTTP (`worker_http` mode), but live run/event projection is still pending the
-  dedicated control-plane projection consumer
+  commands over HTTP (`worker_http` mode), but the target v2 model is a dedicated
+  `control-service` that owns both worker orchestration and run/event projection
+
+projection architecture note:
+
+- the detailed V2 control-service projection design is specified in
+  `docs/specs/control-center-v2-projection-architecture.md`
 
 ## v2.0 Data Domain Model
 
@@ -202,7 +218,7 @@ storage:
 
 ## v2.0 API Contract Shape
 
-Control API should expose:
+Control-service API should expose:
 
 - configuration resources:
   - `pipelines`
@@ -221,7 +237,7 @@ Control API should expose:
   - `schedules/{id}/pause`
   - `schedules/{id}/resume`
 
-All writes should be API-owned and idempotency-aware.
+All writes should be control-service-owned and idempotency-aware.
 
 v2 control-plane rule:
 
@@ -473,14 +489,14 @@ Design rule:
 
 ### Event Routing Matrix
 
-| Event Type                 | Produced By      | Publish To                 | Primary Consumers                                | Persistent Projections (Mongo)                                                                            | Blob/Bucket Side Effects                                              |
-| -------------------------- | ---------------- | -------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `crawler.detail.captured`  | Crawler worker   | Pub/Sub `run-events` topic | Ingestion worker, Control projection worker      | `control_plane_run_event_index`, optional `control_plane_artifact_index` (runId/sourceId -> artifact ref) | Crawler already wrote HTML dump + dataset metadata to artifact bucket |
-| `crawler.run.finished`     | Crawler worker   | Pub/Sub `run-events` topic | Control projection worker, Ingestion worker gate | `crawl_run_summaries`, `control_plane_runs` crawler phase status, `control_plane_run_event_index`         | None (summary references bucket/object paths as metadata)             |
-| `ingestion.item.started`   | Ingestion worker | Pub/Sub `run-events` topic | Control projection worker                        | `control_plane_run_event_index`, optional in-flight counters projection on `control_plane_runs`           | None                                                                  |
-| `ingestion.item.succeeded` | Ingestion worker | Pub/Sub `run-events` topic | Control projection worker                        | `ingestion_run_summaries` incremental projection, `control_plane_run_event_index`                         | Ingestion writes normalized JSON object to output bucket (if enabled) |
-| `ingestion.item.failed`    | Ingestion worker | Pub/Sub `run-events` topic | Control projection worker                        | `ingestion_run_summaries` failure counters + failed job ids, `control_plane_run_event_index`              | None direct; failure metadata persisted                               |
-| `ingestion.item.rejected`  | Ingestion worker | Pub/Sub `run-events` topic | Control projection worker                        | `ingestion_run_summaries` skipped/non-success job ids, `control_plane_run_event_index`                    | None direct; rejection metadata persisted                             |
+| Event Type                 | Produced By      | Publish To                 | Primary Consumers                      | Persistent Projections (Mongo)                                                                  | Blob/Bucket Side Effects                                              |
+| -------------------------- | ---------------- | -------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `crawler.detail.captured`  | Crawler worker   | Pub/Sub `run-events` topic | Ingestion worker, Control service      | `control_plane_run_event_index`, `control_plane_runs` artifact counters                         | Crawler already wrote HTML dump + dataset metadata to artifact bucket |
+| `crawler.run.finished`     | Crawler worker   | Pub/Sub `run-events` topic | Control service, Ingestion worker gate | `crawl_run_summaries`, `control_plane_runs`, `control_plane_run_event_index`                    | None (summary references bucket/object paths as metadata)             |
+| `ingestion.item.started`   | Ingestion worker | Pub/Sub `run-events` topic | Control service                        | `control_plane_run_event_index`, optional in-flight counters projection on `control_plane_runs` | None                                                                  |
+| `ingestion.item.succeeded` | Ingestion worker | Pub/Sub `run-events` topic | Control service                        | `ingestion_run_summaries`, `control_plane_run_event_index`, `control_plane_runs`                | Ingestion writes normalized JSON object to output bucket (if enabled) |
+| `ingestion.item.failed`    | Ingestion worker | Pub/Sub `run-events` topic | Control service                        | `ingestion_run_summaries`, `control_plane_run_event_index`, `control_plane_runs`                | None direct; failure metadata persisted                               |
+| `ingestion.item.rejected`  | Ingestion worker | Pub/Sub `run-events` topic | Control service                        | `ingestion_run_summaries`, `control_plane_run_event_index`, `control_plane_runs`                | None direct; rejection metadata persisted                             |
 
 ### Crawler-To-Ingestion Handoff
 
@@ -499,13 +515,16 @@ Behavior:
 
 ### Persistence Responsibilities By Service
 
-#### Control API / Orchestrator
+#### Control Service
 
-- owns `control_plane_runs`, `control_plane_run_manifests`, and run-state transitions
+- owns `control_plane_pipelines`, `control_plane_runs`, `control_plane_run_manifests`, and
+  run-state transitions
 - owns configuration domains and bootstrap profiles
 - owns authoritative event-index write policy (`control_plane_run_event_index`)
+- exposes the read APIs consumed by the UI
 - target v2 read path:
-  - the UI reads event history from `control_plane_run_event_index`
+  - the UI reads run/event data through `control-service`
+  - `control-service` reads MongoDB projections
   - filesystem broker archives are optional diagnostics only, not the primary operator read model
 
 #### Crawler Worker
@@ -549,7 +568,7 @@ Collection and database naming remains unchanged in v2.0 routing:
 recommended production topology:
 
 - Control UI: Vercel (or equivalent web runtime)
-- Control API / Orchestrator: GCP Cloud Run
+- Control service: GCP Cloud Run
 - Crawler worker service: GCP Cloud Run (job or service shape)
 - Ingestion worker service: GCP Cloud Run (event/service shape)
 - Broker: GCP Pub/Sub
@@ -569,11 +588,12 @@ non-goal for v2.0 production:
 - implement Mongo-backed repositories for Domains 2/3/4
 - keep file-backed repository only as dev adapter
 
-### Phase B: Control API Extraction
+### Phase B: Control-Service Introduction
 
+- keep `control-center-v2` UI-only
 - separate UI handlers from orchestration logic
 - expose explicit REST/OpenAPI endpoints
-- move run-start and lifecycle mutations behind API boundary
+- move run-start, pipeline writes, and lifecycle mutations behind the `control-service` boundary
 
 ### Phase C: Worker Decoupling
 
@@ -586,6 +606,7 @@ non-goal for v2.0 production:
 - add retention/index policies
 - add replay, repair, and audit queries
 - enforce bootstrap profile workflows (import/export/apply)
+- add live read APIs for the UI, preferably SSE first
 
 ## v2.0 Definition of Done
 
@@ -594,7 +615,8 @@ non-goal for v2.0 production:
 - crawler/ingestion workers operate as standalone services via broker + shared persistence
 - OpenAPI contract published and validated in CI
 - documented bootstrap profile workflow available for environment bring-up
-- production deployment can run with `ops-control-plane` on Vercel plus backend services
+- production deployment can run with `control-center-v2` on Vercel plus `control-service` and
+  worker services
 - pipeline-first controller model documented and adopted as the canonical v2 write model
 - crawler worker contract updated to assume immutable pipeline identity and one-db-per-pipeline
 
@@ -621,7 +643,7 @@ V2 should define the production deployment target for workers.
 
 Current preferred direction:
 
-- Next.js control plane on Vercel
+- `control-center-v2` on Vercel backed by `control-service`
 - crawler and ingestion workers on Google Cloud managed container runtime
 
 Cloud Run is a strong candidate for workers.
@@ -652,7 +674,8 @@ Potential additions:
 - explicit replay orchestration
 - operator-driven requeue policies
 
-V1 should avoid this complexity and keep direct subscription.
+V2 MVP should avoid this complexity and keep one `control-service` plus direct worker event
+subscriptions.
 
 ### 4. Advanced Replay And Recovery
 

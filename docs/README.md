@@ -12,6 +12,8 @@ This directory contains design and implementation documentation for the JobCompa
 - Ingestion worker adaptation plan: `docs/specs/ingestion-worker-adaptation-v1.md`
 - Deferred follow-up scope after v1: `docs/specs/crawler-ingestion-control-plane-v2.md`
 - Control-plane v2 revamp: `docs/specs/control-plane-v2-pipeline-first.md`
+- Control-center v2 control-service architecture:
+  `docs/specs/control-center-v2-projection-architecture.md`
 - Crawler worker v2 spec: `docs/specs/crawler-worker-v2.md`
 
 ## App Docs
@@ -56,12 +58,13 @@ This directory contains design and implementation documentation for the JobCompa
 6. `docs/specs/ingestion-worker-adaptation-v1.md`
 7. `docs/specs/crawler-ingestion-control-plane-v2.md`
 8. `docs/specs/control-plane-v2-pipeline-first.md`
-9. `docs/specs/crawler-worker-v2.md`
-10. `docs/specs/jobs-crawler-actor.md`
-11. `docs/specs/jobs-ingestion-service.md`
-12. `docs/specs/job-compass-chat.md`
-13. `apps/jobs-crawler-actor/README.md`
-14. `apps/jobs-ingestion-service/README.md`
-15. `apps/job-compass-chat/README.md`
-16. `docs/specs/ops-control-plane.md`
-17. `apps/ops-control-plane/README.md`
+9. `docs/specs/control-center-v2-projection-architecture.md`
+10. `docs/specs/crawler-worker-v2.md`
+11. `docs/specs/jobs-crawler-actor.md`
+12. `docs/specs/jobs-ingestion-service.md`
+13. `docs/specs/job-compass-chat.md`
+14. `apps/jobs-crawler-actor/README.md`
+15. `apps/jobs-ingestion-service/README.md`
+16. `apps/job-compass-chat/README.md`
+17. `docs/specs/ops-control-plane.md`
+18. `apps/ops-control-plane/README.md`

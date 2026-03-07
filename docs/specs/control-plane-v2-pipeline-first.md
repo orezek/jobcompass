@@ -128,6 +128,12 @@ Consequences:
 
 These are MongoDB collections in the control-plane database.
 
+Projection architecture note:
+
+- `control_plane_runs` and `control_plane_run_event_index` are derived read models maintained by a
+  dedicated `control-service`
+- see `docs/specs/control-center-v2-projection-architecture.md`
+
 Projection roles:
 
 - `control_plane_runs` stores one current-state projection document per run
@@ -214,6 +220,7 @@ Recommended UI direction:
 - one pipeline list/detail surface
 - no global "manage search spaces/runtime profiles/structured outputs" screens for live runtime
   config
+- UI reads run and pipeline state through `control-service`, not from pipeline-owned databases
 
 ## Consequences For Worker Design
 
