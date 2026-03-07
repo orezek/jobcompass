@@ -132,7 +132,7 @@ Projection architecture note:
 
 - `control_plane_runs` and `control_plane_run_event_index` are derived read models maintained by a
   dedicated `control-service`
-- see `docs/specs/control-center-v2-projection-architecture.md`
+- see `docs/specs/control-service-v2-architecture.md`
 
 Canonical ownership rule:
 
@@ -220,7 +220,7 @@ Not part of the primary v2 runtime API:
 Contract detail note:
 
 - the canonical control-service REST contract lives in
-  `docs/specs/control-center-v2-projection-architecture.md`
+  `docs/specs/control-service-v2-architecture.md`
 
 ## UI Implications
 

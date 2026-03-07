@@ -12,8 +12,7 @@ This directory contains design and implementation documentation for the JobCompa
 - Ingestion worker adaptation plan: `docs/specs/ingestion-worker-adaptation-v1.md`
 - Deferred follow-up scope after v1: `docs/specs/crawler-ingestion-control-plane-v2.md`
 - Control-plane v2 revamp: `docs/specs/control-plane-v2-pipeline-first.md`
-- Control-center v2 control-service architecture:
-  `docs/specs/control-center-v2-projection-architecture.md`
+- Control-service v2 architecture: `docs/specs/control-service-v2-architecture.md`
 - Crawler worker v2 spec: `docs/specs/crawler-worker-v2.md`
 
 ## App Docs
@@ -58,7 +57,7 @@ This directory contains design and implementation documentation for the JobCompa
 6. `docs/specs/ingestion-worker-adaptation-v1.md`
 7. `docs/specs/crawler-ingestion-control-plane-v2.md`
 8. `docs/specs/control-plane-v2-pipeline-first.md`
-9. `docs/specs/control-center-v2-projection-architecture.md`
+9. `docs/specs/control-service-v2-architecture.md`
 10. `docs/specs/crawler-worker-v2.md`
 11. `docs/specs/jobs-crawler-actor.md`
 12. `docs/specs/jobs-ingestion-service.md`

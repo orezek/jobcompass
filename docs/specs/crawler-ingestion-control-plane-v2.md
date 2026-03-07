@@ -124,8 +124,8 @@ current implementation note:
 
 projection architecture note:
 
-- the detailed V2 control-service projection design is specified in
-  `docs/specs/control-center-v2-projection-architecture.md`
+- the detailed V2 control-service design is specified in
+  `docs/specs/control-service-v2-architecture.md`
 
 ## v2.0 Data Domain Model
 
@@ -240,7 +240,7 @@ v2 control-plane rule:
 Control-service API detail note:
 
 - the canonical control-service REST contract lives in
-  `docs/specs/control-center-v2-projection-architecture.md`
+  `docs/specs/control-service-v2-architecture.md`
 - V2 MVP payload simplicity rule:
   - `POST /v1/pipelines` carries the full pipeline snapshot
   - `PATCH /v1/pipelines/{pipelineId}` carries `name` only
@@ -446,7 +446,7 @@ control-service subscriber note:
 - `control-service` consumes the full `runtimeBrokerEventV2Schema` union from
   `packages/control-plane-contracts/src/v2.ts`
 - the detailed control-service Pub/Sub consumer contract lives in
-  `docs/specs/control-center-v2-projection-architecture.md`
+  `docs/specs/control-service-v2-architecture.md`
 
 `crawler.run.finished` v2 payload should stay minimal:
 

@@ -1,4 +1,4 @@
-# Spec Draft: Control Center v2 Control-Service Projection Architecture
+# Spec Draft: Control Service v2 Architecture
 
 ## Status
 
