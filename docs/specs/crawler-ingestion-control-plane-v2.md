@@ -254,12 +254,13 @@ Control-service API detail note:
 - `PORT`
 - `SERVICE_NAME=crawler-worker`
 - `SERVICE_VERSION`
-- `CONTROL_AUTH_MODE` (`jwt` or `token`)
-- `CONTROL_JWT_PUBLIC_KEY` or `CONTROL_SHARED_TOKEN`
+- `CONTROL_AUTH_MODE=token`
+- `CONTROL_SHARED_TOKEN`
 - `GCP_PROJECT_ID`
 - `PUBSUB_EVENTS_TOPIC` (crawler publish topic)
 - `MONGODB_URI`
 - `LOG_LEVEL`
+- `LOG_PRETTY`
 - `MAX_CONCURRENT_RUNS`
 
 Not part of crawler bootstrap env:
@@ -275,19 +276,21 @@ reason:
 - `PORT`
 - `SERVICE_NAME=ingestion-worker`
 - `SERVICE_VERSION`
-- `CONTROL_AUTH_MODE` (`jwt` or `token`)
-- `CONTROL_JWT_PUBLIC_KEY` or `CONTROL_SHARED_TOKEN`
+- `CONTROL_AUTH_MODE=token`
+- `CONTROL_SHARED_TOKEN`
 - `GCP_PROJECT_ID`
 - `PUBSUB_EVENTS_TOPIC`
 - `OUTPUTS_BUCKET`
 - `OUTPUTS_PREFIX` (optional)
 - `MONGODB_URI`
 - `LOG_LEVEL`
+- `LOG_PRETTY`
 - `MAX_CONCURRENT_RUNS`
 
 implementation note:
 
 - crawler and ingestion REST APIs should be implemented with Fastify and JSON schema validation
+- V2 MVP standardizes deployment auth on one shared bearer token
 
 ### Crawler REST Endpoints
 

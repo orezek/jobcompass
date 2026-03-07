@@ -195,13 +195,15 @@ Reason:
 - if `control-service` is scaled horizontally, replicas may share that subscription for
   load-balanced consumption
 
-Recommended bootstrap env:
+Pub/Sub env subset:
 
 - `GCP_PROJECT_ID`
 - `PUBSUB_EVENTS_TOPIC`
 - `PUBSUB_EVENTS_SUBSCRIPTION`
 - `PUBSUB_AUTO_CREATE_SUBSCRIPTION`
 - `ENABLE_PUBSUB_CONSUMER`
+
+The full `control-service` env contract is defined below in `Operational Contract`.
 
 Recommended default subscription naming rule:
 
@@ -602,9 +604,8 @@ Important indexes:
 
 - unique `{ eventId: 1 }`
 - `{ runId: 1, occurredAt: 1 }`
-- `{ eventType: 1, occurredAt: -1 }`
-- `{ crawlRunId: 1, occurredAt: 1 }`
-- optional `{ sourceId: 1 }` for artifact/output drill-down
+- optional later `{ runId: 1, eventType: 1, occurredAt: 1 }` if dedicated artifact/output
+  endpoints become hot enough to justify it
 
 ### `control_plane_runs`
 
@@ -664,7 +665,6 @@ Important indexes:
 - unique `{ runId: 1 }`
 - `{ pipelineId: 1, requestedAt: -1 }`
 - `{ status: 1, requestedAt: -1 }`
-- `{ source: 1, requestedAt: -1 }`
 
 ## Event Derivation Rules
 
@@ -908,10 +908,10 @@ That is the simplest architecture that:
 - avoids filesystem coupling
 - gives the UI one authoritative backend and one authoritative control-plane database to read
 
-## Remaining V2 Contract TODOs
+## V2 Implementation Contracts
 
-The core control-plane direction is now fixed, but several implementation contracts still need to
-be locked before coding starts.
+The core control-plane direction is fixed. The remaining work is mostly implementation, but the
+following contracts are canonical for V2 MVP.
 
 ### 1. SSE Contract
 
@@ -956,12 +956,6 @@ Heartbeat policy:
 
 ### 2. Worker Orchestration Contract
 
-Still needed:
-
-- exact crawler start sequence
-- cancel and stop propagation rules
-- retry and deduplication behavior for worker command dispatch
-
 Canonical ingestion start rule:
 
 - `control-service` starts ingestion before crawler for `crawl_and_ingest` pipelines
@@ -970,47 +964,239 @@ Canonical ingestion start rule:
 - ingestion receives work from `crawler.detail.captured` and finalization from
   `crawler.run.finished`
 
+Canonical dispatch rule:
+
+- `control-service` writes `control_plane_runs` and `control_plane_run_manifests` first
+- `crawl_only` pipelines dispatch crawler only
+- `crawl_and_ingest` pipelines dispatch ingestion first, then crawler
+- worker command idempotency is keyed by the run-level idempotency key already carried in the
+  manifest worker commands
+- V2 MVP treats worker responses `accepted`, `queued`, and `deduplicated` as successful dispatch
+- V2 MVP uses one synchronous dispatch attempt per worker command
+
+Partial dispatch failure rule:
+
+- if ingestion dispatch fails, `control-service` must not dispatch crawler
+- if ingestion dispatch fails, overall run `status = failed`
+- if ingestion dispatch fails, `stopReason = ingestion_dispatch_failed`
+- if crawler dispatch fails after ingestion already accepted the run, `control-service` must send
+  one best-effort `POST /v1/runs/{runId}/cancel` call to ingestion
+- if crawler dispatch fails after ingestion already accepted the run, overall run `status = failed`
+- if crawler dispatch fails after ingestion already accepted the run,
+  `stopReason = crawler_dispatch_failed`
+- if the best-effort ingestion cancel call also fails, `control-service` must log the anomaly and
+  keep the run in terminal `failed`
+- V2 MVP does not include an automatic retry queue or background replay worker
+
 ### 3. Run State Machine
 
-Still needed:
+V2 MVP keeps one small status enum for both the overall run and worker sub-states:
 
-- exact overall run statuses
-- crawler and ingestion sub-status transitions
-- terminal state precedence rules
-- cancellation and stop semantics
-- failure summarization rules
+- `queued`
+- `running`
+- `succeeded`
+- `completed_with_errors`
+- `failed`
+- `stopped`
+
+Non-terminal statuses:
+
+- `queued`
+- `running`
+
+Terminal statuses:
+
+- `succeeded`
+- `completed_with_errors`
+- `failed`
+- `stopped`
+
+Initial state written synchronously by `control-service`:
+
+- overall `status = queued`
+- `crawler.status = queued`
+- `ingestion.status = queued` only when pipeline mode is `crawl_and_ingest`
+- `ingestion.status = null` when pipeline mode is `crawl_only`
+
+Transition rules:
+
+- `crawler.run.started`
+  - `crawler.status = running`
+  - overall `status = running`
+  - set `startedAt` if empty
+- `ingestion.run.started`
+  - `ingestion.status = running`
+  - overall `status = running`
+  - set `startedAt` if empty
+- `crawler.run.finished`
+  - set `crawler.status` to the emitted terminal status
+  - set `crawler.finishedAt`
+  - if mode is `crawl_only`, finalize the overall run immediately from crawler terminal status
+- `ingestion.run.finished`
+  - set `ingestion.status` to the emitted terminal status
+  - set `ingestion.finishedAt`
+  - finalize the overall run for `crawl_and_ingest`
+
+Overall terminal status rule for `crawl_and_ingest`:
+
+- if either worker terminal status is `failed`, overall `status = failed`
+- else if either worker terminal status is `stopped`, overall `status = stopped`
+- else if either worker terminal status is `completed_with_errors`, overall
+  `status = completed_with_errors`
+- else overall `status = succeeded`
+
+Dispatch failure precedence rule:
+
+- synchronous worker dispatch failure is a terminal control-plane failure
+- if `control-service` already marked the run `failed` because worker dispatch failed, later worker
+  runtime events may update worker sub-state fields but must not downgrade overall status from
+  `failed` to `stopped` or `succeeded`
+
+Cancellation and stop semantics:
+
+- operator intent uses one command only: `POST /v1/runs/{runId}/cancel`
+- `cancel` is not a terminal state by itself
+- `control-service` must not optimistically set overall `status = stopped`
+- workers confirm operator stop intent by emitting their normal terminal runtime events with
+  terminal status `stopped`
+
+Failure summarization rule:
+
+- `stopReason` stores one short terminal reason only
+- prefer the terminal reason from the worker that determines the final overall terminal status
+- V2 MVP does not synthesize a larger cross-worker error document
 
 ### 4. Auth Contract
 
-Still needed:
+V2 MVP should standardize on one shared bearer token.
 
-- `control-center-v2` to `control-service` auth
-- `control-service` to worker auth
-- token versus JWT deployment rules
-- auth-exempt endpoint list
+Canonical deployment rule:
+
+- `CONTROL_AUTH_MODE=token`
+- `CONTROL_SHARED_TOKEN` is required for `control-service`, `crawler-worker-v2`, and
+  `ingestion-worker-v2`
+- V2 MVP should not require JWT issuance or public-key distribution
+- existing worker JWT code paths may remain in implementation, but JWT is not the canonical V2
+  deployment contract
+
+Inbound auth:
+
+- `control-center-v2` must call `control-service` with `Authorization: Bearer <CONTROL_SHARED_TOKEN>`
+- the browser must not hold the shared token directly
+- authenticated UI calls should go through trusted server-side code in `control-center-v2`
+
+Outbound auth:
+
+- `control-service` must call crawler and ingestion worker REST APIs with
+  `Authorization: Bearer <CONTROL_SHARED_TOKEN>`
+
+Auth-exempt endpoints:
+
+- `GET /healthz`
+- `GET /readyz`
+
+Authenticated endpoints:
+
+- `GET /heartbeat`
+- all `/v1/*` REST endpoints
+- `GET /v1/stream`
 
 ### 5. Operational Contract
 
-Still needed:
+Typed env schema should stay minimal.
 
-- typed `control-service` env schema
-- MongoDB index definitions
-- retention rules for control-plane collections
-- metrics and structured logging fields
-- container deployment expectations
+Required env:
 
-### 6. Package-Level Schemas
+- `MONGODB_URI`
+- `CONTROL_PLANE_DB_NAME`
+- `CRAWLER_WORKER_BASE_URL`
+- `INGESTION_WORKER_BASE_URL`
+- `GCP_PROJECT_ID`
+- `PUBSUB_EVENTS_TOPIC`
+- `PUBSUB_EVENTS_SUBSCRIPTION`
 
-Current status:
+Optional env with defaults:
 
-- the documented `control_plane_pipelines`, `control_plane_runs`,
-  `control_plane_run_manifests`, and `control_plane_run_event_index` shapes should now live in
-  `@repo/control-plane-contracts/src/v2.ts`
-- create/update pipeline request schemas and empty-body start/cancel request schemas should live in
-  the same package
-- list/query response schemas for pipelines, runs, and run events should live in the same package
-- `healthz`, `readyz`, and `heartbeat` response schemas should live in the same package
-- SSE endpoint query and event payload schemas should live in the same package
+- `PORT`
+  - default `8080`
+- `HOST`
+  - default `0.0.0.0`
+- `SERVICE_NAME`
+  - default `control-service-v2`
+- `SERVICE_VERSION`
+  - default `dev`
+- `LOG_LEVEL`
+  - default `info`
+- `LOG_PRETTY`
+  - default `false`
+- `ENABLE_PUBSUB_CONSUMER`
+  - default `true`
+- `PUBSUB_AUTO_CREATE_SUBSCRIPTION`
+  - default `true`
+- `SSE_HEARTBEAT_INTERVAL_MS`
+  - default `15000`
+
+Bootstrap order:
+
+1. parse env
+2. create Fastify logger
+3. connect MongoDB
+4. ensure MongoDB indexes
+5. create Pub/Sub client and subscription if enabled
+6. create in-memory service state for readiness and heartbeat
+7. register auth hook and routes
+8. start subscriber
+9. close subscription and MongoDB on shutdown
+
+Logging rule:
+
+- Fastify should use Pino as the service logger
+- when `LOG_PRETTY=true` and stdout is a TTY, Fastify should enable `pino-pretty` transport for
+  console output
+- when `LOG_PRETTY=false`, structured JSON logs should be emitted
+- this should match the existing worker service pattern
+
+Canonical MongoDB index contract:
+
+- `control_plane_pipelines`
+  - unique `{ pipelineId: 1 }`
+  - unique `{ dbName: 1 }`
+  - `{ status: 1, updatedAt: -1 }`
+- `control_plane_run_manifests`
+  - unique `{ runId: 1 }`
+- `control_plane_runs`
+  - unique `{ runId: 1 }`
+  - `{ pipelineId: 1, requestedAt: -1 }`
+  - `{ status: 1, requestedAt: -1 }`
+- `control_plane_run_event_index`
+  - unique `{ eventId: 1 }`
+  - `{ runId: 1, occurredAt: 1 }`
+
+Retention rule:
+
+- V2 MVP should not use TTL indexes on control-plane collections
+- retention and purge policy are deferred to a later version
+
+Metrics and structured logging fields:
+
+- `serviceName`
+- `serviceVersion`
+- `requestId`
+- `pipelineId`
+- `runId`
+- `eventId`
+- `eventType`
+- `correlationId`
+- `subscriptionName`
+
+Container deployment expectations:
+
+- `control-service` runs as one stateless containerized process
+- the same process owns REST, SSE, and the Pub/Sub subscriber
+- `GET /readyz` must fail when MongoDB is unavailable
+- `GET /readyz` must also fail when `ENABLE_PUBSUB_CONSUMER=true` and the subscriber is not ready
+
+### 6. Remaining Open Work
 
 Still needed:
 

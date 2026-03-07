@@ -53,13 +53,19 @@ Minimal bootstrap env:
 - `PORT`
 - `SERVICE_NAME`
 - `SERVICE_VERSION`
-- `CONTROL_AUTH_MODE`
-- `CONTROL_SHARED_TOKEN` or `CONTROL_JWT_PUBLIC_KEY`
+- `CONTROL_AUTH_MODE=token`
+- `CONTROL_SHARED_TOKEN`
 - `GCP_PROJECT_ID`
 - `PUBSUB_EVENTS_TOPIC`
 - `MONGODB_URI`
 - `LOG_LEVEL`
+- `LOG_PRETTY`
 - `MAX_CONCURRENT_RUNS`
+
+Canonical V2 deployment rule:
+
+- crawler worker authenticates control-plane callers with one shared bearer token
+- JWT support may remain in code, but it is not the canonical V2 deployment contract
 
 Not part of bootstrap env:
 
