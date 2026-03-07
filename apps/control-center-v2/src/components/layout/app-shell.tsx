@@ -1,5 +1,4 @@
-'use client';
-
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
@@ -67,12 +66,22 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const state = heartbeatToState(heartbeat);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   return (
     <div className="min-h-dvh bg-background text-foreground">
       <div className="mx-auto flex min-h-dvh max-w-[1440px]">
-        <aside className="sticky top-0 hidden h-dvh w-72 border-r border-border bg-card px-5 py-5 lg:block">
-          <NavContent pathname={pathname} />
+        <aside
+          className={cn(
+            'sticky top-0 hidden h-dvh flex-col border-r border-border bg-card transition-all duration-150 ease-in-out lg:flex',
+            isSidebarOpen
+              ? 'w-72 px-5 py-5 opacity-100'
+              : 'w-0 overflow-hidden border-none px-0 py-5 opacity-0',
+          )}
+        >
+          <div className="w-64">
+            <NavContent pathname={pathname} />
+          </div>
         </aside>
         <div className="flex min-h-dvh min-w-0 flex-1 flex-col">
           <header className="border-b border-border bg-background/95 backdrop-blur">
@@ -89,6 +98,30 @@ export function AppShell({
                       <NavContent pathname={pathname} compact />
                     </SheetContent>
                   </Sheet>
+                </div>
+                <div className="hidden lg:block pt-1.5">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 px-0 py-0 flex items-center justify-center text-muted-foreground hover:text-foreground"
+                    onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                    aria-label="Toggle navigation"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                      <line x1="9" x2="9" y1="3" y2="21" />
+                    </svg>
+                  </Button>
                 </div>
                 <div className="min-w-0 space-y-2">
                   <Breadcrumbs />
