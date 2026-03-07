@@ -1091,6 +1091,11 @@ Inbound auth:
 - `control-center-v2` must call `control-service` with `Authorization: Bearer <CONTROL_SHARED_TOKEN>`
 - the browser must not hold the shared token directly
 - authenticated UI calls should go through trusted server-side code in `control-center-v2`
+- if the UI uses browser-native SSE, `control-center-v2` should expose a same-origin SSE proxy
+  route because `EventSource` cannot attach the backend authorization header directly
+- V2 does not define end-user auth inside `control-center-v2`; trusted operator access is assumed
+  to be enforced outside the app
+- login/logout, operator identity, and app-level session UX are deferred to V3
 
 Outbound auth:
 

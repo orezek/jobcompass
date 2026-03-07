@@ -28,6 +28,43 @@ the pipeline-first v2 model.
 
 The UI should unify crawler and ingestion into one operator experience.
 
+## Frontend Stack Rules
+
+Canonical V2 MVP frontend stack:
+
+- Next.js using the App Router only
+- Tailwind CSS
+- shadcn/ui on top of Radix UI primitives
+- `react-hook-form` plus `zod` for operator forms
+
+App-local decision note:
+
+- this is a deliberate app-local frontend stack for `control-center-v2`
+- it is not an existing monorepo-wide UI standard
+
+Routing rule:
+
+- use the `app/` directory only
+- do not use the Pages Router
+- do not use `getServerSideProps`
+
+Component split:
+
+- use Server Components for initial REST-backed page loads
+- use Client Components only where interactivity is required:
+  - forms
+  - SSE listeners
+  - interactive controls
+
+Network boundary rule:
+
+- Server Components must call a server-only `control-service` backend client directly
+- do not call local Next.js Route Handlers from Server Components during page loads
+- Route Handlers should be used only for:
+  - browser-side mutations
+  - client-triggered refresh flows
+  - SSE proxying
+
 ## Layout Direction
 
 Canonical layout rule for V2 MVP:
@@ -36,6 +73,37 @@ Canonical layout rule for V2 MVP:
 - desktop must be fully supported
 - mobile is not a reduced-feature afterthought
 - prioritize clear run status, recent activity, and primary operator actions in narrow viewports
+
+App-shell rule:
+
+- desktop should use a persistent left sidebar
+- mobile should use a drawer or bottom navigation
+- the persistent sidebar must not be rendered on narrow viewports
+- dense data views must collapse into stacked cards on mobile rather than forcing table-only layouts
+
+Design-system direction:
+
+- visual direction: "Swiss Authority meets Lab Report"
+- dark theme only for V2 MVP
+- use CSS variables for the theme
+- favor sharp corners with little or no rounding
+- avoid box shadows
+- use skeleton loaders instead of spinners
+
+Theme tokens:
+
+- canvas/background: `#0B0F14`
+- surfaces: `#0A1A2B`
+- structure/borders: `#2A3440`
+- primary text: `#E9E5DC`
+- accent: `#132F57`
+
+Typography:
+
+- UI sans: Neue Haas Grotesk or Helvetica Now Text if licensed and available
+- fallback sans: Inter, `system-ui`, sans-serif
+- data mono: IBM Plex Mono or `ui-monospace`, monospace
+- data labels should prefer tabular numerals and uppercase treatment where appropriate
 
 ## Required Page And Route Map
 
@@ -185,23 +253,49 @@ Required interaction rules:
 - rename pipeline should use a simple inline or modal flow, not a full-screen wizard
 - reconnect after SSE drop should show stale/live-connection status without blocking normal REST
   navigation
+- loading states should use skeleton loaders, not spinners
+- empty states should use the "Empty Lab Tray" treatment:
+  - dashed border
+  - transparent surface
+  - centered monospace copy
+- all run-status surfaces must support:
+  - `queued`
+  - `running`
+  - `succeeded`
+  - `completed_with_errors`
+  - `failed`
+  - `stopped`
 
-## Operator Auth And Session Model
+## Operator Access Model
 
-The backend auth contract already exists. The UI-side contract still needs to be designed
-explicitly.
+The backend auth contract already exists. V2 does not define end-user authentication inside the
+Next.js app.
 
-Canonical reminders for the Next.js app:
+Canonical V2 rule:
 
+- `control-center-v2` is an internal operator tool in V2
+- trusted access should be enforced outside the app at the deployment or network boundary
 - the browser must not hold `CONTROL_SHARED_TOKEN` directly
 - authenticated calls to `control-service` should go through trusted server-side code in
   `control-center-v2`
-- the UI spec must define the operator session model inside the Next.js app
-- the UI spec must define login, logout, and session-expiry behavior if operator auth is required
-- the UI spec must define unauthorized and expired-session screens or redirects
 
-The exact operator identity provider is still open, but the screen map must leave room for that
-boundary.
+Deferred to V3:
+
+- operator identity provider selection
+- login/logout UX
+- app-level session management
+- session-expiry handling
+- unauthorized and expired-session screens
+
+SSE proxy rule:
+
+- the browser must not connect directly to `control-service` SSE with the shared bearer token
+- native `EventSource` cannot attach custom authorization headers
+- `control-center-v2` must expose a same-origin SSE proxy route
+- the SSE proxy route should:
+  - attach the backend `CONTROL_SHARED_TOKEN` server-side
+  - open the downstream `control-service` SSE connection
+  - stream chunks back to the browser
 
 ## MVP Non-Goals
 
@@ -227,3 +321,18 @@ Do not design first-pass screens for:
 4. live-update behavior notes per screen
 5. loading, empty, error, reconnect, and confirmation states
 6. mobile-first responsive behavior notes
+
+## Remaining Open Points
+
+These do not block V2 implementation, but they are still design choices rather than locked rules:
+
+1. mobile navigation shape
+   - drawer
+   - bottom navigation
+   - or a hybrid of both
+2. default run-timeline direction on mobile
+   - newest first
+   - or oldest first for easier chronological scanning
+3. premium font availability
+   - licensed premium fonts if available
+   - otherwise fallback stack only
