@@ -13,6 +13,7 @@ const optionalStringSchema = z.preprocess((value) => {
 
 export const v2ContractVersionSchema = z.literal('v2');
 export const v2WorkerTypeSchema = z.enum(['crawler', 'ingestion']);
+export const v2PipelineModeSchema = z.enum(['crawl_only', 'crawl_and_ingest']);
 export const v2RunStatusSchema = z.enum([
   'queued',
   'running',
@@ -30,7 +31,7 @@ export const v2PipelineSnapshotSchema = z.object({
   id: nonEmptyStringSchema,
   name: nonEmptyStringSchema,
   version: z.number().int().positive(),
-  mode: z.enum(['crawl_only', 'crawl_and_ingest']),
+  mode: v2PipelineModeSchema,
   searchSpaceId: nonEmptyStringSchema,
   runtimeProfileId: nonEmptyStringSchema,
   structuredOutputDestinationIds: z.array(nonEmptyStringSchema).default([]),
@@ -610,6 +611,797 @@ export const ingestionRunSummaryProjectionV2Fixture = ingestionRunSummaryProject
   totalTokens: 183_220,
   totalEstimatedCostUsd: 0.7421,
 });
+
+export const v2ControlPlanePipelineStatusSchema = z.enum(['active', 'deleted']);
+
+export const v2ControlPlaneSearchSpaceSchema = z
+  .object({
+    id: nonEmptyStringSchema,
+    name: nonEmptyStringSchema,
+    description: optionalStringSchema.default(''),
+    startUrls: z.array(z.url()).min(1),
+    maxItems: z.number().int().positive(),
+    allowInactiveMarking: z.boolean(),
+  })
+  .strict();
+
+export const v2ControlPlaneRuntimeProfileSchema = z
+  .object({
+    id: nonEmptyStringSchema,
+    name: nonEmptyStringSchema,
+    crawlerMaxConcurrency: z.number().int().positive().optional(),
+    crawlerMaxRequestsPerMinute: z.number().int().positive().optional(),
+    ingestionConcurrency: z.number().int().positive().optional(),
+    ingestionEnabled: z.boolean().default(true),
+    debugLog: z.boolean().default(false),
+  })
+  .strict();
+
+export const v2ControlPlaneStructuredOutputDestinationSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('mongodb'),
+  }),
+  z.object({
+    type: z.literal('downloadable_json'),
+  }),
+]);
+
+export const v2ControlPlaneStructuredOutputSchema = z
+  .object({
+    destinations: z.array(v2ControlPlaneStructuredOutputDestinationSchema).default([]),
+  })
+  .strict();
+
+export const createControlPlanePipelineRequestV2Schema = z
+  .object({
+    name: nonEmptyStringSchema,
+    source: nonEmptyStringSchema,
+    mode: v2PipelineModeSchema,
+    searchSpace: v2ControlPlaneSearchSpaceSchema,
+    runtimeProfile: v2ControlPlaneRuntimeProfileSchema,
+    structuredOutput: v2ControlPlaneStructuredOutputSchema,
+  })
+  .strict();
+
+export const updateControlPlanePipelineRequestV2Schema = z
+  .object({
+    name: nonEmptyStringSchema,
+  })
+  .strict();
+
+export const controlPlanePipelineV2Schema = createControlPlanePipelineRequestV2Schema
+  .extend({
+    pipelineId: nonEmptyStringSchema,
+    dbName: nonEmptyStringSchema,
+    version: z.number().int().positive(),
+    status: v2ControlPlanePipelineStatusSchema.default('active'),
+    createdAt: isoDateTimeSchema,
+    updatedAt: isoDateTimeSchema,
+  })
+  .strict();
+
+export const controlServiceStartPipelineRunRequestV2Schema = z.object({}).strict();
+export const controlServiceCancelRunRequestV2Schema = z.object({}).strict();
+
+export const controlPlaneRunWorkerCommandsV2Schema = z
+  .object({
+    crawler: crawlerStartRunRequestV2Schema,
+    ingestion: ingestionStartRunRequestV2Schema.optional(),
+  })
+  .strict();
+
+export const controlPlaneRunManifestV2Schema = z
+  .object({
+    runId: nonEmptyStringSchema,
+    pipelineId: nonEmptyStringSchema,
+    pipelineVersion: z.number().int().positive(),
+    pipelineSnapshot: controlPlanePipelineV2Schema,
+    workerCommands: controlPlaneRunWorkerCommandsV2Schema,
+    createdAt: isoDateTimeSchema,
+    createdBy: nonEmptyStringSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.pipelineId !== value.pipelineSnapshot.pipelineId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pipelineSnapshot', 'pipelineId'],
+        message: 'pipelineSnapshot.pipelineId must match pipelineId.',
+      });
+    }
+
+    if (value.pipelineVersion !== value.pipelineSnapshot.version) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pipelineSnapshot', 'version'],
+        message: 'pipelineSnapshot.version must match pipelineVersion.',
+      });
+    }
+
+    if (value.workerCommands.crawler.runId !== value.runId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['workerCommands', 'crawler', 'runId'],
+        message: 'Crawler StartRun runId must match manifest runId.',
+      });
+    }
+
+    if (value.workerCommands.crawler.persistenceTargets.dbName !== value.pipelineSnapshot.dbName) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['workerCommands', 'crawler', 'persistenceTargets', 'dbName'],
+        message: 'Crawler StartRun dbName must match pipelineSnapshot.dbName.',
+      });
+    }
+
+    const expectsIngestion = value.pipelineSnapshot.mode === 'crawl_and_ingest';
+    if (expectsIngestion && !value.workerCommands.ingestion) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['workerCommands', 'ingestion'],
+        message: 'Ingestion StartRun is required when pipeline mode is crawl_and_ingest.',
+      });
+    }
+
+    if (!expectsIngestion && value.workerCommands.ingestion) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['workerCommands', 'ingestion'],
+        message: 'Ingestion StartRun must be omitted when pipeline mode is crawl_only.',
+      });
+    }
+
+    if (value.workerCommands.ingestion && value.workerCommands.ingestion.runId !== value.runId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['workerCommands', 'ingestion', 'runId'],
+        message: 'Ingestion StartRun runId must match manifest runId.',
+      });
+    }
+
+    if (
+      value.workerCommands.ingestion &&
+      value.workerCommands.ingestion.persistenceTargets.dbName !== value.pipelineSnapshot.dbName
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['workerCommands', 'ingestion', 'persistenceTargets', 'dbName'],
+        message: 'Ingestion StartRun dbName must match pipelineSnapshot.dbName.',
+      });
+    }
+  });
+
+export const runtimeBrokerEventTypeV2Schema = z.enum([
+  'crawler.run.started',
+  'crawler.detail.captured',
+  'crawler.run.finished',
+  'ingestion.run.started',
+  'ingestion.item.started',
+  'ingestion.item.succeeded',
+  'ingestion.item.failed',
+  'ingestion.item.rejected',
+  'ingestion.run.finished',
+]);
+
+export const v2ControlPlaneRunEventProjectionStatusSchema = z.enum(['applied', 'orphaned']);
+
+export const controlPlaneRunEventIndexV2Schema = z
+  .object({
+    eventId: nonEmptyStringSchema,
+    runId: nonEmptyStringSchema,
+    eventType: runtimeBrokerEventTypeV2Schema,
+    eventVersion: v2ContractVersionSchema.default('v2'),
+    occurredAt: isoDateTimeSchema,
+    correlationId: nonEmptyStringSchema,
+    producer: nonEmptyStringSchema,
+    crawlRunId: optionalStringSchema,
+    searchSpaceId: optionalStringSchema,
+    source: optionalStringSchema,
+    sourceId: optionalStringSchema,
+    dedupeKey: optionalStringSchema,
+    payload: z.unknown(),
+    projectionStatus: v2ControlPlaneRunEventProjectionStatusSchema.default('applied'),
+    ingestedAt: isoDateTimeSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const parsed = runtimeBrokerEventV2Schema.safeParse({
+      eventId: value.eventId,
+      eventType: value.eventType,
+      eventVersion: value.eventVersion,
+      occurredAt: value.occurredAt,
+      runId: value.runId,
+      correlationId: value.correlationId,
+      producer: value.producer,
+      payload: value.payload,
+    });
+
+    if (!parsed.success) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['payload'],
+        message: 'payload must match runtimeBrokerEventV2Schema for the provided event envelope.',
+      });
+    }
+  });
+
+const nullableDateTimeSchema = z.union([isoDateTimeSchema, z.null()]);
+const nullableNonNegativeIntSchema = z.number().int().nonnegative().nullable();
+const nullableNonNegativeNumberSchema = z.number().nonnegative().nullable();
+
+export const controlPlaneRunCrawlerStateV2Schema = z
+  .object({
+    status: v2RunStatusSchema,
+    startedAt: nullableDateTimeSchema.default(null),
+    finishedAt: nullableDateTimeSchema.default(null),
+    detailPagesCaptured: z.number().int().nonnegative().default(0),
+  })
+  .strict();
+
+export const controlPlaneRunIngestionStateV2Schema = z
+  .object({
+    enabled: z.boolean(),
+    status: z.union([v2RunStatusSchema, z.null()]).default(null),
+    startedAt: nullableDateTimeSchema.default(null),
+    finishedAt: nullableDateTimeSchema.default(null),
+    jobsProcessed: z.number().int().nonnegative().default(0),
+    jobsFailed: z.number().int().nonnegative().default(0),
+    jobsSkippedIncomplete: z.number().int().nonnegative().default(0),
+  })
+  .strict();
+
+export const controlPlaneRunArtifactsV2Schema = z
+  .object({
+    detailCapturedCount: z.number().int().nonnegative().default(0),
+  })
+  .strict();
+
+export const controlPlaneRunOutputsV2Schema = z
+  .object({
+    downloadableJsonEnabled: z.boolean().default(false),
+    downloadableJsonCount: z.number().int().nonnegative().default(0),
+  })
+  .strict();
+
+export const controlPlaneRunSummaryExcerptV2Schema = z
+  .object({
+    newJobsCount: nullableNonNegativeIntSchema.default(null),
+    existingJobsCount: nullableNonNegativeIntSchema.default(null),
+    inactiveMarkedCount: nullableNonNegativeIntSchema.default(null),
+    failedRequests: nullableNonNegativeIntSchema.default(null),
+    totalTokens: nullableNonNegativeIntSchema.default(null),
+    totalEstimatedCostUsd: nullableNonNegativeNumberSchema.default(null),
+  })
+  .strict();
+
+export const controlPlaneRunV2Schema = z
+  .object({
+    runId: nonEmptyStringSchema,
+    pipelineId: nonEmptyStringSchema,
+    pipelineName: nonEmptyStringSchema,
+    mode: v2PipelineModeSchema,
+    dbName: nonEmptyStringSchema,
+    source: nonEmptyStringSchema,
+    searchSpaceId: nonEmptyStringSchema,
+    status: v2RunStatusSchema,
+    requestedAt: isoDateTimeSchema,
+    startedAt: nullableDateTimeSchema.default(null),
+    finishedAt: nullableDateTimeSchema.default(null),
+    lastEventAt: nullableDateTimeSchema.default(null),
+    stopReason: z.union([nonEmptyStringSchema, z.null()]).default(null),
+    crawler: controlPlaneRunCrawlerStateV2Schema,
+    ingestion: controlPlaneRunIngestionStateV2Schema,
+    artifacts: controlPlaneRunArtifactsV2Schema,
+    outputs: controlPlaneRunOutputsV2Schema,
+    summary: controlPlaneRunSummaryExcerptV2Schema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const expectsIngestion = value.mode === 'crawl_and_ingest';
+
+    if (expectsIngestion !== value.ingestion.enabled) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ingestion', 'enabled'],
+        message: 'ingestion.enabled must match whether mode is crawl_and_ingest.',
+      });
+    }
+
+    if (!value.ingestion.enabled && value.ingestion.status !== null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ingestion', 'status'],
+        message: 'ingestion.status must be null when ingestion is disabled.',
+      });
+    }
+  });
+
+const v2PaginationLimitSchema = z.coerce.number().int().positive().max(200);
+const v2CursorQuerySchema = optionalStringSchema;
+const v2NextCursorSchema = z.union([nonEmptyStringSchema, z.null()]).default(null);
+
+export const controlServiceErrorResponseV2Schema = z
+  .object({
+    ok: z.literal(false),
+    error: z
+      .object({
+        code: nonEmptyStringSchema,
+        message: nonEmptyStringSchema,
+        details: z.record(z.string(), z.unknown()).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const controlServiceHealthzResponseV2Schema = z
+  .object({
+    ok: z.literal(true),
+    serviceName: nonEmptyStringSchema,
+    serviceVersion: nonEmptyStringSchema,
+    now: isoDateTimeSchema,
+  })
+  .strict();
+
+export const controlServiceReadyzResponseV2Schema = z
+  .object({
+    ok: z.boolean(),
+    serviceName: nonEmptyStringSchema,
+    serviceVersion: nonEmptyStringSchema,
+    now: isoDateTimeSchema,
+    mongoReady: z.boolean(),
+    subscriptionEnabled: z.boolean(),
+    consumerReady: z.boolean(),
+  })
+  .strict();
+
+export const controlServiceHeartbeatResponseV2Schema = z
+  .object({
+    serviceName: nonEmptyStringSchema,
+    serviceVersion: nonEmptyStringSchema,
+    now: isoDateTimeSchema,
+    mongoReady: z.boolean(),
+    subscriptionEnabled: z.boolean(),
+    consumerReady: z.boolean(),
+    subscriptionName: optionalStringSchema,
+    lastMessageReceivedAt: nullableDateTimeSchema.default(null),
+    lastMessageAppliedAt: nullableDateTimeSchema.default(null),
+    lastErrorAt: nullableDateTimeSchema.default(null),
+  })
+  .strict();
+
+export const controlServicePubSubConfigV2Schema = z
+  .object({
+    gcpProjectId: nonEmptyStringSchema,
+    eventsTopic: nonEmptyStringSchema,
+    eventsSubscription: nonEmptyStringSchema,
+    autoCreateSubscription: z.boolean().default(true),
+    consumerEnabled: z.boolean().default(true),
+  })
+  .strict();
+
+export const listControlPlanePipelinesQueryV2Schema = z
+  .object({
+    limit: v2PaginationLimitSchema.default(20),
+    cursor: v2CursorQuerySchema,
+  })
+  .strict();
+
+export const listControlPlanePipelinesResponseV2Schema = z
+  .object({
+    items: z.array(controlPlanePipelineV2Schema),
+    nextCursor: v2NextCursorSchema,
+  })
+  .strict();
+
+export const controlServiceStartPipelineRunAcceptedResponseV2Schema = z
+  .object({
+    ok: z.literal(true),
+    accepted: z.literal(true),
+    pipelineId: nonEmptyStringSchema,
+    runId: nonEmptyStringSchema,
+    status: z.enum(['queued', 'running']),
+    message: optionalStringSchema,
+  })
+  .strict();
+
+export const controlServiceStartPipelineRunResponseV2Schema = z.union([
+  controlServiceStartPipelineRunAcceptedResponseV2Schema,
+  controlServiceErrorResponseV2Schema,
+]);
+
+export const controlServiceCancelRunAcceptedResponseV2Schema = z
+  .object({
+    ok: z.literal(true),
+    accepted: z.literal(true),
+    runId: nonEmptyStringSchema,
+    message: optionalStringSchema,
+  })
+  .strict();
+
+export const controlServiceCancelRunResponseV2Schema = z.union([
+  controlServiceCancelRunAcceptedResponseV2Schema,
+  controlServiceErrorResponseV2Schema,
+]);
+
+export const listControlPlaneRunsQueryV2Schema = z
+  .object({
+    pipelineId: optionalStringSchema,
+    status: v2RunStatusSchema.optional(),
+    source: optionalStringSchema,
+    limit: v2PaginationLimitSchema.default(20),
+    cursor: v2CursorQuerySchema,
+  })
+  .strict();
+
+export const listControlPlaneRunsResponseV2Schema = z
+  .object({
+    items: z.array(controlPlaneRunV2Schema),
+    nextCursor: v2NextCursorSchema,
+  })
+  .strict();
+
+export const listControlPlaneRunEventsQueryV2Schema = z
+  .object({
+    limit: v2PaginationLimitSchema.default(100),
+    cursor: v2CursorQuerySchema,
+  })
+  .strict();
+
+export const listControlPlaneRunEventsResponseV2Schema = z
+  .object({
+    items: z.array(controlPlaneRunEventIndexV2Schema),
+    nextCursor: v2NextCursorSchema,
+  })
+  .strict();
+
+export const controlServiceStreamQueryV2Schema = z
+  .object({
+    pipelineId: optionalStringSchema,
+    runId: optionalStringSchema,
+  })
+  .strict();
+
+export const controlServiceSseHelloDataV2Schema = z
+  .object({
+    connectedAt: isoDateTimeSchema,
+    filters: controlServiceStreamQueryV2Schema,
+    heartbeatIntervalSeconds: z.number().int().positive().default(15),
+  })
+  .strict();
+
+export const controlServiceSseRunUpsertedDataV2Schema = z
+  .object({
+    run: controlPlaneRunV2Schema,
+  })
+  .strict();
+
+export const controlServiceSseRunEventAppendedDataV2Schema = z
+  .object({
+    event: controlPlaneRunEventIndexV2Schema,
+  })
+  .strict();
+
+export const controlServiceSseHeartbeatDataV2Schema = controlServiceHeartbeatResponseV2Schema;
+
+const controlServiceSseEnvelopeBaseV2Schema = z
+  .object({
+    id: nonEmptyStringSchema,
+  })
+  .strict();
+
+export const controlServiceSseHelloEventV2Schema = controlServiceSseEnvelopeBaseV2Schema.extend({
+  event: z.literal('stream.hello'),
+  data: controlServiceSseHelloDataV2Schema,
+});
+
+export const controlServiceSseRunUpsertedEventV2Schema =
+  controlServiceSseEnvelopeBaseV2Schema.extend({
+    event: z.literal('run.upserted'),
+    data: controlServiceSseRunUpsertedDataV2Schema,
+  });
+
+export const controlServiceSseRunEventAppendedEventV2Schema =
+  controlServiceSseEnvelopeBaseV2Schema.extend({
+    event: z.literal('run.event.appended'),
+    data: controlServiceSseRunEventAppendedDataV2Schema,
+  });
+
+export const controlServiceSseHeartbeatEventV2Schema = controlServiceSseEnvelopeBaseV2Schema.extend(
+  {
+    event: z.literal('stream.heartbeat'),
+    data: controlServiceSseHeartbeatDataV2Schema,
+  },
+);
+
+export const controlServiceSseEventV2Schema = z.discriminatedUnion('event', [
+  controlServiceSseHelloEventV2Schema,
+  controlServiceSseRunUpsertedEventV2Schema,
+  controlServiceSseRunEventAppendedEventV2Schema,
+  controlServiceSseHeartbeatEventV2Schema,
+]);
+
+export const createControlPlanePipelineRequestV2Fixture =
+  createControlPlanePipelineRequestV2Schema.parse({
+    name: 'Prague Tech Pipeline',
+    source: 'jobs.cz',
+    mode: 'crawl_and_ingest',
+    searchSpace: {
+      id: 'prague-tech-jobs',
+      name: 'Prague Tech Jobs',
+      description: 'Jobs.cz search pages for Prague tech roles.',
+      startUrls: [
+        'https://www.jobs.cz/prace/praha/?q=software',
+        'https://www.jobs.cz/prace/praha/?q=data',
+      ],
+      maxItems: 200,
+      allowInactiveMarking: true,
+    },
+    runtimeProfile: {
+      id: 'runtime-prague-tech',
+      name: 'Prague Tech Runtime',
+      crawlerMaxConcurrency: 3,
+      crawlerMaxRequestsPerMinute: 60,
+      ingestionConcurrency: 4,
+      ingestionEnabled: true,
+      debugLog: false,
+    },
+    structuredOutput: {
+      destinations: [{ type: 'mongodb' }, { type: 'downloadable_json' }],
+    },
+  });
+
+export const updateControlPlanePipelineRequestV2Fixture =
+  updateControlPlanePipelineRequestV2Schema.parse({
+    name: 'Prague Tech Pipeline Renamed',
+  });
+
+export const controlPlanePipelineV2Fixture = controlPlanePipelineV2Schema.parse({
+  pipelineId: 'pipeline-v2-fixture-001',
+  dbName: 'crawl-ops-prague-tech',
+  version: 1,
+  status: 'active',
+  createdAt: '2026-03-05T09:59:00.000Z',
+  updatedAt: '2026-03-05T09:59:00.000Z',
+  ...createControlPlanePipelineRequestV2Fixture,
+});
+
+export const controlServiceStartPipelineRunRequestV2Fixture =
+  controlServiceStartPipelineRunRequestV2Schema.parse({});
+
+export const controlServiceCancelRunRequestV2Fixture = controlServiceCancelRunRequestV2Schema.parse(
+  {},
+);
+
+export const controlPlaneRunManifestV2Fixture = controlPlaneRunManifestV2Schema.parse({
+  runId: 'crawl-run-v2-fixture-001',
+  pipelineId: controlPlanePipelineV2Fixture.pipelineId,
+  pipelineVersion: controlPlanePipelineV2Fixture.version,
+  pipelineSnapshot: controlPlanePipelineV2Fixture,
+  workerCommands: {
+    crawler: crawlerStartRunRequestV2Schema.parse({
+      ...crawlerStartRunRequestV2Fixture,
+      runId: 'crawl-run-v2-fixture-001',
+      idempotencyKey: 'idmp-crawl-run-v2-fixture-001',
+      persistenceTargets: {
+        dbName: controlPlanePipelineV2Fixture.dbName,
+      },
+      inputRef: {
+        ...crawlerStartRunRequestV2Fixture.inputRef,
+        searchSpaceId: controlPlanePipelineV2Fixture.searchSpace.id,
+      },
+    }),
+    ingestion: ingestionStartRunRequestV2Schema.parse({
+      ...ingestionStartRunRequestV2Fixture,
+      runId: 'crawl-run-v2-fixture-001',
+      idempotencyKey: 'idmp-crawl-run-v2-fixture-001',
+      persistenceTargets: {
+        dbName: controlPlanePipelineV2Fixture.dbName,
+      },
+      inputRef: {
+        crawlRunId: 'crawl-run-v2-fixture-001',
+        searchSpaceId: controlPlanePipelineV2Fixture.searchSpace.id,
+      },
+    }),
+  },
+  createdAt: '2026-03-05T10:00:00.000Z',
+  createdBy: 'control-service',
+});
+
+export const controlPlaneRunEventIndexV2Fixture = controlPlaneRunEventIndexV2Schema.parse({
+  eventId: 'evt-v2-crawler-detail-001',
+  runId: 'crawl-run-v2-fixture-001',
+  eventType: 'crawler.detail.captured',
+  eventVersion: 'v2',
+  occurredAt: '2026-03-05T10:02:30.000Z',
+  correlationId: 'jobs.cz:prague-tech-jobs:crawl-run-v2-fixture-001:2000905774',
+  producer: 'crawler-worker',
+  crawlRunId: 'crawl-run-v2-fixture-001',
+  searchSpaceId: 'prague-tech-jobs',
+  source: 'jobs.cz',
+  sourceId: '2000905774',
+  dedupeKey: 'jobs.cz:prague-tech-jobs:crawl-run-v2-fixture-001:2000905774',
+  payload: runtimeBrokerEventV2Fixtures[0].payload,
+  projectionStatus: 'applied',
+  ingestedAt: '2026-03-05T10:02:30.300Z',
+});
+
+export const controlPlaneRunV2Fixture = controlPlaneRunV2Schema.parse({
+  runId: 'crawl-run-v2-fixture-001',
+  pipelineId: controlPlanePipelineV2Fixture.pipelineId,
+  pipelineName: controlPlanePipelineV2Fixture.name,
+  mode: 'crawl_and_ingest',
+  dbName: controlPlanePipelineV2Fixture.dbName,
+  source: controlPlanePipelineV2Fixture.source,
+  searchSpaceId: controlPlanePipelineV2Fixture.searchSpace.id,
+  status: 'running',
+  requestedAt: '2026-03-05T10:00:00.000Z',
+  startedAt: '2026-03-05T10:00:05.000Z',
+  finishedAt: null,
+  lastEventAt: '2026-03-05T10:02:30.000Z',
+  stopReason: null,
+  crawler: {
+    status: 'running',
+    startedAt: '2026-03-05T10:00:05.000Z',
+    finishedAt: null,
+    detailPagesCaptured: 1,
+  },
+  ingestion: {
+    enabled: true,
+    status: 'running',
+    startedAt: '2026-03-05T10:00:03.000Z',
+    finishedAt: null,
+    jobsProcessed: 0,
+    jobsFailed: 0,
+    jobsSkippedIncomplete: 0,
+  },
+  artifacts: {
+    detailCapturedCount: 1,
+  },
+  outputs: {
+    downloadableJsonEnabled: true,
+    downloadableJsonCount: 0,
+  },
+  summary: {
+    newJobsCount: null,
+    existingJobsCount: null,
+    inactiveMarkedCount: null,
+    failedRequests: null,
+    totalTokens: null,
+    totalEstimatedCostUsd: null,
+  },
+});
+
+export const controlServiceHealthzResponseV2Fixture = controlServiceHealthzResponseV2Schema.parse({
+  ok: true,
+  serviceName: 'control-service',
+  serviceVersion: '2.0.0',
+  now: '2026-03-05T10:00:00.000Z',
+});
+
+export const controlServiceReadyzResponseV2Fixture = controlServiceReadyzResponseV2Schema.parse({
+  ok: true,
+  serviceName: 'control-service',
+  serviceVersion: '2.0.0',
+  now: '2026-03-05T10:00:00.000Z',
+  mongoReady: true,
+  subscriptionEnabled: true,
+  consumerReady: true,
+});
+
+export const controlServiceHeartbeatResponseV2Fixture =
+  controlServiceHeartbeatResponseV2Schema.parse({
+    serviceName: 'control-service',
+    serviceVersion: '2.0.0',
+    now: '2026-03-05T10:05:00.000Z',
+    mongoReady: true,
+    subscriptionEnabled: true,
+    consumerReady: true,
+    subscriptionName: 'control-service-run-events-sub',
+    lastMessageReceivedAt: '2026-03-05T10:04:58.000Z',
+    lastMessageAppliedAt: '2026-03-05T10:04:58.100Z',
+    lastErrorAt: null,
+  });
+
+export const controlServicePubSubConfigV2Fixture = controlServicePubSubConfigV2Schema.parse({
+  gcpProjectId: 'jobcompass-prod',
+  eventsTopic: 'run-events',
+  eventsSubscription: 'control-service-events-subscription',
+  autoCreateSubscription: true,
+  consumerEnabled: true,
+});
+
+export const listControlPlanePipelinesQueryV2Fixture = listControlPlanePipelinesQueryV2Schema.parse(
+  {
+    limit: 20,
+  },
+);
+
+export const listControlPlanePipelinesResponseV2Fixture =
+  listControlPlanePipelinesResponseV2Schema.parse({
+    items: [controlPlanePipelineV2Fixture],
+    nextCursor: null,
+  });
+
+export const controlServiceStartPipelineRunAcceptedResponseV2Fixture =
+  controlServiceStartPipelineRunAcceptedResponseV2Schema.parse({
+    ok: true,
+    accepted: true,
+    pipelineId: controlPlanePipelineV2Fixture.pipelineId,
+    runId: controlPlaneRunV2Fixture.runId,
+    status: 'queued',
+    message: 'Run queued for worker dispatch.',
+  });
+
+export const controlServiceCancelRunAcceptedResponseV2Fixture =
+  controlServiceCancelRunAcceptedResponseV2Schema.parse({
+    ok: true,
+    accepted: true,
+    runId: controlPlaneRunV2Fixture.runId,
+    message: 'Cancellation accepted.',
+  });
+
+export const listControlPlaneRunsQueryV2Fixture = listControlPlaneRunsQueryV2Schema.parse({
+  pipelineId: controlPlanePipelineV2Fixture.pipelineId,
+  status: 'running',
+  source: controlPlaneRunV2Fixture.source,
+  limit: 20,
+});
+
+export const listControlPlaneRunsResponseV2Fixture = listControlPlaneRunsResponseV2Schema.parse({
+  items: [controlPlaneRunV2Fixture],
+  nextCursor: null,
+});
+
+export const listControlPlaneRunEventsQueryV2Fixture = listControlPlaneRunEventsQueryV2Schema.parse(
+  {
+    limit: 100,
+  },
+);
+
+export const listControlPlaneRunEventsResponseV2Fixture =
+  listControlPlaneRunEventsResponseV2Schema.parse({
+    items: [controlPlaneRunEventIndexV2Fixture],
+    nextCursor: null,
+  });
+
+export const controlServiceStreamQueryV2Fixture = controlServiceStreamQueryV2Schema.parse({
+  runId: controlPlaneRunV2Fixture.runId,
+});
+
+export const controlServiceSseHelloEventV2Fixture = controlServiceSseHelloEventV2Schema.parse({
+  id: 'stream-evt-001',
+  event: 'stream.hello',
+  data: {
+    connectedAt: '2026-03-05T10:05:00.000Z',
+    filters: controlServiceStreamQueryV2Fixture,
+    heartbeatIntervalSeconds: 15,
+  },
+});
+
+export const controlServiceSseRunUpsertedEventV2Fixture =
+  controlServiceSseRunUpsertedEventV2Schema.parse({
+    id: 'stream-evt-002',
+    event: 'run.upserted',
+    data: {
+      run: controlPlaneRunV2Fixture,
+    },
+  });
+
+export const controlServiceSseRunEventAppendedEventV2Fixture =
+  controlServiceSseRunEventAppendedEventV2Schema.parse({
+    id: 'stream-evt-003',
+    event: 'run.event.appended',
+    data: {
+      event: controlPlaneRunEventIndexV2Fixture,
+    },
+  });
+
+export const controlServiceSseHeartbeatEventV2Fixture =
+  controlServiceSseHeartbeatEventV2Schema.parse({
+    id: 'stream-evt-004',
+    event: 'stream.heartbeat',
+    data: controlServiceHeartbeatResponseV2Fixture,
+  });
 
 const nowIso = (): string => new Date().toISOString();
 

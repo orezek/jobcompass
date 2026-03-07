@@ -299,6 +299,21 @@ Minimum expectations:
   - returns `lastMessageAppliedAt`
   - returns `lastErrorAt`
 
+### Minimal `control-service` Pub/Sub Consumer Config
+
+For V2 MVP, `control-service` should parse one minimal Pub/Sub consumer config object.
+
+Required fields:
+
+- `gcpProjectId`
+- `eventsTopic`
+- `eventsSubscription`
+- `autoCreateSubscription`
+- `consumerEnabled`
+
+This config should be mapped from service env at bootstrap time.
+It should not become a larger shared infra abstraction until duplication across services is real.
+
 ## `control-service` REST Contract
 
 V2 should make `control-service` the only HTTP API used by `control-center-v2`.
@@ -411,7 +426,8 @@ Deferred from V2 MVP:
   - returns one run projection from `control_plane_runs`
 - `GET /v1/runs/{runId}/events`
   - returns indexed run events from `control_plane_run_event_index`
-  - should support pagination by cursor or event time
+  - should support pagination by `cursor` and `limit` in V2 MVP
+  - event-time filters can be added later if a real UI need appears
 
 ### Not Part Of The V2 REST Surface
 
@@ -899,13 +915,44 @@ be locked before coding starts.
 
 ### 1. SSE Contract
 
-Still needed:
+Canonical V2 MVP shape:
 
-- exact `GET /v1/stream` or equivalent endpoint shape
-- event names
-- payload shape
-- reconnect semantics
-- heartbeat event policy
+- endpoint:
+  - `GET /v1/stream`
+- query params:
+  - optional `pipelineId`
+  - optional `runId`
+- event names:
+  - `stream.hello`
+  - `run.upserted`
+  - `run.event.appended`
+  - `stream.heartbeat`
+
+Payload rules:
+
+- `stream.hello`
+  - emitted once when the stream connects
+  - includes accepted filters and heartbeat interval
+- `run.upserted`
+  - carries one `control_plane_runs` document shaped for the UI
+- `run.event.appended`
+  - carries one newly indexed `control_plane_run_event_index` document
+- `stream.heartbeat`
+  - carries the same shallow service status shape as `GET /heartbeat`
+
+Reconnect rules:
+
+- V2 MVP should use normal EventSource reconnect behavior
+- V2 MVP should not promise durable SSE replay
+- on reconnect, the UI should reopen the stream and re-fetch the relevant REST read model:
+  - `GET /v1/runs`
+  - `GET /v1/runs/{runId}`
+  - `GET /v1/runs/{runId}/events`
+
+Heartbeat policy:
+
+- `stream.heartbeat` should be emitted on a fixed short interval
+- recommended V2 MVP interval: 15 seconds
 
 ### 2. Worker Orchestration Contract
 
@@ -954,12 +1001,20 @@ Still needed:
 
 ### 6. Package-Level Schemas
 
+Current status:
+
+- the documented `control_plane_pipelines`, `control_plane_runs`,
+  `control_plane_run_manifests`, and `control_plane_run_event_index` shapes should now live in
+  `@repo/control-plane-contracts/src/v2.ts`
+- create/update pipeline request schemas and empty-body start/cancel request schemas should live in
+  the same package
+- list/query response schemas for pipelines, runs, and run events should live in the same package
+- `healthz`, `readyz`, and `heartbeat` response schemas should live in the same package
+- SSE endpoint query and event payload schemas should live in the same package
+
 Still needed:
 
-- move the documented `control_plane_pipelines`, `control_plane_runs`,
-  `control_plane_run_manifests`, and `control_plane_run_event_index` shapes into
-  `@repo/control-plane-contracts`
-- publish control-service REST request and response schemas from the same package
+- control-service app-local env parsing and bootstrap wiring
 
 ## Non-Goals
 

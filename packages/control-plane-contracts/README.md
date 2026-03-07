@@ -12,6 +12,17 @@ Exports:
   - `startRunRequestV2Schema` and `startRunResponseV2Schema`
   - `workerLifecycleEventV2Schema`
   - `runtimeBrokerEventV2Schema`
+  - control-service collection and command schemas for:
+    - `control_plane_pipelines`
+    - `control_plane_runs`
+    - `control_plane_run_manifests`
+    - `control_plane_run_event_index`
+    - create/update pipeline requests
+    - start/cancel run requests
+    - list/query response envelopes for pipelines, runs, and run events
+    - `healthz`, `readyz`, and `heartbeat` response payloads
+    - minimal Pub/Sub consumer config for `control-service`
+    - SSE query and event payload schemas
   - projection schemas for:
     - `crawl_run_summaries`
     - `ingestion_run_summaries`
