@@ -12,6 +12,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./v2": {
+      "import": "./dist/v2.js",
+      "types": "./dist/v2.d.ts"
     }
   },
   "types": "./dist/index.d.ts",

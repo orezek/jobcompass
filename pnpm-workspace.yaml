@@ -4,9 +4,14 @@ packages:
 
 catalogs:
   default:
+    '@hookform/resolvers': ^5.2.2
     '@google-cloud/pubsub': ^5.3.0
     '@google-cloud/storage': ^7.19.0
     '@playwright/test': ^1.58.2
+    '@radix-ui/react-accordion': ^1.2.12
+    '@radix-ui/react-alert-dialog': ^1.1.15
+    '@radix-ui/react-dialog': ^1.1.15
+    '@radix-ui/react-slot': ^1.2.4
     '@testing-library/jest-dom': ^6.9.1
     '@testing-library/react': ^16.3.2
     '@types/react': ^19.2.14
@@ -15,7 +20,10 @@ catalogs:
     '@langchain/langgraph': ^1.1.5
     '@types/node': ^25.0.0
     apify: ^3.5.2
+    autoprefixer: ^10.4.27
     cheerio: ^1.2.0
+    class-variance-authority: ^0.7.1
+    clsx: ^2.1.1
     crawlee: ^3.15.3
     jsdom: ^28.1.0
     ink: ^6.8.0
@@ -28,10 +36,14 @@ catalogs:
     pino: ^10.3.1
     pino-pretty: ^13.1.3
     playwright: ^1.57.0
+    postcss: ^8.5.8
     prettier: ^3.7.4
     react: ^19.2.4
     react-dom: ^19.2.4
+    react-hook-form: ^7.71.2
     recharts: ^3.7.0
+    tailwind-merge: ^3.5.0
+    tailwindcss: ^3.4.17
     tsx: ^4.0.0
     turbo: ^2.7.3
     typescript: ^5.9.3

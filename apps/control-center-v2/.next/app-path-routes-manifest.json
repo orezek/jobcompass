@@ -1,0 +1,15 @@
+{
+  "/_global-error/page": "/_global-error",
+  "/_not-found/page": "/_not-found",
+  "/api/pipelines/[pipelineId]/route": "/api/pipelines/[pipelineId]",
+  "/api/pipelines/[pipelineId]/runs/route": "/api/pipelines/[pipelineId]/runs",
+  "/api/pipelines/route": "/api/pipelines",
+  "/api/runs/[runId]/cancel/route": "/api/runs/[runId]/cancel",
+  "/api/stream/route": "/api/stream",
+  "/page": "/",
+  "/pipelines/[pipelineId]/page": "/pipelines/[pipelineId]",
+  "/pipelines/new/page": "/pipelines/new",
+  "/pipelines/page": "/pipelines",
+  "/runs/[runId]/page": "/runs/[runId]",
+  "/runs/page": "/runs"
+}

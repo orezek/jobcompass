@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "functions": {
+    "/api/pipelines": {},
+    "/api/pipelines/[pipelineId]": {},
+    "/api/pipelines/[pipelineId]/runs": {},
+    "/api/runs/[runId]/cancel": {},
+    "/api/stream": {}
+  }
+}

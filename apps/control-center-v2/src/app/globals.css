@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --background: 213 29% 6%;
+  --foreground: 42 23% 89%;
+  --card: 211 62% 10%;
+  --card-foreground: 42 23% 89%;
+  --popover: 211 62% 10%;
+  --popover-foreground: 42 23% 89%;
+  --primary: 215 64% 21%;
+  --primary-foreground: 42 23% 89%;
+  --secondary: 213 21% 16%;
+  --secondary-foreground: 42 23% 89%;
+  --muted: 213 21% 12%;
+  --muted-foreground: 40 9% 69%;
+  --accent: 213 21% 16%;
+  --accent-foreground: 42 23% 89%;
+  --destructive: 348 42% 26%;
+  --destructive-foreground: 42 23% 89%;
+  --success: 153 33% 19%;
+  --success-foreground: 42 23% 89%;
+  --warning: 35 34% 23%;
+  --warning-foreground: 42 23% 89%;
+  --border: 213 21% 21%;
+  --input: 213 21% 21%;
+  --ring: 256 42% 20%;
+  --radius: 0.125rem;
+  --font-sans: 'Inter';
+  --font-mono: 'IBM Plex Mono';
+}
+
+* {
+  @apply border-border;
+  box-shadow: none !important;
+}
+
+html {
+  @apply bg-background text-foreground;
+}
+
+body {
+  @apply min-h-dvh bg-background font-sans text-foreground antialiased;
+  background-image:
+    linear-gradient(to bottom, hsl(var(--card) / 0.5), transparent 18%),
+    radial-gradient(circle at top left, hsl(var(--primary) / 0.18), transparent 24%);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  letter-spacing: -0.02em;
+}
+
+a {
+  @apply text-inherit no-underline;
+}
+
+button,
+input,
+textarea,
+select {
+  box-shadow: none !important;
+}
+
+pre {
+  @apply overflow-x-auto rounded-sm border border-border bg-background p-3 font-mono text-xs text-muted-foreground;
+}

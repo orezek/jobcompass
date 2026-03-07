@@ -1,0 +1,59 @@
+{
+  "name": "control-center-v2",
+  "version": "1.0.0",
+  "description": "Mobile-first Next.js operator UI for control-service-v2.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.13.1",
+  "scripts": {
+    "build:workspace-contracts": "NODE_OPTIONS=--no-deprecation pnpm --dir ../.. --filter @repo/env-config --filter @repo/control-plane-contracts build",
+    "prebuild": "pnpm run build:workspace-contracts",
+    "build": "next build",
+    "prestart": "pnpm run build:workspace-contracts",
+    "start": "next start",
+    "predev": "pnpm run build:workspace-contracts",
+    "dev": "next dev",
+    "lint": "eslint . --max-warnings 0",
+    "precheck-types": "pnpm run build:workspace-contracts",
+    "check-types": "tsc --noEmit",
+    "pretest": "pnpm run build:workspace-contracts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "catalog:",
+    "@radix-ui/react-accordion": "catalog:",
+    "@radix-ui/react-alert-dialog": "catalog:",
+    "@radix-ui/react-dialog": "catalog:",
+    "@radix-ui/react-slot": "catalog:",
+    "@repo/control-plane-contracts": "workspace:*",
+    "@repo/env-config": "workspace:*",
+    "class-variance-authority": "catalog:",
+    "clsx": "catalog:",
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-hook-form": "catalog:",
+    "tailwind-merge": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@testing-library/jest-dom": "catalog:",
+    "@testing-library/react": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "autoprefixer": "catalog:",
+    "eslint": "catalog:",
+    "jsdom": "catalog:",
+    "postcss": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,0 +1,1 @@
+{"version":3,"sources":["../../../../../../apps/control-center-v2/src/app/page.tsx"],"sourcesContent":["import { redirect } from 'next/navigation';\n\nexport default function HomePage() {\n  redirect('/pipelines');\n}\n"],"names":[],"mappings":"kUAAA,EAAA,CAAA,CAAA,OAAA,IAAA,EAAA,EAAA,CAAA,CAAA,OAEe,SAAS,IACtB,CAAA,EAAA,EAAA,QAAA,AAAQ,EAAC,aACX"}

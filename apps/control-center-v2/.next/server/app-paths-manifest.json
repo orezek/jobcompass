@@ -1,0 +1,15 @@
+{
+  "/_global-error/page": "app/_global-error/page.js",
+  "/_not-found/page": "app/_not-found/page.js",
+  "/api/pipelines/[pipelineId]/route": "app/api/pipelines/[pipelineId]/route.js",
+  "/api/pipelines/[pipelineId]/runs/route": "app/api/pipelines/[pipelineId]/runs/route.js",
+  "/api/pipelines/route": "app/api/pipelines/route.js",
+  "/api/runs/[runId]/cancel/route": "app/api/runs/[runId]/cancel/route.js",
+  "/api/stream/route": "app/api/stream/route.js",
+  "/page": "app/page.js",
+  "/pipelines/[pipelineId]/page": "app/pipelines/[pipelineId]/page.js",
+  "/pipelines/new/page": "app/pipelines/new/page.js",
+  "/pipelines/page": "app/pipelines/page.js",
+  "/runs/[runId]/page": "app/runs/[runId]/page.js",
+  "/runs/page": "app/runs/page.js"
+}
