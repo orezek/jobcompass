@@ -596,13 +596,26 @@ export class IngestionWorkerRuntime {
 
       let downloadableJsonPath: string | undefined;
       if (downloadableJsonEnabled) {
-        const downloadablePath = this.buildDownloadablePath(run, item);
-        await this.deps.outputsBucket
-          .file(downloadablePath)
-          .save(`${JSON.stringify(normalizedDoc, null, 2)}\n`, {
-            contentType: 'application/json',
-          });
-        downloadableJsonPath = `gs://${this.deps.env.OUTPUTS_BUCKET}/${downloadablePath}`;
+        try {
+          const downloadablePath = this.buildDownloadablePath(run, item);
+          await this.deps.outputsBucket
+            .file(downloadablePath)
+            .save(`${JSON.stringify(normalizedDoc, null, 2)}\n`, {
+              contentType: 'application/json',
+            });
+          downloadableJsonPath = `gs://${this.deps.env.OUTPUTS_BUCKET}/${downloadablePath}`;
+        } catch (downloadError) {
+          this.deps.logger.error(
+            {
+              err: downloadError,
+              runId: run.runId,
+              sourceId: item.sourceId,
+              dedupeKey: item.dedupeKey,
+              bucket: this.deps.env.OUTPUTS_BUCKET,
+            },
+            'Downloadable JSON upload failed. Continuing after successful Mongo persistence.',
+          );
+        }
       }
 
       this.recordRunMetrics(run, normalizedDoc);

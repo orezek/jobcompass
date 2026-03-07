@@ -11,9 +11,15 @@ export class FakeBucketFile {
   public constructor(
     private readonly objects: Map<string, StoredObject>,
     private readonly objectPath: string,
+    private readonly resolveSaveError: () => Error | null,
   ) {}
 
   public async save(payload: string | Buffer, options?: SaveOptions): Promise<void> {
+    const saveError = this.resolveSaveError();
+    if (saveError) {
+      throw saveError;
+    }
+
     this.objects.set(this.objectPath, {
       payload: typeof payload === 'string' ? payload : payload.toString('utf8'),
       contentType: options?.contentType,
@@ -32,9 +38,14 @@ export class FakeBucketFile {
 
 export class FakeBucket {
   private readonly objects = new Map<string, StoredObject>();
+  private saveError: Error | null = null;
 
   public file(objectPath: string): FakeBucketFile {
-    return new FakeBucketFile(this.objects, objectPath);
+    return new FakeBucketFile(this.objects, objectPath, () => this.saveError);
+  }
+
+  public setSaveError(error: Error | null): void {
+    this.saveError = error;
   }
 
   public seed(objectPath: string, payload: string, contentType?: string): void {

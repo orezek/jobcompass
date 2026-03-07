@@ -700,6 +700,92 @@ test(
 );
 
 test(
+  'keeps item succeeded when downloadable json upload fails after Mongo persistence',
+  maybeSkip,
+  async () => {
+    const runId = buildRunId('e2e-downloadable-json-failure');
+    await cleanupRunDocuments(runId);
+
+    try {
+      const { runtime, outputBucket, topic, logger } = await createRuntimeFixture();
+      outputBucket.setSaveError(new Error('simulated downloadable_json upload failure'));
+      const payload = buildStartRunPayload(runId);
+
+      await runtime.startRun(payload);
+
+      const fixtureCase = goldenParityCases.find(
+        (candidate) => candidate.sourceId === '2001090812',
+      )!;
+      const detailEvent = buildCrawlerDetailCapturedFixtureEvent({
+        runId,
+        crawlRunId: runId,
+        fixtureCase,
+      });
+      await runtime.handlePubSubMessage(JSON.stringify(detailEvent));
+
+      const finishedEvent = buildCrawlerRunFinishedEventV2({
+        runId,
+        crawlRunId: runId,
+        source: 'jobs.cz',
+        searchSpaceId: 'search-space-e2e',
+        status: 'succeeded',
+        stopReason: 'completed',
+      });
+      await runtime.handlePubSubMessage(JSON.stringify(finishedEvent));
+
+      const run = await waitForRunStatus(runtime, runId, 'succeeded');
+      assert.equal(run.counters.received, 1);
+      assert.equal(run.counters.processed, 1);
+      assert.equal(run.counters.failed, 0);
+      assert.equal(run.outputsCount, 1);
+      assert.equal(outputBucket.listObjectPaths().length, 0);
+
+      const db = getMongoClient().db(sharedDbName);
+      const summary = await waitForDocument({
+        read: async () => db.collection(collections.ingestionRunSummaries).findOne({ runId }),
+      });
+      assert.equal(summary.status, 'succeeded');
+      assert.equal(summary.jobsProcessed, 1);
+      assert.equal(summary.jobsFailed, 0);
+      assert.deepEqual(summary.processedJobIds, ['jobs.cz:2001090812']);
+      assert.deepEqual(summary.failedJobIds, []);
+      assert.deepEqual(summary.nonSuccessJobIds, []);
+
+      const persistedDoc = await waitForDocument({
+        read: async () =>
+          db
+            .collection(collections.normalizedJobAds)
+            .findOne({ id: 'jobs.cz:2001090812', 'ingestion.runId': runId }),
+      });
+      assert.ok(persistedDoc);
+
+      const publishedEventTypes = topic.published.map((entry) => {
+        const parsed = JSON.parse(entry.payload) as { eventType: string };
+        return parsed.eventType;
+      });
+      assert.ok(publishedEventTypes.includes('ingestion.item.succeeded'));
+      assert.equal(publishedEventTypes.includes('ingestion.item.failed'), false);
+
+      const downloadErrors = logger.entries.filter(
+        (entry) =>
+          entry.level === 'error' &&
+          entry.args.some(
+            (arg) =>
+              typeof arg === 'string' &&
+              arg.includes(
+                'Downloadable JSON upload failed. Continuing after successful Mongo persistence.',
+              ),
+          ),
+      );
+      assert.ok(downloadErrors.length > 0);
+      logKeptRunDocuments(runId);
+    } finally {
+      await cleanupRunDocuments(runId);
+    }
+  },
+);
+
+test(
   'captures failures in observability collections when item ingestion fails',
   maybeSkip,
   async () => {
