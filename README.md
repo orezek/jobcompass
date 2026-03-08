@@ -1,6 +1,6 @@
 # OmniCrawl
 
-OmniCrawl is a robust, modular, and extensible crawling and ingestion pipeline system. Originally designed as a "walking skeleton" for job scraping (formerly JobCompass), the system has evolved into a generalized data harvesting engine. 
+OmniCrawl is a robust, modular, and extensible crawling and ingestion pipeline system. Originally designed as a "walking skeleton" for job scraping (formerly JobCompass), the system has evolved into a generalized data harvesting engine.
 
 OmniCrawl leverages modern web crawling capabilities paired with LLM-powered extraction (using LangSmith and Gemini) to seamlessly parse, clean, and structure data from diverse, unstructured sources (e.g., jobs.cz, startupjobs.cz, bazos.cz, and more).
 
@@ -17,11 +17,11 @@ The system currently runs on the **V2 Architecture**, which separates the contro
 - **`crawler-worker-v2`**: A dedicated Actor/Worker that executes specific crawler manifests (using Crawlee/Playwright) to extract raw data and HTML from targeted sites.
 - **`ingestion-worker-v2`**: A dedicated data-processing worker that takes raw scraped data, runs it through an LLM pipeline (for cleaning and structured entity extraction), and produces finalized, standardized JSON artifacts.
 
-*(Note: Legacy V1 applications such as `jobs-crawler-actor`, `jobs-ingestion-service`, `omni-crawl-chat`, and `ops-control-plane` are deprecated and have been intentionally excluded from active workflows in favor of the V2 suite).*
+_(Note: Legacy V1 applications such as `jobs-crawler-actor`, `jobs-ingestion-service`, `omni-crawl-chat`, and `ops-control-plane` are deprecated and have been intentionally excluded from active workflows in favor of the V2 suite)._
 
 ## 📚 Documentation & Specs
 
-OmniCrawl places a heavy emphasis on spec-driven development. Comprehensive design and architecture documentation can be found in the [`docs/specs`](./docs/specs) directory. 
+OmniCrawl places a heavy emphasis on spec-driven development. Comprehensive design and architecture documentation can be found in the [`docs/specs`](./docs/specs) directory.
 
 For a complete history of changes, see the [`CHANGELOG.md`](./CHANGELOG.md).
 
@@ -41,10 +41,13 @@ While V2 solidifies the distributed worker architecture, the following capabilit
 ### Prerequisites
 
 1. **Node.js**: Install [fnm](https://github.com/Schniz/fnm) (Fast Node Manager).
+
 ```bash
 fnm use
 ```
+
 2. **pnpm**:
+
 ```bash
 corepack enable
 pnpm install
