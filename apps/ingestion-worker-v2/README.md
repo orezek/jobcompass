@@ -117,6 +117,10 @@ The worker supports one execution mode only:
 - The worker waits for `crawler.detail.captured` events to enqueue items.
 - The run finalizes only after `crawler.run.finished` is received and queue/active items are
   drained.
+- Pub/Sub ACK/NACK is outcome-driven:
+  - ACK after successful processing and Mongo persistence.
+  - NACK for transient processing failures to request redelivery.
+  - ACK for permanent failures after recording failure state.
 - If no detail events are received within the idle timeout window (default 60s), the run
   auto-expires as `stopped`.
 - If `crawler.run.finished` is never received, the run stays `running`.

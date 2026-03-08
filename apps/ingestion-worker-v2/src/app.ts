@@ -93,8 +93,12 @@ async function main(): Promise<void> {
 
     const messageHandler = async (message: Message): Promise<void> => {
       try {
-        await runtime.handlePubSubMessage(message.data.toString('utf8'));
-        message.ack();
+        const result = await runtime.handlePubSubMessage(message.data.toString('utf8'));
+        if (result.disposition === 'ack') {
+          message.ack();
+          return;
+        }
+        message.nack();
       } catch (error) {
         app.log.error({ err: error }, 'Failed to process Pub/Sub message.');
         message.nack();

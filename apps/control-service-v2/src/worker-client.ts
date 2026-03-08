@@ -9,6 +9,8 @@ import type { EnvSchema } from './env.js';
 import { buildAuthHeaders } from './auth.js';
 
 const WORKER_HTTP_TIMEOUT_MS = 10_000;
+const WORKER_START_RUN_ATTEMPTS = 3;
+const WORKER_START_RUN_BACKOFF_MS = 500;
 const WORKER_READY_TIMEOUT_MS = 2_000;
 const WORKER_READY_ATTEMPTS = 3;
 const WORKER_READY_BACKOFF_MS = 500;
@@ -19,9 +21,21 @@ const workerReadyzResponseSchema = z
   .passthrough();
 
 export class WorkerClientError extends Error {
-  public constructor(message: string) {
-    super(message);
+  public readonly retryable: boolean;
+  public readonly statusCode?: number;
+
+  public constructor(
+    message: string,
+    options?: {
+      retryable?: boolean;
+      statusCode?: number;
+      cause?: unknown;
+    },
+  ) {
+    super(message, { cause: options?.cause });
     this.name = 'WorkerClientError';
+    this.retryable = options?.retryable ?? false;
+    this.statusCode = options?.statusCode;
   }
 }
 
@@ -38,12 +52,16 @@ export class WorkerClient {
 
   public async startCrawlerRun(payload: unknown) {
     const parsedPayload = crawlerStartRunRequestV2Schema.parse(payload);
-    return this.postStartRun(this.env.CRAWLER_WORKER_BASE_URL, parsedPayload);
+    return this.postStartRunWithRetry(this.env.CRAWLER_WORKER_BASE_URL, parsedPayload, 'crawler');
   }
 
   public async startIngestionRun(payload: unknown) {
     const parsedPayload = ingestionStartRunRequestV2Schema.parse(payload);
-    return this.postStartRun(this.env.INGESTION_WORKER_BASE_URL, parsedPayload);
+    return this.postStartRunWithRetry(
+      this.env.INGESTION_WORKER_BASE_URL,
+      parsedPayload,
+      'ingestion',
+    );
   }
 
   public async cancelCrawlerRun(runId: string): Promise<'accepted' | 'not_found'> {
@@ -107,18 +125,43 @@ export class WorkerClient {
   }
 
   private async postStartRun(baseUrl: string, payload: unknown) {
-    const response = await fetch(new URL('/v1/runs', baseUrl), {
-      method: 'POST',
-      headers: buildAuthHeaders(this.env.CONTROL_SHARED_TOKEN),
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(WORKER_HTTP_TIMEOUT_MS),
-    });
+    let response: Response;
+    try {
+      response = await fetch(new URL('/v1/runs', baseUrl), {
+        method: 'POST',
+        headers: buildAuthHeaders(this.env.CONTROL_SHARED_TOKEN),
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(WORKER_HTTP_TIMEOUT_MS),
+      });
+    } catch (error) {
+      throw new WorkerClientError('Worker StartRun request failed before response.', {
+        retryable: true,
+        cause: error,
+      });
+    }
 
-    const body = await this.parseJsonBody(response);
+    let body: unknown;
+    try {
+      body = await this.parseJsonBody(response);
+    } catch (error) {
+      throw new WorkerClientError(
+        `Worker returned invalid StartRun response (${response.status}).`,
+        {
+          statusCode: response.status,
+          retryable: this.isRetryableStatus(response.status),
+          cause: error,
+        },
+      );
+    }
+
     const parsed = startRunResponseV2Schema.safeParse(body);
     if (!parsed.success) {
       throw new WorkerClientError(
         `Worker returned invalid StartRun response (${response.status}).`,
+        {
+          statusCode: response.status,
+          retryable: this.isRetryableStatus(response.status),
+        },
       );
     }
 
@@ -126,10 +169,40 @@ export class WorkerClient {
       const message = parsed.data.ok
         ? 'Worker rejected StartRun request.'
         : parsed.data.error.message;
-      throw new WorkerClientError(message);
+      throw new WorkerClientError(message, {
+        statusCode: response.status,
+        retryable: this.isRetryableStatus(response.status),
+      });
     }
 
     return parsed.data;
+  }
+
+  private async postStartRunWithRetry(
+    baseUrl: string,
+    payload: unknown,
+    workerLabel: 'crawler' | 'ingestion',
+  ) {
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= WORKER_START_RUN_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.postStartRun(baseUrl, payload);
+      } catch (error) {
+        lastError = error;
+        if (!this.isRetryableStartRunError(error) || attempt >= WORKER_START_RUN_ATTEMPTS) {
+          throw error;
+        }
+
+        await this.sleep(WORKER_START_RUN_BACKOFF_MS);
+      }
+    }
+
+    if (lastError instanceof WorkerClientError) {
+      throw lastError;
+    }
+
+    throw new WorkerClientError(`${workerLabel} worker StartRun request failed.`);
   }
 
   private async postCancelRun(
@@ -164,6 +237,18 @@ export class WorkerClient {
     } catch {
       throw new WorkerClientError(`Worker returned non-JSON response (${response.status}): ${raw}`);
     }
+  }
+
+  private isRetryableStartRunError(error: unknown): boolean {
+    if (error instanceof WorkerClientError) {
+      return error.retryable;
+    }
+
+    return false;
+  }
+
+  private isRetryableStatus(statusCode: number): boolean {
+    return statusCode === 408 || statusCode === 429 || statusCode >= 500;
   }
 
   private sleep(delayMs: number): Promise<void> {

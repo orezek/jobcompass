@@ -62,7 +62,7 @@ test('dispatch failure keeps overall run failed even after later worker stop eve
       source: controlPlanePipelineV2Fixture.source,
       searchSpaceId: controlPlanePipelineV2Fixture.searchSpace.id,
       status: 'stopped',
-      stopReason: 'cancel_requested',
+      stopReason: 'cancelled_by_operator',
     },
   });
   const ingestionStoppedEvent = runtimeBrokerEventV2Schema.parse({

@@ -343,12 +343,12 @@ export class CrawlerWorkerRuntime {
 
     if (run.status === 'queued') {
       run.cancelRequested = true;
-      run.cancelReason = 'cancel_requested';
+      run.cancelReason = 'cancelled_by_operator';
       this.removeQueuedRun(run.runId);
       await this.ensureCollections(run.request.persistenceTargets.dbName);
       await this.finalizeRun(run, {
         status: 'stopped',
-        stopReason: 'cancel_requested',
+        stopReason: 'cancelled_by_operator',
         source: run.request.inputRef.source,
         datasetRecords: [],
       });
@@ -361,7 +361,7 @@ export class CrawlerWorkerRuntime {
     }
 
     run.cancelRequested = true;
-    run.cancelReason = 'cancel_requested';
+    run.cancelReason = 'cancelled_by_operator';
     if (run.currentCrawler) {
       await run.currentCrawler.stop();
     }
@@ -493,7 +493,7 @@ export class CrawlerWorkerRuntime {
 
       if (run.cancelRequested) {
         finalStatus = 'stopped';
-        stopReason = run.cancelReason ?? 'cancel_requested';
+        stopReason = run.cancelReason ?? 'cancelled_by_operator';
       } else if (run.failedRequests > 0) {
         finalStatus = 'completed_with_errors';
         stopReason =
@@ -505,7 +505,7 @@ export class CrawlerWorkerRuntime {
     } catch (error) {
       if (run.cancelRequested) {
         finalStatus = 'stopped';
-        stopReason = run.cancelReason ?? 'cancel_requested';
+        stopReason = run.cancelReason ?? 'cancelled_by_operator';
       } else {
         finalStatus = 'failed';
         stopReason = 'crawler_error';
@@ -776,7 +776,7 @@ export class CrawlerWorkerRuntime {
     const listPhaseTrustworthy =
       !run.cancelRequested && run.failedListRequests === 0 && !run.listPhaseTruncated;
     const listPhaseSkipReason = run.cancelRequested
-      ? 'cancel_requested'
+      ? (run.cancelReason ?? 'cancelled_by_operator')
       : run.failedListRequests > 0
         ? 'failed_list_requests'
         : run.listPhaseTruncated

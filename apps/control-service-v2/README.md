@@ -77,6 +77,8 @@ Run dispatch policy:
 - `crawl_only`: crawler readiness required
 - `crawl_and_ingest`: crawler and ingestion readiness required
 - for `crawl_and_ingest`, ingestion `StartRun` is dispatched first, crawler second
+- worker `StartRun` dispatch retries transient failures (HTTP `408`, `429`, `5xx`) with fixed
+  backoff
 - if crawler dispatch fails after ingestion accepted, control-service sends ingestion cancel with
   `reason: "startup_rollback"`
 

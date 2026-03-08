@@ -97,7 +97,10 @@ type RunState = {
   failedJobIds: string[];
   skippedIncompleteJobIds: string[];
   nonSuccessJobIds: string[];
+  receivedDedupeKeys: Set<string>;
   seenDedupeKeys: Set<string>;
+  inFlightDedupeKeys: Set<string>;
+  pendingRetryDedupeKeys: Set<string>;
   lastHeartbeatAt: string;
   noDetailTimeoutHandle: ReturnType<typeof setTimeout> | null;
 };
@@ -105,6 +108,31 @@ type RunState = {
 type QueueItem = {
   runId: string;
   item: ItemInput;
+  resolve: (result: QueueProcessingResult) => void;
+};
+
+type QueueProcessingResult = {
+  disposition: 'ack' | 'nack';
+  reason:
+    | 'processed_successfully'
+    | 'duplicate_dedupe_key'
+    | 'duplicate_inflight_dedupe_key'
+    | 'no_matching_run'
+    | 'cancelled_startup_rollback'
+    | 'incomplete_detail_page'
+    | 'permanent_processing_error'
+    | 'transient_processing_error';
+};
+
+type PubSubMessageHandlingResult = {
+  disposition: 'ack' | 'nack';
+  reason:
+    | QueueProcessingResult['reason']
+    | 'invalid_json'
+    | 'invalid_detail_event'
+    | 'invalid_run_finished_event'
+    | 'ignored_event_type'
+    | 'no_matching_run';
 };
 
 type RuntimeDeps = {
@@ -186,6 +214,48 @@ function pushUnique(values: string[], value: string): void {
   if (!values.includes(value)) {
     values.push(value);
   }
+}
+
+function isTransientProcessingError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const name = error.name.toLowerCase();
+  const message = error.message.toLowerCase();
+
+  const transientNameMatch =
+    name.includes('timeout') ||
+    name.includes('network') ||
+    name.includes('unavailable') ||
+    name.includes('abort') ||
+    name.includes('ratelimit') ||
+    name.includes('rate_limit');
+
+  if (transientNameMatch) {
+    return true;
+  }
+
+  const transientMessagePatterns = [
+    'deadline exceeded',
+    'timed out',
+    'timeout',
+    'temporarily unavailable',
+    'temporary failure',
+    'connection reset',
+    'connection refused',
+    'econnreset',
+    'econnrefused',
+    'etimedout',
+    'network',
+    'rate limit',
+    'resource exhausted',
+    'service unavailable',
+    'server selection timed out',
+    'connection closed',
+  ];
+
+  return transientMessagePatterns.some((pattern) => message.includes(pattern));
 }
 
 export class IngestionWorkerRuntime {
@@ -300,7 +370,10 @@ export class IngestionWorkerRuntime {
       failedJobIds: [],
       skippedIncompleteJobIds: [],
       nonSuccessJobIds: [],
+      receivedDedupeKeys: new Set<string>(),
       seenDedupeKeys: new Set<string>(),
+      inFlightDedupeKeys: new Set<string>(),
+      pendingRetryDedupeKeys: new Set<string>(),
       lastHeartbeatAt: startedAt,
       noDetailTimeoutHandle: setTimeout(() => {
         void this.expireRunWithoutDetailItems(parsedRequest.runId);
@@ -384,8 +457,18 @@ export class IngestionWorkerRuntime {
     };
   }
 
-  public async handlePubSubMessage(rawMessage: string): Promise<void> {
-    const parsedJson: unknown = JSON.parse(rawMessage);
+  public async handlePubSubMessage(rawMessage: string): Promise<PubSubMessageHandlingResult> {
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(rawMessage);
+    } catch {
+      this.deps.logger.warn('Skipping invalid Pub/Sub message JSON payload.');
+      return {
+        disposition: 'ack',
+        reason: 'invalid_json',
+      };
+    }
+
     const eventType =
       typeof parsedJson === 'object' &&
       parsedJson !== null &&
@@ -397,8 +480,7 @@ export class IngestionWorkerRuntime {
     if (eventType === 'crawler.detail.captured') {
       const parsedEventV2 = crawlerDetailCapturedEventV2Schema.safeParse(parsedJson);
       if (parsedEventV2.success) {
-        await this.handleCrawlerDetailCapturedEvent(parsedEventV2.data);
-        return;
+        return this.handleCrawlerDetailCapturedEvent(parsedEventV2.data);
       }
 
       const parsedEventV1 = legacyCrawlerDetailCapturedEventSchema.safeParse(parsedJson);
@@ -410,24 +492,24 @@ export class IngestionWorkerRuntime {
           },
           'Skipping malformed crawler.detail.captured event.',
         );
-        return;
+        return {
+          disposition: 'ack',
+          reason: 'invalid_detail_event',
+        };
       }
 
-      await this.handleCrawlerDetailCapturedEvent(parsedEventV1.data);
-      return;
+      return this.handleCrawlerDetailCapturedEvent(parsedEventV1.data);
     }
 
     if (eventType === 'crawler.run.finished') {
       const parsedEventV2 = crawlerRunFinishedEventV2Schema.safeParse(parsedJson);
       if (parsedEventV2.success) {
-        await this.handleCrawlerRunFinishedEvent(parsedEventV2.data);
-        return;
+        return this.handleCrawlerRunFinishedEvent(parsedEventV2.data);
       }
 
       const parsedEventV1 = legacyCrawlerRunFinishedEventSchema.safeParse(parsedJson);
       if (parsedEventV1.success) {
-        await this.handleCrawlerRunFinishedEvent(parsedEventV1.data);
-        return;
+        return this.handleCrawlerRunFinishedEvent(parsedEventV1.data);
       }
 
       this.deps.logger.warn(
@@ -437,13 +519,21 @@ export class IngestionWorkerRuntime {
         },
         'Skipping malformed crawler.run.finished event.',
       );
-      return;
+      return {
+        disposition: 'ack',
+        reason: 'invalid_run_finished_event',
+      };
     }
+
+    return {
+      disposition: 'ack',
+      reason: 'ignored_event_type',
+    };
   }
 
   private async handleCrawlerDetailCapturedEvent(
     event: LegacyCrawlerDetailCapturedEvent | CrawlerDetailCapturedEventV2,
-  ): Promise<void> {
+  ): Promise<PubSubMessageHandlingResult> {
     const run = this.resolveRunForCrawlerEvent(event.runId, event.payload.crawlRunId);
     if (!run) {
       this.deps.logger.warn(
@@ -455,7 +545,10 @@ export class IngestionWorkerRuntime {
         },
         'Skipping crawler.detail.captured event because no active ingestion run matched.',
       );
-      return;
+      return {
+        disposition: 'ack',
+        reason: 'no_matching_run',
+      };
     }
 
     const item: ItemInput = {
@@ -468,12 +561,12 @@ export class IngestionWorkerRuntime {
       listingRecord: event.payload.listingRecord,
     };
 
-    await this.queueItem(run, item);
+    return this.queueItem(run, item);
   }
 
   private async handleCrawlerRunFinishedEvent(
     event: LegacyCrawlerRunFinishedEvent | CrawlerRunFinishedEventV2,
-  ): Promise<void> {
+  ): Promise<PubSubMessageHandlingResult> {
     const run = this.resolveRunForCrawlerEvent(
       event.runId,
       'crawlRunId' in event.payload ? event.payload.crawlRunId : undefined,
@@ -486,7 +579,10 @@ export class IngestionWorkerRuntime {
         },
         'Skipping crawler.run.finished event because no active ingestion run matched.',
       );
-      return;
+      return {
+        disposition: 'ack',
+        reason: 'no_matching_run',
+      };
     }
 
     this.deps.logger.info(
@@ -503,6 +599,10 @@ export class IngestionWorkerRuntime {
     run.crawlerFinished = true;
     run.lastHeartbeatAt = nowIso();
     await this.tryFinalizeRun(run);
+    return {
+      disposition: 'ack',
+      reason: 'processed_successfully',
+    };
   }
 
   private resolveRunForCrawlerEvent(eventRunId: string, crawlRunId?: string): RunState | undefined {
@@ -539,21 +639,37 @@ export class IngestionWorkerRuntime {
     return undefined;
   }
 
-  private async queueItem(run: RunState, item: ItemInput): Promise<void> {
+  private async queueItem(run: RunState, item: ItemInput): Promise<QueueProcessingResult> {
     if (run.seenDedupeKeys.has(item.dedupeKey)) {
-      return;
+      return {
+        disposition: 'ack',
+        reason: 'duplicate_dedupe_key',
+      };
     }
 
-    run.seenDedupeKeys.add(item.dedupeKey);
+    if (run.inFlightDedupeKeys.has(item.dedupeKey)) {
+      return {
+        disposition: 'ack',
+        reason: 'duplicate_inflight_dedupe_key',
+      };
+    }
+
+    run.pendingRetryDedupeKeys.delete(item.dedupeKey);
+    run.inFlightDedupeKeys.add(item.dedupeKey);
+    if (!run.receivedDedupeKeys.has(item.dedupeKey)) {
+      run.receivedDedupeKeys.add(item.dedupeKey);
+      run.counters.received += 1;
+    }
     if (run.noDetailTimeoutHandle) {
       clearTimeout(run.noDetailTimeoutHandle);
       run.noDetailTimeoutHandle = null;
     }
-    run.counters.received += 1;
     run.lastHeartbeatAt = nowIso();
     run.queueDepth += 1;
-    this.itemQueue.push({ runId: run.runId, item });
-    this.drainQueue();
+    return new Promise((resolve) => {
+      this.itemQueue.push({ runId: run.runId, item, resolve });
+      this.drainQueue();
+    });
   }
 
   private drainQueue(): void {
@@ -565,6 +681,10 @@ export class IngestionWorkerRuntime {
 
       const run = this.runs.get(workItem.runId);
       if (!run || run.status !== 'running') {
+        workItem.resolve({
+          disposition: 'ack',
+          reason: 'no_matching_run',
+        });
         continue;
       }
 
@@ -573,8 +693,17 @@ export class IngestionWorkerRuntime {
       this.activeWorkers += 1;
 
       void this.processQueueItem(run, workItem.item)
+        .then((result) => {
+          workItem.resolve(result);
+        })
         .catch((error: unknown) => {
           this.deps.logger.error({ err: error, runId: run.runId }, 'Queue item processing failed.');
+          run.inFlightDedupeKeys.delete(workItem.item.dedupeKey);
+          run.pendingRetryDedupeKeys.add(workItem.item.dedupeKey);
+          workItem.resolve({
+            disposition: 'nack',
+            reason: 'transient_processing_error',
+          });
         })
         .finally(async () => {
           this.activeWorkers = Math.max(0, this.activeWorkers - 1);
@@ -586,7 +715,7 @@ export class IngestionWorkerRuntime {
     }
   }
 
-  private async processQueueItem(run: RunState, item: ItemInput): Promise<void> {
+  private async processQueueItem(run: RunState, item: ItemInput): Promise<QueueProcessingResult> {
     const jobId = buildJobId(item);
     if (run.cancelRequested && run.cancelReason === 'startup_rollback') {
       run.counters.rejected += 1;
@@ -594,12 +723,18 @@ export class IngestionWorkerRuntime {
       await this.publishIngestionItemEvent('ingestion.item.rejected', run, item, {
         reason: 'startup_rollback',
       });
-      return;
+      run.inFlightDedupeKeys.delete(item.dedupeKey);
+      run.pendingRetryDedupeKeys.delete(item.dedupeKey);
+      run.seenDedupeKeys.add(item.dedupeKey);
+      return {
+        disposition: 'ack',
+        reason: 'cancelled_startup_rollback',
+      };
     }
 
-    await this.publishIngestionItemEvent('ingestion.item.started', run, item);
-
     try {
+      await this.publishIngestionItemEvent('ingestion.item.started', run, item);
+
       const downloadableJsonSink = run.request.outputSinks.find(
         (sink) => sink.type === 'downloadable_json',
       );
@@ -656,6 +791,13 @@ export class IngestionWorkerRuntime {
       await this.publishIngestionItemEvent('ingestion.item.succeeded', run, item, {
         documentId: normalizedDoc.id,
       });
+      run.inFlightDedupeKeys.delete(item.dedupeKey);
+      run.pendingRetryDedupeKeys.delete(item.dedupeKey);
+      run.seenDedupeKeys.add(item.dedupeKey);
+      return {
+        disposition: 'ack',
+        reason: 'processed_successfully',
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof IncompleteDetailPageError) {
@@ -665,17 +807,49 @@ export class IngestionWorkerRuntime {
         await this.publishIngestionItemEvent('ingestion.item.rejected', run, item, {
           reason: 'incomplete_detail_page',
         });
-      } else {
-        run.counters.failed += 1;
-        pushUnique(run.failedJobIds, jobId);
-        pushUnique(run.nonSuccessJobIds, jobId);
-        await this.publishIngestionItemEvent('ingestion.item.failed', run, item, {
-          error: {
-            name: error instanceof Error ? error.name : 'IngestionItemError',
-            message,
-          },
-        });
+        run.inFlightDedupeKeys.delete(item.dedupeKey);
+        run.pendingRetryDedupeKeys.delete(item.dedupeKey);
+        run.seenDedupeKeys.add(item.dedupeKey);
+        return {
+          disposition: 'ack',
+          reason: 'incomplete_detail_page',
+        };
       }
+
+      if (isTransientProcessingError(error)) {
+        run.inFlightDedupeKeys.delete(item.dedupeKey);
+        run.pendingRetryDedupeKeys.add(item.dedupeKey);
+        this.deps.logger.warn(
+          {
+            err: error,
+            runId: run.runId,
+            sourceId: item.sourceId,
+            dedupeKey: item.dedupeKey,
+          },
+          'Transient ingestion item failure detected. Requesting Pub/Sub redelivery.',
+        );
+        return {
+          disposition: 'nack',
+          reason: 'transient_processing_error',
+        };
+      }
+
+      run.counters.failed += 1;
+      pushUnique(run.failedJobIds, jobId);
+      pushUnique(run.nonSuccessJobIds, jobId);
+      await this.publishIngestionItemEvent('ingestion.item.failed', run, item, {
+        error: {
+          name: error instanceof Error ? error.name : 'IngestionItemError',
+          message,
+        },
+      });
+      run.inFlightDedupeKeys.delete(item.dedupeKey);
+      run.pendingRetryDedupeKeys.delete(item.dedupeKey);
+      run.seenDedupeKeys.add(item.dedupeKey);
+      return {
+        disposition: 'ack',
+        reason: 'permanent_processing_error',
+      };
     }
   }
 
@@ -766,6 +940,9 @@ export class IngestionWorkerRuntime {
       return;
     }
 
+    const noPendingRetries = run.pendingRetryDedupeKeys.size === 0;
+    const noInFlightItems = run.inFlightDedupeKeys.size === 0;
+
     if (run.cancelRequested) {
       if (run.cancelReason === 'startup_rollback') {
         if (run.queueDepth === 0 && run.activeItems === 0) {
@@ -776,7 +953,11 @@ export class IngestionWorkerRuntime {
 
       if (run.cancelReason === 'operator_request') {
         const canFinalizeCancelled =
-          run.crawlerFinished && run.queueDepth === 0 && run.activeItems === 0;
+          run.crawlerFinished &&
+          run.queueDepth === 0 &&
+          run.activeItems === 0 &&
+          noPendingRetries &&
+          noInFlightItems;
         if (canFinalizeCancelled) {
           await this.finalizeRun(run, 'stopped', stopReason ?? 'cancelled_by_operator');
         }
@@ -784,7 +965,8 @@ export class IngestionWorkerRuntime {
       }
     }
 
-    const canFinalize = run.crawlerFinished && run.queueDepth === 0;
+    const canFinalize =
+      run.crawlerFinished && run.queueDepth === 0 && noPendingRetries && noInFlightItems;
     if (!canFinalize || run.activeItems > 0) {
       return;
     }
