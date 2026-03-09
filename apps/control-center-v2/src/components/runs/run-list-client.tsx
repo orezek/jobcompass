@@ -84,7 +84,6 @@ export function RunListClient({
           <p className="font-mono text-xs uppercase tracking-[0.16em] text-muted-foreground">
             Run Observatory
           </p>
-          <h2 className="text-xl font-semibold tracking-tightest">Cross-pipeline execution feed</h2>
         </div>
         <LiveIndicator state={connectionState} />
       </div>

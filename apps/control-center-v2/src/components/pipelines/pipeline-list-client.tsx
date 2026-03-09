@@ -73,7 +73,6 @@ export function PipelineListClient({ pipelines }: { pipelines: ControlPlanePipel
           <p className="font-mono text-xs uppercase tracking-[0.16em] text-muted-foreground">
             Pipeline Registry
           </p>
-          <h2 className="text-xl font-semibold tracking-tightest">Frozen execution definitions</h2>
         </div>
         <div className="flex items-center gap-3">
           <LiveIndicator state={connectionState} />

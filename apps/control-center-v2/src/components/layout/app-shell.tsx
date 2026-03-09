@@ -63,7 +63,7 @@ function NavContent({ pathname, compact = false }: { pathname: string; compact?:
   return (
     <div className="flex h-full flex-col gap-4">
       <div className="border-b border-[var(--theme-structure)] p-4">
-        <div className="text-base font-semibold text-foreground">Control Center v2</div>
+        <div className="text-base font-semibold text-foreground">Control Center</div>
       </div>
       <nav className="grid gap-2">
         {navItems.map((item) => {
