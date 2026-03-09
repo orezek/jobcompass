@@ -2,32 +2,30 @@ import { describe, expect, it } from 'vitest';
 import {
   PIPELINE_NAME_MAX_LENGTH,
   buildCreatePipelinePayload,
-  buildRenamePipelinePayload,
+  buildUpdatePipelinePayload,
   pipelineCreateFormSchema,
-  pipelineRenameFormSchema,
+  pipelineUpdateFormSchema,
 } from '@/lib/forms';
 
 describe('forms', () => {
-  it('builds a crawl-and-ingest payload from the form snapshot', () => {
+  it('builds a v2.2 create payload without operator-provided IDs', () => {
     const values = pipelineCreateFormSchema.parse({
       name: ' Prague Tech ',
       source: 'jobs.cz',
       mode: 'crawl_and_ingest',
-      searchSpaceId: 'prague-tech',
       searchSpaceName: 'Prague Tech',
       searchSpaceDescription: '  curated roles  ',
       startUrlsText: ' https://example.com/one \n\n https://example.com/two ',
       maxItems: '200',
       allowInactiveMarking: true,
-      runtimeProfileId: 'runtime-prague',
       runtimeProfileName: 'Runtime Prague',
       crawlerMaxConcurrency: '3',
       crawlerMaxRequestsPerMinute: '60',
       ingestionConcurrency: '4',
-      ingestionEnabled: true,
-      debugLog: false,
       includeMongoOutput: true,
       includeDownloadableJson: true,
+      operatorMongoUri: 'mongodb://localhost:27017',
+      operatorDbName: 'pl_prague_tech_01',
     });
 
     expect(buildCreatePipelinePayload(values)).toEqual({
@@ -35,7 +33,6 @@ describe('forms', () => {
       source: 'jobs.cz',
       mode: 'crawl_and_ingest',
       searchSpace: {
-        id: 'prague-tech',
         name: 'Prague Tech',
         description: 'curated roles',
         startUrls: ['https://example.com/one', 'https://example.com/two'],
@@ -43,57 +40,51 @@ describe('forms', () => {
         allowInactiveMarking: true,
       },
       runtimeProfile: {
-        id: 'runtime-prague',
         name: 'Runtime Prague',
         crawlerMaxConcurrency: 3,
         crawlerMaxRequestsPerMinute: 60,
         ingestionConcurrency: 4,
-        ingestionEnabled: true,
-        debugLog: false,
       },
       structuredOutput: {
         destinations: [{ type: 'mongodb' }, { type: 'downloadable_json' }],
       },
+      operatorSink: {
+        mongodbUri: 'mongodb://localhost:27017',
+        dbName: 'pl_prague_tech_01',
+      },
     });
   });
 
-  it('drops ingestion-only settings for crawl-only pipelines', () => {
-    const values = pipelineCreateFormSchema.parse({
+  it('forces allowInactiveMarking=false when mongodb destination is not selected', () => {
+    const values = pipelineUpdateFormSchema.parse({
       name: 'Crawler Only',
-      source: 'jobs.cz',
       mode: 'crawl_only',
-      searchSpaceId: 'crawler-only',
       searchSpaceName: 'Crawler Only',
       searchSpaceDescription: '',
       startUrlsText: 'https://example.com/jobs',
       maxItems: 50,
-      allowInactiveMarking: false,
-      runtimeProfileId: 'runtime-crawler',
+      allowInactiveMarking: true,
       runtimeProfileName: 'Crawler Runtime',
       crawlerMaxConcurrency: 2,
       crawlerMaxRequestsPerMinute: 30,
       ingestionConcurrency: 9,
-      ingestionEnabled: true,
-      debugLog: true,
-      includeMongoOutput: true,
+      includeMongoOutput: false,
       includeDownloadableJson: true,
+      operatorMongoUri: 'mongodb://localhost:27017',
+      operatorDbName: 'pl_crawler_only_01',
     });
 
-    expect(buildCreatePipelinePayload(values)).toMatchObject({
+    expect(buildUpdatePipelinePayload(values)).toMatchObject({
       mode: 'crawl_only',
+      searchSpace: {
+        allowInactiveMarking: false,
+      },
       runtimeProfile: {
         ingestionConcurrency: undefined,
-        ingestionEnabled: false,
       },
       structuredOutput: {
         destinations: [],
       },
-    });
-  });
-
-  it('normalizes the rename payload', () => {
-    expect(buildRenamePipelinePayload({ name: '  Renamed Pipeline  ' })).toEqual({
-      name: 'Renamed Pipeline',
     });
   });
 
@@ -103,29 +94,19 @@ describe('forms', () => {
         name: 'x'.repeat(PIPELINE_NAME_MAX_LENGTH + 1),
         source: 'jobs.cz',
         mode: 'crawl_only',
-        searchSpaceId: 'crawler-only',
         searchSpaceName: 'Crawler Only',
         searchSpaceDescription: '',
         startUrlsText: 'https://example.com/jobs',
         maxItems: 50,
         allowInactiveMarking: false,
-        runtimeProfileId: 'runtime-crawler',
         runtimeProfileName: 'Crawler Runtime',
         crawlerMaxConcurrency: 2,
         crawlerMaxRequestsPerMinute: 30,
         ingestionConcurrency: 9,
-        ingestionEnabled: true,
-        debugLog: true,
         includeMongoOutput: true,
         includeDownloadableJson: true,
-      }),
-    ).toThrow(new RegExp(`at most ${PIPELINE_NAME_MAX_LENGTH} characters`, 'i'));
-  });
-
-  it('rejects rename payloads longer than the shared UI limit', () => {
-    expect(() =>
-      pipelineRenameFormSchema.parse({
-        name: 'x'.repeat(PIPELINE_NAME_MAX_LENGTH + 1),
+        operatorMongoUri: 'mongodb://localhost:27017',
+        operatorDbName: 'pl_crawler_only_01',
       }),
     ).toThrow(new RegExp(`at most ${PIPELINE_NAME_MAX_LENGTH} characters`, 'i'));
   });

@@ -43,7 +43,16 @@ export const envSchema = z
     CONTROL_JWT_PUBLIC_KEY: optionalStringSchema,
     GCP_PROJECT_ID: z.string().trim().min(1),
     PUBSUB_EVENTS_TOPIC: z.string().trim().min(1),
-    MONGODB_URI: z.string().trim().min(1),
+    MONGODB_SINK_MAX_POOL_SIZE: z.coerce.number().int().positive().max(200).default(20),
+    MONGODB_SINK_MAX_CONNECTING: z.coerce.number().int().positive().max(50).default(4),
+    MONGODB_SINK_WAIT_QUEUE_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(120_000)
+      .default(10_000),
+    MONGODB_SINK_IDLE_TTL_MS: z.coerce.number().int().positive().max(600_000).default(60_000),
+    MONGODB_SINK_MAX_ACTIVE_CLIENTS: z.coerce.number().int().positive().max(64).default(8),
   })
   .superRefine((value, context) => {
     if (value.CONTROL_AUTH_MODE === 'token' && !value.CONTROL_SHARED_TOKEN) {

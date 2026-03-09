@@ -4,7 +4,7 @@ Standalone crawler execution worker for V2.
 
 It accepts one `StartRun` command over REST, performs:
 
-1. phase 1 list collection and reconciliation against `normalized_job_ads`
+1. phase 1 list collection and reconciliation against `normalized_jobs`
 2. phase 2 detail HTML capture for new listings only
 
 It persists:
@@ -13,7 +13,7 @@ It persists:
 
 It updates:
 
-- existing `normalized_job_ads` documents during reconciliation only
+- existing `normalized_jobs` documents during reconciliation only
 
 It emits:
 
@@ -36,20 +36,28 @@ Required at runtime:
 
 - `GCP_PROJECT_ID`
 - `PUBSUB_EVENTS_TOPIC`
-- `MONGODB_URI`
 - control auth env matching `CONTROL_AUTH_MODE`
 
-Artifact storage is not configured in bootstrap env. It is provided per run through the V2
-`artifactSink`.
+Artifact storage and Mongo sink are not configured in bootstrap env. They are provided per run
+through V2 `StartRun` payload fields.
+
+Optional Mongo sink guardrails:
+
+- `MONGODB_SINK_MAX_POOL_SIZE`
+- `MONGODB_SINK_MAX_CONNECTING`
+- `MONGODB_SINK_WAIT_QUEUE_TIMEOUT_MS`
+- `MONGODB_SINK_IDLE_TTL_MS`
+- `MONGODB_SINK_MAX_ACTIVE_CLIENTS`
 
 ## StartRun shape
 
-The worker accepts the shared V2 crawler contract from `@repo/control-plane-contracts`:
+The worker accepts the shared V2 crawler contract from `@repo/control-plane-contracts/v2`:
 
 - `runId`
 - `idempotencyKey`
 - `runtimeSnapshot`
 - `inputRef`
+- `persistenceTargets.mongodbUri`
 - `persistenceTargets.dbName`
 - `artifactSink`
 

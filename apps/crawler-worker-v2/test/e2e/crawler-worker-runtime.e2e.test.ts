@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
-import { runtimeBrokerEventV2Schema } from '@repo/control-plane-contracts';
+import { runtimeBrokerEventV2Schema } from '@repo/control-plane-contracts/v2';
 import { MongoClient } from 'mongodb';
 import type { EnvSchema } from '../../src/env.js';
 import { CrawlerWorkerRuntime } from '../../src/runtime.js';
@@ -241,7 +241,7 @@ test('crawler worker v2 reconciles listings, writes artifacts, and emits v2 even
   await runtime.initialize();
 
   const db = getMongoClient().db(dbName);
-  await db.collection('normalized_job_ads').insertMany([
+  await db.collection('normalized_jobs').insertMany([
     {
       id: 'jobs.cz:2001063102',
       source: 'jobs.cz',
@@ -340,14 +340,14 @@ test('crawler worker v2 reconciles listings, writes artifacts, and emits v2 even
     assert.equal(summaryDoc.failedRequests, 0);
 
     const existingSeen = await db
-      .collection('normalized_job_ads')
+      .collection('normalized_jobs')
       .findOne<{ isActive: boolean; lastSeenRunId: string }>({
         id: 'jobs.cz:2001063102',
       });
-    const staleDoc = await db.collection('normalized_job_ads').findOne<{ isActive: boolean }>({
+    const staleDoc = await db.collection('normalized_jobs').findOne<{ isActive: boolean }>({
       id: 'jobs.cz:9999999999',
     });
-    const insertedNew = await db.collection('normalized_job_ads').findOne({
+    const insertedNew = await db.collection('normalized_jobs').findOne({
       id: 'jobs.cz:2001090812',
     });
 

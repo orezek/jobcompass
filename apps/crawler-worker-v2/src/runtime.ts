@@ -15,7 +15,7 @@ import {
   v2ArtifactSinkSchema,
   v2CrawlerSearchSpaceSnapshotSchema,
   v2SourceListingRecordSchema,
-} from '@repo/control-plane-contracts';
+} from '@repo/control-plane-contracts/v2';
 import {
   PlaywrightCrawler,
   createPlaywrightRouter,
@@ -23,11 +23,16 @@ import {
   type PlaywrightCrawler as PlaywrightCrawlerType,
 } from 'crawlee';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Collection, MongoClient } from 'mongodb';
+import type { Collection } from 'mongodb';
 import { z } from 'zod';
 import { waitForDetailRenderReadiness } from './detail-rendering.js';
 import type { EnvSchema } from './env.js';
 import { extractListingFromCard, type CrawlListingRecord } from './listing-card-parser.js';
+import {
+  MongoSinkCapacityError,
+  MongoSinkManager,
+  type MongoSinkLease,
+} from './mongo-sink-manager.js';
 import { NormalizedJobsRepository, type NormalizedJobDoc } from './normalized-jobs-repository.js';
 
 type CrawlerStartRunRequestV2 = z.infer<typeof crawlerStartRunRequestV2Schema>;
@@ -51,7 +56,6 @@ type RuntimeDeps = {
   env: EnvSchema;
   logger: FastifyBaseLogger;
   eventsTopic: PubSubTopicLike;
-  mongoClient: MongoClient;
 };
 
 type RunSummaryShape = {
@@ -132,6 +136,7 @@ type RunState = {
   onSettled: Promise<void>;
   resolveSettled: () => void;
   watchdogTimer: NodeJS.Timeout | null;
+  sinkLease: MongoSinkLease | null;
 };
 
 type ListPhaseResult = {
@@ -141,7 +146,7 @@ type ListPhaseResult = {
 };
 
 const CRAWL_RUN_SUMMARIES_COLLECTION = 'crawl_run_summaries';
-const NORMALIZED_JOB_ADS_COLLECTION = 'normalized_job_ads';
+const NORMALIZED_JOB_ADS_COLLECTION = 'normalized_jobs';
 const JOB_CARD_SELECTOR = 'article.SearchResultCard, article[data-jobad-id]';
 const NEXT_PAGE_SELECTOR = '.Pagination__button--next, [data-test="pagination-next"]';
 const MASS_INACTIVATION_GUARD_MIN_ACTIVE_COUNT = 100;
@@ -231,15 +236,22 @@ function toLegacyArtifactSink(sink: V2ArtifactSink) {
 export class CrawlerWorkerRuntime {
   private readonly runs = new Map<string, RunState>();
   private readonly queuedRunIds: string[] = [];
-  private readonly normalizedJobsRepos = new Map<string, NormalizedJobsRepository>();
-  private readonly crawlRunSummariesCollections = new Map<string, Collection>();
+  private readonly sinkManager: MongoSinkManager;
   private activeRuns = 0;
   private persistenceReady = false;
 
-  public constructor(private readonly deps: RuntimeDeps) {}
+  public constructor(private readonly deps: RuntimeDeps) {
+    this.sinkManager = new MongoSinkManager({
+      maxPoolSize: deps.env.MONGODB_SINK_MAX_POOL_SIZE,
+      maxConnecting: deps.env.MONGODB_SINK_MAX_CONNECTING,
+      waitQueueTimeoutMs: deps.env.MONGODB_SINK_WAIT_QUEUE_TIMEOUT_MS,
+      idleTtlMs: deps.env.MONGODB_SINK_IDLE_TTL_MS,
+      maxActiveClients: deps.env.MONGODB_SINK_MAX_ACTIVE_CLIENTS,
+      logger: deps.logger,
+    });
+  }
 
   public async initialize(): Promise<void> {
-    await this.deps.mongoClient.db().command({ ping: 1 });
     this.persistenceReady = true;
   }
 
@@ -272,6 +284,20 @@ export class CrawlerWorkerRuntime {
     const canStartImmediately =
       this.activeRuns < this.deps.env.MAX_CONCURRENT_RUNS && this.queuedRunIds.length === 0;
     const deferred = createDeferred();
+    let sinkLease: MongoSinkLease | null = null;
+    try {
+      sinkLease = await this.sinkManager.acquire(parsed.persistenceTargets);
+      await this.ensureCollections(sinkLease);
+    } catch (error) {
+      if (sinkLease) {
+        await sinkLease.release().catch(() => undefined);
+      }
+      if (error instanceof MongoSinkCapacityError) {
+        throw new ConflictError(`${error.code}: ${error.message}`);
+      }
+      throw error;
+    }
+
     const run: RunState = {
       request: parsed,
       runId: parsed.runId,
@@ -308,6 +334,7 @@ export class CrawlerWorkerRuntime {
       onSettled: deferred.promise,
       resolveSettled: deferred.resolve,
       watchdogTimer: null,
+      sinkLease,
     };
 
     this.runs.set(run.runId, run);
@@ -345,7 +372,6 @@ export class CrawlerWorkerRuntime {
       run.cancelRequested = true;
       run.cancelReason = 'cancelled_by_operator';
       this.removeQueuedRun(run.runId);
-      await this.ensureCollections(run.request.persistenceTargets.dbName);
       await this.finalizeRun(run, {
         status: 'stopped',
         stopReason: 'cancelled_by_operator',
@@ -391,6 +417,11 @@ export class CrawlerWorkerRuntime {
     });
 
     await Promise.race([run.onSettled, timeoutPromise]);
+  }
+
+  public async shutdown(): Promise<void> {
+    await this.sinkManager.closeAll();
+    this.persistenceReady = false;
   }
 
   private pumpQueuedRuns(): void {
@@ -441,13 +472,12 @@ export class CrawlerWorkerRuntime {
     let finalStatus: Exclude<RunStatus, 'queued'> = 'succeeded';
 
     try {
-      await this.ensureCollections(request.persistenceTargets.dbName);
       await this.publishRunStarted(run);
 
       const listPhase = await this.runListPhase(run, request.inputRef.searchSpaceSnapshot);
       const reconcileObservedAtIso = nowIso();
       const reconcileResult = await (
-        await this.getNormalizedJobsRepo(request.persistenceTargets.dbName)
+        await this.getNormalizedJobsRepo(run)
       ).reconcileListings({
         source: request.inputRef.source,
         searchSpaceId: request.inputRef.searchSpaceId,
@@ -568,39 +598,33 @@ export class CrawlerWorkerRuntime {
     run.lastHeartbeatAt = nowIso();
   }
 
-  private async getNormalizedJobsRepo(dbName: string): Promise<NormalizedJobsRepository> {
-    const existing = this.normalizedJobsRepos.get(dbName);
-    if (existing) {
-      return existing;
+  private async getNormalizedJobsRepo(run: RunState): Promise<NormalizedJobsRepository> {
+    if (!run.sinkLease) {
+      throw new Error(`Run "${run.runId}" does not have an active Mongo sink lease.`);
     }
 
-    const repo = new NormalizedJobsRepository(
-      this.deps.mongoClient.db(dbName).collection<NormalizedJobDoc>(NORMALIZED_JOB_ADS_COLLECTION),
+    return new NormalizedJobsRepository(
+      run.sinkLease.db.collection<NormalizedJobDoc>(NORMALIZED_JOB_ADS_COLLECTION),
     );
-    await repo.ensureIndexes();
-    this.normalizedJobsRepos.set(dbName, repo);
-    return repo;
   }
 
-  private async ensureCollections(dbName: string): Promise<void> {
-    const crawlSummaries = this.deps.mongoClient
-      .db(dbName)
-      .collection(CRAWL_RUN_SUMMARIES_COLLECTION);
+  private async ensureCollections(lease: MongoSinkLease): Promise<void> {
+    const crawlSummaries = lease.db.collection(CRAWL_RUN_SUMMARIES_COLLECTION);
     await crawlSummaries.createIndexes([
       { key: { crawlRunId: 1 }, name: 'crawlRunId_unique', unique: true },
       { key: { status: 1, startedAt: -1 }, name: 'status_startedAt' },
     ]);
-    this.crawlRunSummariesCollections.set(dbName, crawlSummaries);
-    await this.getNormalizedJobsRepo(dbName);
+    await new NormalizedJobsRepository(
+      lease.db.collection<NormalizedJobDoc>(NORMALIZED_JOB_ADS_COLLECTION),
+    ).ensureIndexes();
   }
 
-  private getCrawlRunSummariesCollection(dbName: string): Collection {
-    const collection = this.crawlRunSummariesCollections.get(dbName);
-    if (!collection) {
-      throw new Error(`crawl_run_summaries collection for "${dbName}" is not initialized.`);
+  private getCrawlRunSummariesCollection(run: RunState): Collection {
+    if (!run.sinkLease) {
+      throw new Error(`Run "${run.runId}" does not have an active Mongo sink lease.`);
     }
 
-    return collection;
+    return run.sinkLease.db.collection(CRAWL_RUN_SUMMARIES_COLLECTION);
   }
 
   private async publishRunStarted(run: RunState): Promise<void> {
@@ -1014,9 +1038,7 @@ export class CrawlerWorkerRuntime {
       } satisfies RunSummaryShape,
     });
 
-    const crawlSummariesCollection = this.getCrawlRunSummariesCollection(
-      run.request.persistenceTargets.dbName,
-    );
+    const crawlSummariesCollection = this.getCrawlRunSummariesCollection(run);
     await crawlSummariesCollection.updateOne(
       { crawlRunId: run.runId },
       {
@@ -1052,6 +1074,16 @@ export class CrawlerWorkerRuntime {
         correlationId: finishedEvent.correlationId,
       },
     });
+
+    if (run.sinkLease) {
+      await run.sinkLease.release().catch((error) => {
+        this.deps.logger.warn(
+          { err: error, runId: run.runId },
+          'Failed to release crawler run Mongo sink lease.',
+        );
+      });
+      run.sinkLease = null;
+    }
 
     run.executingPhase = 'done';
     run.resolveSettled();

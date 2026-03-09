@@ -8,7 +8,7 @@ import {
   buildCrawlerDetailCapturedEventV2,
   buildCrawlerRunFinishedEventV2,
   ingestionStartRunRequestV2Schema,
-} from '@repo/control-plane-contracts';
+} from '@repo/control-plane-contracts/v2';
 import { MongoClient } from 'mongodb';
 import type { EnvSchema } from '../../src/env.js';
 import { IngestionWorkerRuntime } from '../../src/runtime.js';
@@ -91,8 +91,7 @@ const collections: CollectionNames = {
     process.env.INGESTION_WORKER_V2_E2E_INGESTION_RUN_SUMMARIES_COLLECTION?.trim() ||
     'ingestion_run_summaries',
   normalizedJobAds:
-    process.env.INGESTION_WORKER_V2_E2E_NORMALIZED_JOB_ADS_COLLECTION?.trim() ||
-    'normalized_job_ads',
+    process.env.INGESTION_WORKER_V2_E2E_NORMALIZED_JOB_ADS_COLLECTION?.trim() || 'normalized_jobs',
 };
 
 const fixtureDir = path.resolve(process.cwd(), 'test/fixtures');

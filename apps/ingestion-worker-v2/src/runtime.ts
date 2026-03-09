@@ -4,10 +4,12 @@ import path from 'node:path';
 import type { Topic } from '@google-cloud/pubsub';
 import type { Storage } from '@google-cloud/storage';
 import {
-  buildIngestionLifecycleEventV2,
   crawlerDetailCapturedEventSchema as legacyCrawlerDetailCapturedEventSchema,
-  crawlerDetailCapturedEventV2Schema,
   crawlerRunFinishedEventSchema as legacyCrawlerRunFinishedEventSchema,
+} from '@repo/control-plane-contracts';
+import {
+  buildIngestionLifecycleEventV2,
+  crawlerDetailCapturedEventV2Schema,
   crawlerRunFinishedEventV2Schema,
   ingestionCancelRunRequestV2Schema,
   ingestionRunFinishedEventV2Schema,
@@ -17,14 +19,19 @@ import {
   startRunAcceptedResponseV2Schema,
   startRunRejectedResponseV2Schema,
   type V2IngestionRunSummaryProjection,
-} from '@repo/control-plane-contracts';
+} from '@repo/control-plane-contracts/v2';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Collection, MongoClient } from 'mongodb';
+import type { Collection } from 'mongodb';
 import { z } from 'zod';
 import type { EnvSchema } from './env.js';
 import { IncompleteDetailPageError } from './full-model/html-detail-loader.js';
 import { FullModelParser } from './full-model/parser.js';
 import type { SourceListingRecord, UnifiedJobAd } from './full-model/schema.js';
+import {
+  MongoSinkCapacityError,
+  MongoSinkManager,
+  type MongoSinkLease,
+} from './mongo-sink-manager.js';
 
 type IngestionStartRunRequestV2 = z.infer<typeof ingestionStartRunRequestV2Schema>;
 type IngestionCancelRunRequestV2 = z.infer<typeof ingestionCancelRunRequestV2Schema>;
@@ -48,6 +55,7 @@ type RunOutputRef = {
   dedupeKey: string;
   mongoTargetRef?: string;
   downloadableJsonPath?: string;
+  downloadableJsonSizeBytes?: number;
   createdAt: string;
 };
 
@@ -103,6 +111,7 @@ type RunState = {
   pendingRetryDedupeKeys: Set<string>;
   lastHeartbeatAt: string;
   noDetailTimeoutHandle: ReturnType<typeof setTimeout> | null;
+  sinkLease: MongoSinkLease | null;
 };
 
 type QueueItem = {
@@ -140,7 +149,6 @@ type RuntimeDeps = {
   logger: FastifyBaseLogger;
   eventsTopic: Topic;
   storage: Storage;
-  mongoClient: MongoClient;
 };
 
 type PersistedNormalizedJobAdDoc = UnifiedJobAd;
@@ -148,7 +156,7 @@ type PersistedNormalizedJobAdDoc = UnifiedJobAd;
 type StartRunResponse = z.infer<typeof startRunAcceptedResponseV2Schema>;
 
 const INGESTION_RUN_SUMMARIES_COLLECTION = 'ingestion_run_summaries';
-const NORMALIZED_JOB_ADS_COLLECTION = 'normalized_job_ads';
+const NORMALIZED_JOB_ADS_COLLECTION = 'normalized_jobs';
 const NO_DETAIL_EVENTS_TIMEOUT_MS = 60_000;
 
 export class ConflictError extends Error {
@@ -261,12 +269,21 @@ function isTransientProcessingError(error: unknown): boolean {
 export class IngestionWorkerRuntime {
   private readonly runs = new Map<string, RunState>();
   private readonly itemQueue: QueueItem[] = [];
+  private readonly sinkManager: MongoSinkManager;
   private activeWorkers = 0;
   private pubSubConsumerReady = false;
   private persistenceReady = false;
   private readonly fullModelParser: FullModelParser;
 
   public constructor(private readonly deps: RuntimeDeps) {
+    this.sinkManager = new MongoSinkManager({
+      maxPoolSize: deps.env.MONGODB_SINK_MAX_POOL_SIZE,
+      maxConnecting: deps.env.MONGODB_SINK_MAX_CONNECTING,
+      waitQueueTimeoutMs: deps.env.MONGODB_SINK_WAIT_QUEUE_TIMEOUT_MS,
+      idleTtlMs: deps.env.MONGODB_SINK_IDLE_TTL_MS,
+      maxActiveClients: deps.env.MONGODB_SINK_MAX_ACTIVE_CLIENTS,
+      logger: deps.logger,
+    });
     this.fullModelParser = new FullModelParser({
       logger: deps.logger,
       parserBackend: deps.env.INGESTION_PARSER_BACKEND,
@@ -287,8 +304,6 @@ export class IngestionWorkerRuntime {
   }
 
   public async initialize(): Promise<void> {
-    await this.deps.mongoClient.db().command({ ping: 1 });
-
     this.persistenceReady = true;
   }
 
@@ -306,6 +321,11 @@ export class IngestionWorkerRuntime {
     }
 
     return this.pubSubConsumerReady;
+  }
+
+  public async shutdown(): Promise<void> {
+    await this.sinkManager.closeAll();
+    this.persistenceReady = false;
   }
 
   public async startRun(raw: unknown): Promise<StartRunResponse> {
@@ -345,6 +365,15 @@ export class IngestionWorkerRuntime {
     const startedAt = nowIso();
     const noDetailTimeoutMs =
       (parsedRequest.timeouts?.idleTimeoutSeconds ?? NO_DETAIL_EVENTS_TIMEOUT_MS / 1_000) * 1_000;
+    let sinkLease: MongoSinkLease | null = null;
+    try {
+      sinkLease = await this.sinkManager.acquire(parsedRequest.persistenceTargets);
+    } catch (error) {
+      if (error instanceof MongoSinkCapacityError) {
+        throw new ConflictError(`${error.code}: ${error.message}`);
+      }
+      throw error;
+    }
 
     const run: RunState = {
       request: parsedRequest,
@@ -378,6 +407,7 @@ export class IngestionWorkerRuntime {
       noDetailTimeoutHandle: setTimeout(() => {
         void this.expireRunWithoutDetailItems(parsedRequest.runId);
       }, noDetailTimeoutMs),
+      sinkLease,
     };
 
     this.runs.set(run.runId, run);
@@ -387,6 +417,9 @@ export class IngestionWorkerRuntime {
     } catch (error) {
       if (run.noDetailTimeoutHandle) {
         clearTimeout(run.noDetailTimeoutHandle);
+      }
+      if (run.sinkLease) {
+        await run.sinkLease.release().catch(() => undefined);
       }
       this.runs.delete(run.runId);
       throw error;
@@ -763,14 +796,16 @@ export class IngestionWorkerRuntime {
       );
 
       let downloadableJsonPath: string | undefined;
+      let downloadableJsonSizeBytes: number | undefined;
       if (downloadableJsonSink) {
         try {
-          downloadableJsonPath = await this.persistDownloadableJson(
-            run,
+          const downloadableJsonResult = await this.persistDownloadableJson(
             item,
             normalizedDoc,
             downloadableJsonSink.delivery,
           );
+          downloadableJsonPath = downloadableJsonResult.path;
+          downloadableJsonSizeBytes = downloadableJsonResult.sizeBytes;
         } catch (downloadError) {
           this.deps.logger.error(
             {
@@ -798,6 +833,11 @@ export class IngestionWorkerRuntime {
 
       await this.publishIngestionItemEvent('ingestion.item.succeeded', run, item, {
         documentId: normalizedDoc.id,
+        outputRef: {
+          mongoTargetRef,
+          ...(downloadableJsonPath ? { downloadableJsonPath } : {}),
+          ...(downloadableJsonSizeBytes ? { downloadableJsonSizeBytes } : {}),
+        },
       });
       run.inFlightDedupeKeys.delete(item.dedupeKey);
       run.pendingRetryDedupeKeys.delete(item.dedupeKey);
@@ -1085,6 +1125,15 @@ export class IngestionWorkerRuntime {
     );
 
     await this.publishRunFinished(run, status, stopReason);
+    if (run.sinkLease) {
+      await run.sinkLease.release().catch((error) => {
+        this.deps.logger.warn(
+          { err: error, runId: run.runId },
+          'Failed to release ingestion run Mongo sink lease.',
+        );
+      });
+      run.sinkLease = null;
+    }
   }
 
   private buildDownloadablePath(prefix: string, item: ItemInput): string {
@@ -1094,25 +1143,31 @@ export class IngestionWorkerRuntime {
   }
 
   private async persistDownloadableJson(
-    run: RunState,
     item: ItemInput,
     normalizedDoc: PersistedNormalizedJobAdDoc,
     delivery: IngestionStartRunRequestV2['outputSinks'][number]['delivery'],
-  ): Promise<string> {
+  ): Promise<{ path: string; sizeBytes: number }> {
     const downloadablePath = this.buildDownloadablePath(delivery.prefix, item);
     const jsonBody = `${JSON.stringify(normalizedDoc, null, 2)}\n`;
+    const sizeBytes = Buffer.byteLength(jsonBody, 'utf8');
 
     if (delivery.storageType === 'gcs') {
       await this.deps.storage.bucket(delivery.bucket).file(downloadablePath).save(jsonBody, {
         contentType: 'application/json',
       });
-      return `gs://${delivery.bucket}/${downloadablePath}`;
+      return {
+        path: `gs://${delivery.bucket}/${downloadablePath}`,
+        sizeBytes,
+      };
     }
 
     const targetPath = path.join(delivery.basePath, downloadablePath);
     await mkdir(path.dirname(targetPath), { recursive: true });
     await writeFile(targetPath, jsonBody, 'utf8');
-    return targetPath;
+    return {
+      path: targetPath,
+      sizeBytes,
+    };
   }
 
   private async expireRunWithoutDetailItems(runId: string): Promise<void> {
@@ -1191,6 +1246,11 @@ export class IngestionWorkerRuntime {
     item: ItemInput,
     options?: {
       documentId?: string;
+      outputRef?: {
+        mongoTargetRef?: string;
+        downloadableJsonPath?: string;
+        downloadableJsonSizeBytes?: number;
+      };
       error?: {
         name: string;
         message: string;
@@ -1218,6 +1278,7 @@ export class IngestionWorkerRuntime {
               eventType,
               ...baseEventInput,
               documentId: options?.documentId ?? item.dedupeKey,
+              ...(options?.outputRef ? { outputRef: options.outputRef } : {}),
             })
           : eventType === 'ingestion.item.failed'
             ? buildIngestionLifecycleEventV2({
@@ -1253,17 +1314,21 @@ export class IngestionWorkerRuntime {
   private getRunSummaryCollectionForRun(
     run: RunState,
   ): Collection<V2IngestionRunSummaryProjection> {
-    const targets = run.request.persistenceTargets;
-    return this.deps.mongoClient
-      .db(targets.dbName)
-      .collection<V2IngestionRunSummaryProjection>(INGESTION_RUN_SUMMARIES_COLLECTION);
+    if (!run.sinkLease) {
+      throw new Error(`Run "${run.runId}" does not have an active Mongo sink lease.`);
+    }
+
+    return run.sinkLease.db.collection<V2IngestionRunSummaryProjection>(
+      INGESTION_RUN_SUMMARIES_COLLECTION,
+    );
   }
 
   private getNormalizedCollectionForRun(run: RunState): Collection<PersistedNormalizedJobAdDoc> {
-    const targets = run.request.persistenceTargets;
-    return this.deps.mongoClient
-      .db(targets.dbName)
-      .collection<PersistedNormalizedJobAdDoc>(NORMALIZED_JOB_ADS_COLLECTION);
+    if (!run.sinkLease) {
+      throw new Error(`Run "${run.runId}" does not have an active Mongo sink lease.`);
+    }
+
+    return run.sinkLease.db.collection<PersistedNormalizedJobAdDoc>(NORMALIZED_JOB_ADS_COLLECTION);
   }
 
   private async ensureIndexesForRun(run: RunState): Promise<void> {

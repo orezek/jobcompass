@@ -4,10 +4,16 @@ import { z } from 'zod';
 const isoDateTimeSchema = z.iso.datetime();
 const nonEmptyStringSchema = z.string().trim().min(1);
 const MONGO_DB_NAME_MAX_BYTES = 38;
-const mongoDbNameSchema = nonEmptyStringSchema.max(
-  MONGO_DB_NAME_MAX_BYTES,
-  `dbName must be at most ${MONGO_DB_NAME_MAX_BYTES} bytes.`,
-);
+const mongoDbNameCharsetRegex = /^[A-Za-z0-9_-]+$/u;
+const mongoDbNameSchema = nonEmptyStringSchema
+  .regex(
+    mongoDbNameCharsetRegex,
+    'dbName may only contain ASCII letters, numbers, underscore, and hyphen.',
+  )
+  .refine(
+    (value) => Buffer.byteLength(value, 'utf8') <= MONGO_DB_NAME_MAX_BYTES,
+    `dbName must be at most ${MONGO_DB_NAME_MAX_BYTES} bytes.`,
+  );
 const optionalStringSchema = z.preprocess((value) => {
   if (typeof value === 'string' && value.trim() === '') {
     return undefined;
@@ -29,6 +35,7 @@ export const v2RunStatusSchema = z.enum([
 ]);
 
 export const v2PersistenceTargetsSchema = z.object({
+  mongodbUri: nonEmptyStringSchema,
   dbName: mongoDbNameSchema,
 });
 
@@ -304,8 +311,17 @@ export const ingestionItemBasePayloadV2Schema = z.object({
 
 export const ingestionItemStartedPayloadV2Schema = ingestionItemBasePayloadV2Schema;
 
+export const ingestionItemOutputRefV2Schema = z
+  .object({
+    mongoTargetRef: optionalStringSchema,
+    downloadableJsonPath: optionalStringSchema,
+    downloadableJsonSizeBytes: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
 export const ingestionItemSucceededPayloadV2Schema = ingestionItemBasePayloadV2Schema.extend({
   documentId: nonEmptyStringSchema,
+  outputRef: ingestionItemOutputRefV2Schema.optional(),
 });
 
 export const ingestionItemFailedPayloadV2Schema = ingestionItemBasePayloadV2Schema.extend({
@@ -478,6 +494,7 @@ export const crawlerStartRunRequestV2Fixture = crawlerStartRunRequestV2Schema.pa
     emitDetailCapturedEvents: true,
   },
   persistenceTargets: {
+    mongodbUri: 'mongodb://localhost:27017',
     dbName: 'crawl-ops-prague-tech',
   },
   artifactSink: {
@@ -499,6 +516,7 @@ export const ingestionStartRunRequestV2Fixture = ingestionStartRunRequestV2Schem
     ingestionConcurrency: 4,
   },
   persistenceTargets: {
+    mongodbUri: 'mongodb://localhost:27017',
     dbName: 'crawl-ops-prague-tech',
   },
   inputRef: {
@@ -687,6 +705,12 @@ export const v2ControlPlaneSearchSpaceSchema = z
   })
   .strict();
 
+export const v2ControlPlaneSearchSpaceInputSchema = v2ControlPlaneSearchSpaceSchema
+  .omit({
+    id: true,
+  })
+  .strict();
+
 export const v2ControlPlaneRuntimeProfileSchema = z
   .object({
     id: nonEmptyStringSchema,
@@ -694,8 +718,27 @@ export const v2ControlPlaneRuntimeProfileSchema = z
     crawlerMaxConcurrency: z.number().int().positive().optional(),
     crawlerMaxRequestsPerMinute: z.number().int().positive().optional(),
     ingestionConcurrency: z.number().int().positive().optional(),
-    ingestionEnabled: z.boolean().default(true),
-    debugLog: z.boolean().default(false),
+  })
+  .strict();
+
+export const v2ControlPlaneRuntimeProfileInputSchema = v2ControlPlaneRuntimeProfileSchema
+  .omit({
+    id: true,
+  })
+  .strict();
+
+export const v2ControlPlaneOperatorSinkSchema = z
+  .object({
+    dbName: mongoDbNameSchema,
+    mongodbUri: optionalStringSchema,
+    hasMongoUri: z.boolean().default(true),
+  })
+  .strict();
+
+export const v2ControlPlaneOperatorSinkWriteSchema = z
+  .object({
+    dbName: mongoDbNameSchema,
+    mongodbUri: nonEmptyStringSchema,
   })
   .strict();
 
@@ -719,20 +762,77 @@ export const createControlPlanePipelineRequestV2Schema = z
     name: nonEmptyStringSchema,
     source: nonEmptyStringSchema,
     mode: v2PipelineModeSchema,
-    searchSpace: v2ControlPlaneSearchSpaceSchema,
-    runtimeProfile: v2ControlPlaneRuntimeProfileSchema,
+    searchSpace: v2ControlPlaneSearchSpaceInputSchema,
+    runtimeProfile: v2ControlPlaneRuntimeProfileInputSchema,
     structuredOutput: v2ControlPlaneStructuredOutputSchema,
+    operatorSink: v2ControlPlaneOperatorSinkWriteSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    const hasMongoDestination = value.structuredOutput.destinations.some(
+      (destination) => destination.type === 'mongodb',
+    );
+
+    if (!hasMongoDestination && value.searchSpace.allowInactiveMarking) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['searchSpace', 'allowInactiveMarking'],
+        message:
+          'allowInactiveMarking must be false when structured output destinations do not include mongodb.',
+      });
+    }
+  });
 
 export const updateControlPlanePipelineRequestV2Schema = z
   .object({
-    name: nonEmptyStringSchema,
+    name: nonEmptyStringSchema.optional(),
+    mode: v2PipelineModeSchema.optional(),
+    searchSpace: v2ControlPlaneSearchSpaceInputSchema.optional(),
+    runtimeProfile: v2ControlPlaneRuntimeProfileInputSchema.optional(),
+    structuredOutput: v2ControlPlaneStructuredOutputSchema.optional(),
+    operatorSink: v2ControlPlaneOperatorSinkWriteSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      value.name !== undefined ||
+      value.mode !== undefined ||
+      value.searchSpace !== undefined ||
+      value.runtimeProfile !== undefined ||
+      value.structuredOutput !== undefined ||
+      value.operatorSink !== undefined,
+    {
+      message: 'At least one editable pipeline field must be provided.',
+    },
+  )
+  .superRefine((value, context) => {
+    if (!value.structuredOutput || !value.searchSpace) {
+      return;
+    }
 
-export const controlPlanePipelineV2Schema = createControlPlanePipelineRequestV2Schema
-  .extend({
+    const hasMongoDestination = value.structuredOutput.destinations.some(
+      (destination) => destination.type === 'mongodb',
+    );
+
+    if (!hasMongoDestination && value.searchSpace.allowInactiveMarking) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['searchSpace', 'allowInactiveMarking'],
+        message:
+          'allowInactiveMarking must be false when structured output destinations do not include mongodb.',
+      });
+    }
+  });
+
+export const controlPlanePipelineV2Schema = z
+  .object({
+    name: nonEmptyStringSchema,
+    source: nonEmptyStringSchema,
+    mode: v2PipelineModeSchema,
+    searchSpace: v2ControlPlaneSearchSpaceSchema,
+    runtimeProfile: v2ControlPlaneRuntimeProfileSchema,
+    structuredOutput: v2ControlPlaneStructuredOutputSchema,
+    operatorSink: v2ControlPlaneOperatorSinkSchema,
     pipelineId: nonEmptyStringSchema,
     dbName: mongoDbNameSchema,
     version: z.number().int().positive(),
@@ -740,7 +840,16 @@ export const controlPlanePipelineV2Schema = createControlPlanePipelineRequestV2S
     createdAt: isoDateTimeSchema,
     updatedAt: isoDateTimeSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (!value.operatorSink.mongodbUri && !value.operatorSink.hasMongoUri) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['operatorSink'],
+        message: 'operatorSink must indicate URI presence via mongodbUri or hasMongoUri=true.',
+      });
+    }
+  });
 
 export const controlServiceStartPipelineRunRequestV2Schema = z.object({}).strict();
 export const controlServiceCancelRunRequestV2Schema = z.object({}).strict();
@@ -1116,6 +1225,84 @@ export const listControlPlaneRunEventsResponseV2Schema = z
   })
   .strict();
 
+export const jsonArtifactIndexItemV2Schema = z
+  .object({
+    artifactId: nonEmptyStringSchema,
+    runId: nonEmptyStringSchema,
+    pipelineId: nonEmptyStringSchema,
+    fileName: nonEmptyStringSchema,
+    storagePath: nonEmptyStringSchema,
+    sizeBytes: z.number().int().nonnegative(),
+    createdAt: isoDateTimeSchema,
+  })
+  .strict();
+
+export const listRunJsonArtifactsQueryV2Schema = z
+  .object({
+    limit: v2PaginationLimitSchema.default(50),
+    cursor: v2CursorQuerySchema,
+    sortBy: z.enum(['createdAt', 'fileName']).default('createdAt'),
+    sortDir: z.enum(['asc', 'desc']).default('desc'),
+    fileNamePrefix: optionalStringSchema,
+  })
+  .strict();
+
+export const listRunJsonArtifactsResponseV2Schema = z
+  .object({
+    runId: nonEmptyStringSchema,
+    items: z.array(
+      jsonArtifactIndexItemV2Schema.pick({
+        artifactId: true,
+        fileName: true,
+        createdAt: true,
+        sizeBytes: true,
+      }),
+    ),
+    nextCursor: v2NextCursorSchema,
+  })
+  .strict();
+
+export const getRunJsonArtifactResponseV2Schema = z
+  .object({
+    artifactId: nonEmptyStringSchema,
+    fileName: nonEmptyStringSchema,
+    payload: z.record(z.string(), z.unknown()),
+  })
+  .strict();
+
+export const pipelineDeleteJobStatusV2Schema = z.enum(['deleting', 'deleted', 'delete_failed']);
+
+export const controlServiceDeletePipelineAcceptedResponseV2Schema = z
+  .object({
+    ok: z.literal(true),
+    accepted: z.literal(true),
+    pipelineId: nonEmptyStringSchema,
+    deleteJobId: nonEmptyStringSchema,
+    status: z.literal('deleting'),
+  })
+  .strict();
+
+export const controlServiceDeletePipelineStatusResponseV2Schema = z
+  .object({
+    ok: z.literal(true),
+    pipelineId: nonEmptyStringSchema,
+    deleteJobId: nonEmptyStringSchema,
+    status: pipelineDeleteJobStatusV2Schema,
+    progress: z
+      .object({
+        totalSteps: z.number().int().nonnegative(),
+        completedSteps: z.number().int().nonnegative(),
+      })
+      .optional(),
+    lastError: z
+      .object({
+        code: nonEmptyStringSchema,
+        message: nonEmptyStringSchema,
+      })
+      .optional(),
+  })
+  .strict();
+
 export const controlServiceStreamQueryV2Schema = z
   .object({
     pipelineId: optionalStringSchema,
@@ -1188,7 +1375,6 @@ export const createControlPlanePipelineRequestV2Fixture =
     source: 'jobs.cz',
     mode: 'crawl_and_ingest',
     searchSpace: {
-      id: 'prague-tech-jobs',
       name: 'Prague Tech Jobs',
       description: 'Jobs.cz search pages for Prague tech roles.',
       startUrls: [
@@ -1199,22 +1385,47 @@ export const createControlPlanePipelineRequestV2Fixture =
       allowInactiveMarking: true,
     },
     runtimeProfile: {
-      id: 'runtime-prague-tech',
       name: 'Prague Tech Runtime',
       crawlerMaxConcurrency: 3,
       crawlerMaxRequestsPerMinute: 60,
       ingestionConcurrency: 4,
-      ingestionEnabled: true,
-      debugLog: false,
     },
     structuredOutput: {
       destinations: [{ type: 'mongodb' }, { type: 'downloadable_json' }],
+    },
+    operatorSink: {
+      mongodbUri: 'mongodb://localhost:27017',
+      dbName: 'crawl-ops-prague-tech',
     },
   });
 
 export const updateControlPlanePipelineRequestV2Fixture =
   updateControlPlanePipelineRequestV2Schema.parse({
     name: 'Prague Tech Pipeline Renamed',
+    mode: 'crawl_and_ingest',
+    searchSpace: {
+      name: 'Prague Tech Jobs',
+      description: 'Jobs.cz search pages for Prague tech roles.',
+      startUrls: [
+        'https://www.jobs.cz/prace/praha/?q=software',
+        'https://www.jobs.cz/prace/praha/?q=data',
+      ],
+      maxItems: 200,
+      allowInactiveMarking: true,
+    },
+    runtimeProfile: {
+      name: 'Prague Tech Runtime',
+      crawlerMaxConcurrency: 3,
+      crawlerMaxRequestsPerMinute: 60,
+      ingestionConcurrency: 4,
+    },
+    structuredOutput: {
+      destinations: [{ type: 'mongodb' }, { type: 'downloadable_json' }],
+    },
+    operatorSink: {
+      mongodbUri: 'mongodb://localhost:27017',
+      dbName: 'crawl-ops-prague-tech',
+    },
   });
 
 export const controlPlanePipelineV2Fixture = controlPlanePipelineV2Schema.parse({
@@ -1225,6 +1436,18 @@ export const controlPlanePipelineV2Fixture = controlPlanePipelineV2Schema.parse(
   createdAt: '2026-03-05T09:59:00.000Z',
   updatedAt: '2026-03-05T09:59:00.000Z',
   ...createControlPlanePipelineRequestV2Fixture,
+  searchSpace: {
+    id: 'ss-prague-tech-jobs',
+    ...createControlPlanePipelineRequestV2Fixture.searchSpace,
+  },
+  runtimeProfile: {
+    id: 'rp-prague-tech-runtime',
+    ...createControlPlanePipelineRequestV2Fixture.runtimeProfile,
+  },
+  operatorSink: {
+    dbName: createControlPlanePipelineRequestV2Fixture.operatorSink.dbName,
+    hasMongoUri: true,
+  },
 });
 
 export const controlServiceStartPipelineRunRequestV2Fixture =
@@ -1254,6 +1477,7 @@ export const controlPlaneRunManifestV2Fixture = controlPlaneRunManifestV2Schema.
       runId: 'crawl-run-v2-fixture-001',
       idempotencyKey: 'idmp-crawl-run-v2-fixture-001',
       persistenceTargets: {
+        mongodbUri: 'mongodb://localhost:27017',
         dbName: controlPlanePipelineV2Fixture.dbName,
       },
       inputRef: {
@@ -1266,6 +1490,7 @@ export const controlPlaneRunManifestV2Fixture = controlPlaneRunManifestV2Schema.
       runId: 'crawl-run-v2-fixture-001',
       idempotencyKey: 'idmp-crawl-run-v2-fixture-001',
       persistenceTargets: {
+        mongodbUri: 'mongodb://localhost:27017',
         dbName: controlPlanePipelineV2Fixture.dbName,
       },
       inputRef: {
@@ -1550,6 +1775,11 @@ export const buildIngestionLifecycleEventV2 = (
         sourceId: string;
         dedupeKey: string;
         documentId: string;
+        outputRef?: {
+          mongoTargetRef?: string;
+          downloadableJsonPath?: string;
+          downloadableJsonSizeBytes?: number;
+        };
         producer?: string;
       }
     | {
@@ -1607,6 +1837,7 @@ export const buildIngestionLifecycleEventV2 = (
           sourceId: input.sourceId,
           dedupeKey: input.dedupeKey,
           documentId: input.documentId,
+          ...(input.outputRef ? { outputRef: input.outputRef } : {}),
         },
       });
     case 'ingestion.item.failed':

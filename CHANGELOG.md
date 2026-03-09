@@ -17,6 +17,18 @@ The format is based on Keep a Changelog principles and uses Semantic Versioning.
   completed after retries, run is marked failed with `startup_rollback_cancel_failed`.
 - Added ingestion runtime auto-expire path for no-detail runs (default 60s) and operator cancellation
   drain semantics coverage in E2E tests.
+- Added v2.2 operator sink contract on pipelines (`operatorSink.mongodbUri` + `operatorSink.dbName`)
+  with redacted read responses (`hasMongoUri`).
+- Added control-service pipeline deletion APIs and async delete-job tracking:
+  - `DELETE /v1/pipelines/:pipelineId`
+  - `GET /v1/pipelines/:pipelineId/delete-status`
+- Added run JSON artifact APIs:
+  - `GET /v1/runs/:runId/json-artifacts`
+  - `GET /v1/runs/:runId/json-artifacts/:artifactId`
+  - `GET /v1/runs/:runId/json-artifacts/:artifactId/download`
+  - `GET /v1/runs/:runId/json-artifacts/download-all`
+- Added sink-keyed Mongo client lease managers in crawler/ingestion workers with capacity guardrails
+  and deterministic release/idle cleanup.
 
 ### Changed
 
@@ -28,6 +40,12 @@ The format is based on Keep a Changelog principles and uses Semantic Versioning.
   `local_filesystem`) instead of `OUTPUTS_BUCKET` / `OUTPUTS_PREFIX` env.
 - Updated service documentation and `.env.example` files to align bootstrap ownership and readiness
   policy for v2.1.
+- Switched worker Mongo sink ownership from bootstrap `MONGODB_URI` to run-scoped
+  `StartRun.persistenceTargets.mongodbUri` + `dbName`.
+- Aligned output collection naming to `normalized_jobs` across crawler/ingestion runtimes.
+- Updated control-center pipeline forms/details for v2.2 editable model (no operator-entered IDs,
+  runtime debug flag removed, sink configuration fields added, and dbName validation aligned to
+  MongoDB 38-byte limit).
 
 ## [1.1.0] - 2026-03-05
 

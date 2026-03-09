@@ -3,7 +3,7 @@ import {
   ingestionCancelRunRequestV2Schema,
   ingestionStartRunRequestV2Schema,
   startRunResponseV2Schema,
-} from '@repo/control-plane-contracts';
+} from '@repo/control-plane-contracts/v2';
 import { z } from 'zod';
 import type { EnvSchema } from './env.js';
 import { buildAuthHeaders } from './auth.js';
@@ -23,12 +23,14 @@ const workerReadyzResponseSchema = z
 export class WorkerClientError extends Error {
   public readonly retryable: boolean;
   public readonly statusCode?: number;
+  public readonly workerCode?: string;
 
   public constructor(
     message: string,
     options?: {
       retryable?: boolean;
       statusCode?: number;
+      workerCode?: string;
       cause?: unknown;
     },
   ) {
@@ -36,6 +38,7 @@ export class WorkerClientError extends Error {
     this.name = 'WorkerClientError';
     this.retryable = options?.retryable ?? false;
     this.statusCode = options?.statusCode;
+    this.workerCode = options?.workerCode;
   }
 }
 
@@ -172,6 +175,7 @@ export class WorkerClient {
       throw new WorkerClientError(message, {
         statusCode: response.status,
         retryable: this.isRetryableStatus(response.status),
+        workerCode: parsed.data.ok ? undefined : parsed.data.error.code,
       });
     }
 

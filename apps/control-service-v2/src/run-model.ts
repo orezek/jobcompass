@@ -9,7 +9,7 @@ import {
   ingestionStartRunRequestV2Schema,
   v2ArtifactSinkSchema,
   type V2RuntimeBrokerEvent,
-} from '@repo/control-plane-contracts';
+} from '@repo/control-plane-contracts/v2';
 
 export type ControlPlanePipeline = z.infer<typeof controlPlanePipelineV2Schema>;
 export type ControlPlaneRunManifest = z.infer<typeof controlPlaneRunManifestV2Schema>;
@@ -55,6 +55,18 @@ export function generateRunId(): string {
   return `run-${randomUUID()}`;
 }
 
+export function generateSearchSpaceId(name: string): string {
+  const slug = slugify(name);
+  const suffix = randomUUID().split('-')[0] ?? randomUUID();
+  return slug.length > 0 ? `ss-${slug}-${suffix}` : `ss-${suffix}`;
+}
+
+export function generateRuntimeProfileId(name: string): string {
+  const slug = slugify(name);
+  const suffix = randomUUID().split('-')[0] ?? randomUUID();
+  return slug.length > 0 ? `rp-${slug}-${suffix}` : `rp-${suffix}`;
+}
+
 function extractPipelineSuffix(pipelineId: string): string {
   const suffix = pipelineId.split('-').at(-1)?.trim();
   return suffix && suffix.length > 0 ? suffix : randomUUID().split('-')[0]!;
@@ -96,23 +108,41 @@ export function buildPipelineDbName(name: string, pipelineId: string): string {
 export function assertPipelineCreateRequestConsistency(input: {
   mode: 'crawl_only' | 'crawl_and_ingest';
   runtimeProfile: {
-    ingestionEnabled: boolean;
+    ingestionConcurrency?: number;
+  };
+  searchSpace: {
+    allowInactiveMarking: boolean;
   };
   structuredOutput: {
     destinations: Array<{ type: 'mongodb' | 'downloadable_json' }>;
   };
 }): void {
-  if (input.mode === 'crawl_and_ingest' && !input.runtimeProfile.ingestionEnabled) {
-    throw new Error('crawl_and_ingest pipelines require runtimeProfile.ingestionEnabled=true.');
-  }
+  const hasMongoDestination = input.structuredOutput.destinations.some(
+    (destination) => destination.type === 'mongodb',
+  );
 
-  if (input.mode === 'crawl_only' && input.runtimeProfile.ingestionEnabled) {
-    throw new Error('crawl_only pipelines require runtimeProfile.ingestionEnabled=false.');
+  if (!hasMongoDestination && input.searchSpace.allowInactiveMarking) {
+    throw new Error(
+      'allowInactiveMarking must be false when structured output destinations do not include mongodb.',
+    );
   }
 
   if (input.mode === 'crawl_and_ingest' && input.structuredOutput.destinations.length === 0) {
     throw new Error('crawl_and_ingest pipelines must configure at least one structured output.');
   }
+
+  if (input.mode === 'crawl_and_ingest' && !input.runtimeProfile.ingestionConcurrency) {
+    throw new Error('crawl_and_ingest pipelines require runtimeProfile.ingestionConcurrency.');
+  }
+}
+
+function resolvePipelineMongoUri(pipeline: ControlPlanePipeline): string {
+  const uri = pipeline.operatorSink.mongodbUri?.trim();
+  if (!uri) {
+    throw new Error(`Pipeline "${pipeline.pipelineId}" does not have operatorSink.mongodbUri.`);
+  }
+
+  return uri;
 }
 
 export function buildCrawlerStartRunRequest(
@@ -120,6 +150,8 @@ export function buildCrawlerStartRunRequest(
   runId: string,
   artifactSink: ControlPlaneArtifactSink,
 ) {
+  const mongodbUri = resolvePipelineMongoUri(pipeline);
+
   return crawlerStartRunRequestV2Schema.parse({
     contractVersion: 'v2',
     runId,
@@ -141,6 +173,7 @@ export function buildCrawlerStartRunRequest(
       emitDetailCapturedEvents: pipeline.mode === 'crawl_and_ingest',
     },
     persistenceTargets: {
+      mongodbUri,
       dbName: pipeline.dbName,
     },
     artifactSink,
@@ -152,6 +185,7 @@ export function buildIngestionStartRunRequest(
   runId: string,
   artifactSink: ControlPlaneArtifactSink,
 ) {
+  const mongodbUri = resolvePipelineMongoUri(pipeline);
   const deliveryPrefix = joinPathSegments(
     artifactSink.type === 'gcs' ? artifactSink.prefix : '',
     'pipelines',
@@ -174,6 +208,7 @@ export function buildIngestionStartRunRequest(
       searchSpaceId: pipeline.searchSpace.id,
     },
     persistenceTargets: {
+      mongodbUri,
       dbName: pipeline.dbName,
     },
     outputSinks: pipeline.structuredOutput.destinations

@@ -29,6 +29,19 @@ import type { ControlPlaneRun, ControlPlaneRunEventIndex } from '@/lib/contracts
 import { appendRunEvent, useControlStream } from '@/lib/live';
 import { formatDateTime, formatNullableCount } from '@/lib/utils';
 
+type JsonArtifactListItem = {
+  artifactId: string;
+  fileName: string;
+  createdAt: string;
+  sizeBytes: number;
+};
+
+type JsonArtifactDetail = {
+  artifactId: string;
+  fileName: string;
+  payload: Record<string, unknown>;
+};
+
 const terminalStates = new Set<ControlPlaneRun['status']>([
   'succeeded',
   'failed',
@@ -75,14 +88,19 @@ export function RunDetailClient({
   initialRun,
   initialEvents,
   nextCursor,
+  initialJsonArtifacts,
 }: {
   initialRun: ControlPlaneRun;
   initialEvents: ControlPlaneRunEventIndex[];
   nextCursor: string | null;
+  initialJsonArtifacts: JsonArtifactListItem[];
 }) {
   const router = useRouter();
   const [run, setRun] = useState(initialRun);
   const [events, setEvents] = useState(initialEvents);
+  const [jsonArtifacts] = useState(initialJsonArtifacts);
+  const [selectedArtifact, setSelectedArtifact] = useState<JsonArtifactDetail | null>(null);
+  const [loadingArtifactId, setLoadingArtifactId] = useState<string | null>(null);
   const [cancelPending, setCancelPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const isTerminal = terminalStates.has(run.status);
@@ -115,6 +133,26 @@ export function RunDetailClient({
     }
 
     router.refresh();
+  };
+
+  const openArtifact = async (artifactId: string) => {
+    setLoadingArtifactId(artifactId);
+    setErrorMessage(null);
+    const response = await fetch(`/api/runs/${run.runId}/json-artifacts/${artifactId}`, {
+      method: 'GET',
+    });
+    setLoadingArtifactId(null);
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      setErrorMessage(payload?.error?.message ?? 'Unable to load JSON artifact.');
+      return;
+    }
+
+    const payload = (await response.json()) as JsonArtifactDetail;
+    setSelectedArtifact(payload);
   };
 
   return (
@@ -158,80 +196,142 @@ export function RunDetailClient({
 
       {errorMessage ? <p className="text-sm text-destructive-foreground">{errorMessage}</p> : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr),minmax(0,1.1fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Execution Telemetry</CardTitle>
-            <CardDescription>Live execution metrics and termination status.</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4 text-sm text-muted-foreground">
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusLabeledBadge label="RUN" status={run.status} />
-              <StatusLabeledBadge label="CRAWLER" status={run.crawler.status} />
-              <StatusLabeledBadge label="INGESTION" status={run.ingestion.status} />
-            </div>
-            <dl className="grid gap-2">
-              <Row label="Requested" value={formatDateTime(run.requestedAt)} />
-              <Row label="Started" value={formatDateTime(run.startedAt)} />
-              <Row label="Finished" value={formatDateTime(run.finishedAt)} />
-              <Row label="Last Event" value={formatDateTime(run.lastEventAt)} />
-              <Row label="Stop Reason" value={run.stopReason ?? '—'} />
-              <Row label="New Jobs" value={formatNullableCount(run.summary.newJobsCount)} />
-              <Row
-                label="Failed Requests"
-                value={formatNullableCount(run.summary.failedRequests)}
-              />
-              <Row label="Crawler Detail Pages" value={String(run.crawler.detailPagesCaptured)} />
-              <Row label="Jobs Processed" value={String(run.ingestion.jobsProcessed)} />
-              <Row label="Jobs Failed" value={String(run.ingestion.jobsFailed)} />
-            </dl>
-          </CardContent>
-        </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Execution Telemetry</CardTitle>
+          <CardDescription>Live execution metrics and termination status.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 text-sm text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusLabeledBadge label="RUN" status={run.status} />
+            <StatusLabeledBadge label="CRAWLER" status={run.crawler.status} />
+            <StatusLabeledBadge label="INGESTION" status={run.ingestion.status} />
+          </div>
+          <dl className="grid gap-2">
+            <Row label="Requested" value={formatDateTime(run.requestedAt)} />
+            <Row label="Started" value={formatDateTime(run.startedAt)} />
+            <Row label="Finished" value={formatDateTime(run.finishedAt)} />
+            <Row label="Last Event" value={formatDateTime(run.lastEventAt)} />
+            <Row label="Stop Reason" value={run.stopReason ?? '—'} />
+            <Row label="New Jobs" value={formatNullableCount(run.summary.newJobsCount)} />
+            <Row label="Failed Requests" value={formatNullableCount(run.summary.failedRequests)} />
+            <Row label="Crawler Detail Pages" value={String(run.crawler.detailPagesCaptured)} />
+            <Row label="Jobs Processed" value={String(run.ingestion.jobsProcessed)} />
+            <Row label="Jobs Failed" value={String(run.ingestion.jobsFailed)} />
+          </dl>
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Event Timeline</CardTitle>
-            <CardDescription>
-              Newest events first. Expand an event to inspect its full payload.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {events.length === 0 ? (
-              <EmptyLabTray
-                title="Empty Lab Tray"
-                description="No indexed events are available for this run yet."
-              />
-            ) : (
-              <Accordion type="multiple" className="w-full">
-                {events.map((event) => (
-                  <AccordionItem key={event.eventId} value={event.eventId}>
-                    <AccordionTrigger>
-                      <div className="grid gap-1 text-left">
-                        <span className="font-mono text-[0.72rem] uppercase tracking-[0.14em] text-muted-foreground">
-                          {event.eventType}
-                        </span>
-                        <span className="text-sm text-foreground">
-                          {formatDateTime(event.occurredAt)}
-                        </span>
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <CardTitle>JSON Artifacts</CardTitle>
+              <CardDescription>
+                Downloadable structured outputs for this run (indexed by control-service).
+              </CardDescription>
+            </div>
+            <Button asChild variant="secondary" size="sm">
+              <a href={`/api/runs/${run.runId}/json-artifacts/download-all`}>Download All</a>
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          {jsonArtifacts.length === 0 ? (
+            <EmptyLabTray
+              title="No JSON Artifacts"
+              description="No downloadable JSON artifacts were indexed for this run."
+            />
+          ) : (
+            <>
+              <div className="grid gap-2">
+                {jsonArtifacts.map((artifact) => (
+                  <button
+                    key={artifact.artifactId}
+                    type="button"
+                    className="flex items-center justify-between gap-3 rounded-sm border border-border px-3 py-3 text-left hover:bg-card"
+                    onClick={() => void openArtifact(artifact.artifactId)}
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-foreground">
+                        {artifact.fileName}
                       </div>
-                    </AccordionTrigger>
-                    <AccordionContent>
-                      <div className="grid gap-3">
-                        <dl className="grid gap-2 text-sm text-muted-foreground">
-                          <Row label="Producer" value={event.producer} />
-                          <Row label="Projection" value={event.projectionStatus} />
-                          <Row label="Source ID" value={event.sourceId ?? '—'} />
-                        </dl>
-                        <pre>{JSON.stringify(event.payload, null, 2)}</pre>
+                      <div className="text-xs text-muted-foreground">
+                        {formatDateTime(artifact.createdAt)} · {artifact.sizeBytes} bytes
                       </div>
-                    </AccordionContent>
-                  </AccordionItem>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {loadingArtifactId === artifact.artifactId ? (
+                        <span className="text-xs text-muted-foreground">Loading</span>
+                      ) : null}
+                      <Button asChild variant="secondary" size="sm">
+                        <a
+                          href={`/api/runs/${run.runId}/json-artifacts/${artifact.artifactId}/download`}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          Download
+                        </a>
+                      </Button>
+                    </div>
+                  </button>
                 ))}
-              </Accordion>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+              </div>
+              {selectedArtifact ? (
+                <div className="grid gap-2 rounded-sm border border-border p-3">
+                  <div className="font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted-foreground">
+                    {selectedArtifact.fileName}
+                  </div>
+                  <pre>{JSON.stringify(selectedArtifact.payload, null, 2)}</pre>
+                </div>
+              ) : null}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Event Timeline</CardTitle>
+          <CardDescription>
+            Newest events first. Expand an event to inspect its full payload.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {events.length === 0 ? (
+            <EmptyLabTray
+              title="Empty Lab Tray"
+              description="No indexed events are available for this run yet."
+            />
+          ) : (
+            <Accordion type="multiple" className="w-full">
+              {events.map((event) => (
+                <AccordionItem key={event.eventId} value={event.eventId}>
+                  <AccordionTrigger>
+                    <div className="grid gap-1 text-left">
+                      <span className="font-mono text-[0.72rem] uppercase tracking-[0.14em] text-muted-foreground">
+                        {event.eventType}
+                      </span>
+                      <span className="text-sm text-foreground">
+                        {formatDateTime(event.occurredAt)}
+                      </span>
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <div className="grid gap-3">
+                      <dl className="grid gap-2 text-sm text-muted-foreground">
+                        <Row label="Producer" value={event.producer} />
+                        <Row label="Projection" value={event.projectionStatus} />
+                        <Row label="Source ID" value={event.sourceId ?? '—'} />
+                      </dl>
+                      <pre>{JSON.stringify(event.payload, null, 2)}</pre>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Button asChild variant="secondary">

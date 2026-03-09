@@ -57,7 +57,16 @@ export const envSchema = z
     PUBSUB_EVENTS_SUBSCRIPTION: optionalStringSchema,
     PUBSUB_AUTO_CREATE_SUBSCRIPTION: toBoolean.default(true),
     ENABLE_PUBSUB_CONSUMER: toBoolean.default(true),
-    MONGODB_URI: z.string().trim().min(1),
+    MONGODB_SINK_MAX_POOL_SIZE: z.coerce.number().int().positive().max(200).default(20),
+    MONGODB_SINK_MAX_CONNECTING: z.coerce.number().int().positive().max(50).default(4),
+    MONGODB_SINK_WAIT_QUEUE_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(120_000)
+      .default(10_000),
+    MONGODB_SINK_IDLE_TTL_MS: z.coerce.number().int().positive().max(600_000).default(60_000),
+    MONGODB_SINK_MAX_ACTIVE_CLIENTS: z.coerce.number().int().positive().max(64).default(8),
     INGESTION_PARSER_BACKEND: z.enum(['gemini', 'fixture']).default('gemini'),
     GEMINI_API_KEY: optionalStringSchema,
     LANGSMITH_API_KEY: optionalStringSchema,

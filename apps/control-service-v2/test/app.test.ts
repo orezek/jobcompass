@@ -23,6 +23,9 @@ function createEnv(overrides: Partial<EnvSchema> = {}): EnvSchema {
     CONTROL_PLANE_ARTIFACT_STORAGE_LOCAL_BASE_PATH: 'control-plane-artifacts',
     CONTROL_PLANE_ARTIFACT_STORAGE_GCS_BUCKET: undefined,
     CONTROL_PLANE_ARTIFACT_STORAGE_GCS_PREFIX: '',
+    CONTROL_PLANE_JSON_BUNDLE_MAX_BYTES: 104_857_600,
+    CONTROL_PLANE_JSON_BUNDLE_TIMEOUT_MS: 120_000,
+    CONTROL_PLANE_SKIP_SINK_PREFLIGHT: true,
     GCP_PROJECT_ID: 'omnicrawl-dev',
     PUBSUB_EVENTS_TOPIC: 'run-events',
     PUBSUB_EVENTS_SUBSCRIPTION: 'control-service-events',
@@ -58,6 +61,24 @@ test('healthz is auth-exempt and heartbeat requires bearer auth', async () => {
     async updatePipeline() {
       return {};
     },
+    async deletePipeline() {
+      return {
+        ok: true,
+        accepted: true,
+        pipelineId: 'pipeline-1',
+        deleteJobId: 'delete-1',
+        status: 'deleting',
+      };
+    },
+    async getPipelineDeleteStatus() {
+      return {
+        ok: true,
+        pipelineId: 'pipeline-1',
+        deleteJobId: 'delete-1',
+        status: 'deleting',
+        progress: { totalSteps: 5, completedSteps: 1 },
+      };
+    },
     async startPipelineRun() {
       return {
         ok: true,
@@ -78,6 +99,26 @@ test('healthz is auth-exempt and heartbeat requires bearer auth', async () => {
     },
     async listRunEvents() {
       return { items: [], nextCursor: null };
+    },
+    async listRunJsonArtifacts() {
+      return { runId: 'run-1', items: [], nextCursor: null };
+    },
+    async getRunJsonArtifact() {
+      return { artifactId: 'artifact-1', fileName: 'artifact-1.json', payload: {} };
+    },
+    async downloadRunJsonArtifact() {
+      return {
+        fileName: 'artifact-1.json',
+        contentType: 'application/json',
+        buffer: Buffer.from('{}'),
+      };
+    },
+    async downloadAllRunJsonArtifacts() {
+      return {
+        fileName: 'run-1-json-artifacts.zip',
+        contentType: 'application/zip',
+        buffer: Buffer.alloc(0),
+      };
     },
   };
 

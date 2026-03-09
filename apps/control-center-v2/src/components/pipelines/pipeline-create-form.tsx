@@ -21,21 +21,19 @@ const defaultValues: PipelineCreateFormValues = {
   name: '',
   source: 'jobs.cz',
   mode: 'crawl_and_ingest',
-  searchSpaceId: '',
   searchSpaceName: '',
   searchSpaceDescription: '',
   startUrlsText: '',
   maxItems: 200,
   allowInactiveMarking: true,
-  runtimeProfileId: '',
   runtimeProfileName: '',
   crawlerMaxConcurrency: 3,
   crawlerMaxRequestsPerMinute: 60,
   ingestionConcurrency: 4,
-  ingestionEnabled: true,
-  debugLog: false,
   includeMongoOutput: true,
   includeDownloadableJson: false,
+  operatorMongoUri: '',
+  operatorDbName: '',
 };
 
 export function PipelineCreateForm() {
@@ -47,6 +45,8 @@ export function PipelineCreateForm() {
   });
 
   const mode = form.watch('mode');
+  const includeMongoOutput = form.watch('includeMongoOutput');
+  const canEditInactiveMarking = mode === 'crawl_and_ingest' && includeMongoOutput;
 
   const submit = form.handleSubmit(async (values) => {
     setErrorMessage(null);
@@ -112,14 +112,9 @@ export function PipelineCreateForm() {
           <CardDescription>Pipeline-owned crawl scope.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Search Space ID" error={form.formState.errors.searchSpaceId?.message}>
-              <Input {...form.register('searchSpaceId')} placeholder="prague-tech-jobs" />
-            </Field>
-            <Field label="Search Space Name" error={form.formState.errors.searchSpaceName?.message}>
-              <Input {...form.register('searchSpaceName')} placeholder="Prague Tech Jobs" />
-            </Field>
-          </div>
+          <Field label="Search Space Name" error={form.formState.errors.searchSpaceName?.message}>
+            <Input {...form.register('searchSpaceName')} placeholder="Prague Tech Jobs" />
+          </Field>
           <Field label="Description" error={form.formState.errors.searchSpaceDescription?.message}>
             <Textarea {...form.register('searchSpaceDescription')} rows={3} />
           </Field>
@@ -138,6 +133,7 @@ export function PipelineCreateForm() {
             </Field>
             <CheckboxField
               label="Allow inactive marking"
+              disabled={!canEditInactiveMarking}
               {...form.register('allowInactiveMarking')}
             />
           </div>
@@ -150,20 +146,12 @@ export function PipelineCreateForm() {
           <CardDescription>Snapshot the crawler and ingestion operating profile.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field
-              label="Runtime Profile ID"
-              error={form.formState.errors.runtimeProfileId?.message}
-            >
-              <Input {...form.register('runtimeProfileId')} placeholder="runtime-prague-tech" />
-            </Field>
-            <Field
-              label="Runtime Profile Name"
-              error={form.formState.errors.runtimeProfileName?.message}
-            >
-              <Input {...form.register('runtimeProfileName')} placeholder="Prague Tech Runtime" />
-            </Field>
-          </div>
+          <Field
+            label="Runtime Profile Name"
+            error={form.formState.errors.runtimeProfileName?.message}
+          >
+            <Input {...form.register('runtimeProfileName')} placeholder="Prague Tech Runtime" />
+          </Field>
           <div className="grid gap-4 md:grid-cols-3">
             <Field
               label="Crawler Max Concurrency"
@@ -194,14 +182,6 @@ export function PipelineCreateForm() {
               />
             </Field>
           </div>
-          <div className="grid gap-2 md:grid-cols-2">
-            <CheckboxField
-              label="Enable ingestion"
-              disabled={mode === 'crawl_only'}
-              {...form.register('ingestionEnabled')}
-            />
-            <CheckboxField label="Enable debug log" {...form.register('debugLog')} />
-          </div>
         </CardContent>
       </Card>
 
@@ -223,6 +203,27 @@ export function PipelineCreateForm() {
             disabled={mode === 'crawl_only'}
             {...form.register('includeDownloadableJson')}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Operator Sink</CardTitle>
+          <CardDescription>
+            Run outputs are written to this pipeline-scoped MongoDB sink.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <Field label="MongoDB URI" error={form.formState.errors.operatorMongoUri?.message}>
+            <Input
+              {...form.register('operatorMongoUri')}
+              autoComplete="off"
+              placeholder="mongodb+srv://cluster.example.net"
+            />
+          </Field>
+          <Field label="Database Name" error={form.formState.errors.operatorDbName?.message}>
+            <Input {...form.register('operatorDbName')} placeholder="pl-prague-tech-01" />
+          </Field>
         </CardContent>
       </Card>
 
