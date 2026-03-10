@@ -18,6 +18,7 @@ import {
 } from '@repo/control-plane-contracts/v2';
 import {
   PlaywrightCrawler,
+  RequestQueue,
   createPlaywrightRouter,
   type PlaywrightCrawlingContext,
   type PlaywrightCrawler as PlaywrightCrawlerType,
@@ -680,12 +681,14 @@ export class CrawlerWorkerRuntime {
     run: RunState;
     maxRequestsPerCrawl: number;
     handleRequest: (context: PlaywrightCrawlingContext) => Promise<void>;
+    requestQueue?: RequestQueue;
   }): PlaywrightCrawlerType {
     const runtimeSnapshot = input.run.request.runtimeSnapshot;
     return new PlaywrightCrawler({
       maxRequestsPerCrawl: input.maxRequestsPerCrawl,
       maxConcurrency: runtimeSnapshot.crawlerMaxConcurrency,
       maxRequestsPerMinute: runtimeSnapshot.crawlerMaxRequestsPerMinute,
+      requestQueue: input.requestQueue,
       requestHandler: async (context) => {
         this.touchHeartbeat(input.run);
         await input.handleRequest(context);
@@ -707,6 +710,10 @@ export class CrawlerWorkerRuntime {
         },
       },
     });
+  }
+
+  private buildRunQueueName(runId: string, phase: 'list' | 'detail'): string {
+    return `crawler-${phase}-${runId}`;
   }
 
   private async handleListPage(
@@ -786,22 +793,33 @@ export class CrawlerWorkerRuntime {
     searchSpaceSnapshot: V2CrawlerSearchSpaceSnapshot,
   ): Promise<ListPhaseResult> {
     const listings = new Map<string, CrawlListingRecord>();
+    const requestQueue = await RequestQueue.open(this.buildRunQueueName(run.runId, 'list'));
     const listCrawler = this.createCrawler({
       run,
       maxRequestsPerCrawl: Math.max(searchSpaceSnapshot.maxItems * 5, 50),
+      requestQueue,
       handleRequest: async (context) => {
         await this.handleListPage(run, context, listings);
       },
     });
 
-    run.currentCrawler = listCrawler;
-    await listCrawler.run(
-      searchSpaceSnapshot.startUrls.map((url) => ({
-        url,
-        label: 'LIST',
-      })),
-    );
-    run.currentCrawler = null;
+    try {
+      run.currentCrawler = listCrawler;
+      await listCrawler.run(
+        searchSpaceSnapshot.startUrls.map((url) => ({
+          url,
+          label: 'LIST',
+        })),
+      );
+    } finally {
+      run.currentCrawler = null;
+      await requestQueue.drop().catch((error) => {
+        this.deps.logger.warn(
+          { err: error, runId: run.runId, phase: 'list' },
+          'Failed to drop crawler list request queue.',
+        );
+      });
+    }
     run.listPhaseCompleted = !run.cancelRequested;
 
     const listPhaseTrustworthy =
@@ -826,6 +844,7 @@ export class CrawlerWorkerRuntime {
     listings: CrawlListingRecord[],
   ): Promise<Array<Record<string, unknown>>> {
     const datasetRecords: Array<Record<string, unknown>> = [];
+    const requestQueue = await RequestQueue.open(this.buildRunQueueName(run.runId, 'detail'));
     const sink = toLegacyArtifactSink(run.request.artifactSink);
     await ensureArtifactRunReady({
       destination: sink,
@@ -836,22 +855,32 @@ export class CrawlerWorkerRuntime {
     const detailCrawler = this.createCrawler({
       run,
       maxRequestsPerCrawl: Math.max(listings.length * 5, 50),
+      requestQueue,
       handleRequest: async (context) => {
         await this.handleDetailPage(run, context, datasetRecords, sink);
       },
     });
 
-    run.currentCrawler = detailCrawler;
-    await detailCrawler.run(
-      listings.map((listing) => ({
-        url: listing.adUrl,
-        label: 'DETAIL',
-        userData: {
-          listing,
-        },
-      })),
-    );
-    run.currentCrawler = null;
+    try {
+      run.currentCrawler = detailCrawler;
+      await detailCrawler.run(
+        listings.map((listing) => ({
+          url: listing.adUrl,
+          label: 'DETAIL',
+          userData: {
+            listing,
+          },
+        })),
+      );
+    } finally {
+      run.currentCrawler = null;
+      await requestQueue.drop().catch((error) => {
+        this.deps.logger.warn(
+          { err: error, runId: run.runId, phase: 'detail' },
+          'Failed to drop crawler detail request queue.',
+        );
+      });
+    }
 
     if (!run.cancelRequested) {
       run.datasetRecordsStored = datasetRecords.length;
