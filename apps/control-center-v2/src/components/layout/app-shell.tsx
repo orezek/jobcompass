@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
@@ -14,6 +14,39 @@ const navItems = [
   { href: '/pipelines', label: 'Pipelines', short: 'PI' },
   { href: '/runs', label: 'Runs', short: 'RU' },
 ];
+const sidebarOpenStorageKey = 'control-center-v2.sidebar.open';
+
+function readSidebarOpenPreference(): boolean | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const value = window.localStorage.getItem(sidebarOpenStorageKey);
+    if (value === 'true') {
+      return true;
+    }
+    if (value === 'false') {
+      return false;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function writeSidebarOpenPreference(isOpen: boolean): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(sidebarOpenStorageKey, isOpen ? 'true' : 'false');
+  } catch {
+    // Ignore storage errors (private mode/quota), keep in-memory behavior.
+  }
+}
 
 const heartbeatToState = (
   heartbeat: ControlServiceHeartbeat | null,
@@ -101,6 +134,21 @@ export function AppShell({
   const pageHeader = getPageHeader(pathname);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
+  useEffect(() => {
+    const storedPreference = readSidebarOpenPreference();
+    if (storedPreference !== null) {
+      setIsSidebarOpen(storedPreference);
+    }
+  }, []);
+
+  const toggleSidebar = () => {
+    setIsSidebarOpen((current) => {
+      const next = !current;
+      writeSidebarOpenPreference(next);
+      return next;
+    });
+  };
+
   return (
     <div className="min-h-dvh bg-background text-foreground">
       <div className="mx-auto flex min-h-dvh max-w-[1440px]">
@@ -137,7 +185,7 @@ export function AppShell({
                     variant="ghost"
                     size="sm"
                     className="h-8 w-8 px-0 py-0 flex items-center justify-center text-muted-foreground hover:text-foreground"
-                    onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                    onClick={toggleSidebar}
                     aria-label="Toggle navigation"
                   >
                     <svg
