@@ -189,10 +189,11 @@ export function PipelineCreateForm() {
         <CardHeader>
           <CardTitle>Structured Output</CardTitle>
           <CardDescription>
-            Choose the output sinks the UI will request from the pipeline snapshot.
+            Choose output sinks for the pipeline snapshot. Mongo sink options are configurable only
+            when MongoDB output is selected.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-2">
+        <CardContent className="grid gap-3">
           <CheckboxField
             label="MongoDB"
             disabled={mode === 'crawl_only'}
@@ -203,27 +204,21 @@ export function PipelineCreateForm() {
             disabled={mode === 'crawl_only'}
             {...form.register('includeDownloadableJson')}
           />
-        </CardContent>
-      </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Operator Sink</CardTitle>
-          <CardDescription>
-            Run outputs are written to this pipeline-scoped MongoDB sink.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4">
-          <Field label="MongoDB URI" error={form.formState.errors.operatorMongoUri?.message}>
-            <Input
-              {...form.register('operatorMongoUri')}
-              autoComplete="off"
-              placeholder="mongodb+srv://cluster.example.net"
-            />
-          </Field>
-          <Field label="Database Name" error={form.formState.errors.operatorDbName?.message}>
-            <Input {...form.register('operatorDbName')} placeholder="pl-prague-tech-01" />
-          </Field>
+          {includeMongoOutput ? (
+            <div className="mt-1 grid gap-4 rounded-sm border border-border bg-card/40 p-4">
+              <Field label="MongoDB URI" error={form.formState.errors.operatorMongoUri?.message}>
+                <Input
+                  {...form.register('operatorMongoUri')}
+                  autoComplete="off"
+                  placeholder="mongodb+srv://cluster.example.net"
+                />
+              </Field>
+              <Field label="Database Name" error={form.formState.errors.operatorDbName?.message}>
+                <Input {...form.register('operatorDbName')} placeholder="pl-prague-tech-01" />
+              </Field>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

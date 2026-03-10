@@ -508,9 +508,12 @@ export function PipelineDetailClient({
         <Card>
           <CardHeader>
             <CardTitle>Structured Output</CardTitle>
-            <CardDescription>MongoDB and downloadable JSON destination toggles.</CardDescription>
+            <CardDescription>
+              MongoDB and downloadable JSON destination toggles. Mongo sink options are available
+              only when MongoDB output is enabled.
+            </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-2">
+          <CardContent className="grid gap-3">
             <CheckboxField
               label="MongoDB"
               checked={draft.includeMongoOutput}
@@ -537,43 +540,37 @@ export function PipelineDetailClient({
                 draft.mode === 'crawl_only' || hasActiveRun || deletePending || saveConfigPending
               }
             />
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Operator Sink</CardTitle>
-            <CardDescription>
-              MongoDB URI is write-only. Enter URI only when rotating or changing sink target.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <Field label="MongoDB URI (write-only)">
-              <Input
-                value={sinkMongoUri}
-                onChange={(event) => setSinkMongoUri(event.target.value)}
-                autoComplete="off"
-                placeholder={
-                  pipeline.operatorSink.hasMongoUri
-                    ? 'Configured. Enter new URI to rotate.'
-                    : 'mongodb+srv://cluster.example.net'
-                }
-                disabled={hasActiveRun || deletePending || saveSinkPending}
-              />
-            </Field>
-            <Field label="Database Name">
-              <Input
-                value={sinkDbName}
-                onChange={(event) => setSinkDbName(event.target.value)}
-                disabled={hasActiveRun || deletePending || saveSinkPending}
-              />
-            </Field>
-            <Button
-              onClick={submitSink}
-              disabled={hasActiveRun || deletePending || saveSinkPending}
-            >
-              {saveSinkPending ? 'Saving' : 'Save Sink'}
-            </Button>
+            {draft.includeMongoOutput ? (
+              <div className="mt-1 grid gap-4 rounded-sm border border-border bg-card/40 p-4">
+                <Field label="MongoDB URI (write-only)">
+                  <Input
+                    value={sinkMongoUri}
+                    onChange={(event) => setSinkMongoUri(event.target.value)}
+                    autoComplete="off"
+                    placeholder={
+                      pipeline.operatorSink.hasMongoUri
+                        ? 'Configured. Enter new URI to rotate.'
+                        : 'mongodb+srv://cluster.example.net'
+                    }
+                    disabled={hasActiveRun || deletePending || saveSinkPending}
+                  />
+                </Field>
+                <Field label="Database Name">
+                  <Input
+                    value={sinkDbName}
+                    onChange={(event) => setSinkDbName(event.target.value)}
+                    disabled={hasActiveRun || deletePending || saveSinkPending}
+                  />
+                </Field>
+                <Button
+                  onClick={submitSink}
+                  disabled={hasActiveRun || deletePending || saveSinkPending}
+                >
+                  {saveSinkPending ? 'Saving' : 'Save Mongo Sink'}
+                </Button>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       </div>
