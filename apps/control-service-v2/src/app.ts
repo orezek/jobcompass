@@ -248,7 +248,7 @@ export function registerControlServiceRoutes(
 
     reply.header('Content-Type', result.contentType);
     reply.header('Content-Disposition', `attachment; filename="${result.fileName}"`);
-    return reply.send(result.buffer);
+    return reply.send(result.stream);
   });
 
   app.get('/v1/runs/:runId/json-artifacts/:artifactId', async (request) =>

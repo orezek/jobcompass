@@ -38,7 +38,7 @@ import {
 } from './run-model.js';
 import type { ControlServiceState } from './service-state.js';
 import type { StreamHub } from './stream-hub.js';
-import { createZipArchive } from './zip.js';
+import { createZipArchiveStream } from './zip.js';
 import { WorkerClientError } from './worker-client.js';
 
 const MONGO_DB_NAME_MAX_BYTES = 38;
@@ -115,7 +115,7 @@ function redactMongoUri(uri: string): string {
 }
 
 function isActiveRunStatus(status: string): boolean {
-  return status === 'queued' || status === 'running' || status === 'stopping';
+  return status === 'queued' || status === 'running';
 }
 
 function joinPathSegments(...parts: string[]): string {
@@ -527,7 +527,7 @@ export class ControlService {
   public async downloadAllRunJsonArtifacts(runId: string): Promise<{
     fileName: string;
     contentType: 'application/zip';
-    buffer: Buffer;
+    stream: NodeJS.ReadableStream;
   }> {
     await this.assertRunExists(runId);
     const entries = await this.collectAllRunJsonArtifacts(runId);
@@ -582,11 +582,10 @@ export class ControlService {
       });
     }
 
-    const bundle = createZipArchive(files);
     return {
       fileName: `${runId}-json-artifacts.zip`,
       contentType: 'application/zip',
-      buffer: bundle,
+      stream: createZipArchiveStream(files),
     };
   }
 

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Readable } from 'node:stream';
 import test from 'node:test';
 import Fastify from 'fastify';
 import { registerControlServiceRoutes } from '../src/app.js';
@@ -117,7 +118,7 @@ test('healthz is auth-exempt and heartbeat requires bearer auth', async () => {
       return {
         fileName: 'run-1-json-artifacts.zip',
         contentType: 'application/zip',
-        buffer: Buffer.alloc(0),
+        stream: Readable.from(Buffer.alloc(0)),
       };
     },
   };

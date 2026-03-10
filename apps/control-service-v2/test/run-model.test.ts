@@ -33,6 +33,10 @@ test('buildRunManifest keeps ingestion start-run event-driven only', () => {
 
   assert.equal(manifest.workerCommands.crawler.runId, runId);
   assert.equal(manifest.workerCommands.crawler.artifactSink.type, 'gcs');
+  assert.equal(
+    manifest.workerCommands.crawler.artifactSink.prefix,
+    `runs/pipelines/${controlPlanePipelineV2Fixture.pipelineId}/artifacts/html`,
+  );
   assert.equal(manifest.workerCommands.ingestion?.runId, runId);
   assert.deepEqual(manifest.workerCommands.ingestion?.inputRef, {
     crawlRunId: runId,

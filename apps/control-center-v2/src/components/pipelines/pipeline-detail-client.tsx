@@ -6,6 +6,17 @@ import { useMemo, useState } from 'react';
 import { EmptyLabTray } from '@/components/state/empty-lab-tray';
 import { LiveIndicator } from '@/components/state/live-indicator';
 import { StatusBadge } from '@/components/state/status-badge';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -35,7 +46,9 @@ type EditablePipelineDraft = {
   includeDownloadableJson: boolean;
 };
 
-const activeRunStatuses = new Set(['queued', 'running', 'stopping']);
+const activeRunStatuses = new Set(['queued', 'running']);
+const DELETE_STATUS_POLL_INTERVAL_MS = 1_000;
+const DELETE_STATUS_POLL_MAX_ATTEMPTS = 90;
 
 function createInitialDraft(pipeline: ControlPlanePipeline): EditablePipelineDraft {
   return {
@@ -75,6 +88,7 @@ export function PipelineDetailClient({
   const [saveConfigPending, setSaveConfigPending] = useState(false);
   const [saveSinkPending, setSaveSinkPending] = useState(false);
   const [startPending, setStartPending] = useState(false);
+  const [deletePending, setDeletePending] = useState(false);
   const connectionState = useControlStream({
     pipelineId: pipeline.pipelineId,
     onRunUpserted: (run) => {
@@ -184,6 +198,68 @@ export function PipelineDetailClient({
     router.refresh();
   };
 
+  const pollDeleteStatus = async (): Promise<'deleted' | 'delete_failed'> => {
+    for (let attempt = 0; attempt < DELETE_STATUS_POLL_MAX_ATTEMPTS; attempt += 1) {
+      const response = await fetch(`/api/pipelines/${pipeline.pipelineId}/delete-status`, {
+        method: 'GET',
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        throw new Error(payload?.error?.message ?? 'Unable to fetch pipeline delete status.');
+      }
+
+      const payload = (await response.json()) as {
+        status: 'deleting' | 'deleted' | 'delete_failed';
+        lastError?: { message?: string };
+      };
+
+      if (payload.status === 'deleted') {
+        return 'deleted';
+      }
+      if (payload.status === 'delete_failed') {
+        throw new Error(payload.lastError?.message ?? 'Pipeline delete job failed.');
+      }
+
+      await new Promise((resolve) => {
+        setTimeout(resolve, DELETE_STATUS_POLL_INTERVAL_MS);
+      });
+    }
+
+    throw new Error('Pipeline delete status polling timed out.');
+  };
+
+  const deletePipeline = async () => {
+    setDeletePending(true);
+    setErrorMessage(null);
+    const response = await fetch(`/api/pipelines/${pipeline.pipelineId}`, {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      setDeletePending(false);
+      const payload = (await response.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      setErrorMessage(payload?.error?.message ?? 'Unable to delete pipeline.');
+      return;
+    }
+
+    try {
+      await pollDeleteStatus();
+      router.push('/pipelines');
+      router.refresh();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Pipeline delete failed.');
+      setDeletePending(false);
+      return;
+    }
+
+    setDeletePending(false);
+  };
+
   return (
     <div className="grid gap-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -198,15 +274,45 @@ export function PipelineDetailClient({
         </div>
         <div className="flex items-center gap-3">
           <LiveIndicator state={connectionState} />
-          <Button onClick={startRun} disabled={startPending || hasActiveRun}>
+          <Button onClick={startRun} disabled={startPending || deletePending || hasActiveRun}>
             {startPending ? 'Starting' : 'Start Run'}
           </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="danger" disabled={deletePending || hasActiveRun}>
+                {deletePending ? 'Deleting' : 'Delete Pipeline'}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete this pipeline?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This operation permanently deletes pipeline metadata, run history, sink data, and
+                  artifacts. The action cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Keep Pipeline</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={deletePipeline}
+                  disabled={deletePending || hasActiveRun}
+                >
+                  {deletePending ? 'Deleting' : 'Delete Pipeline'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
 
       {hasActiveRun ? (
         <p className="text-sm text-muted-foreground">
           Pipeline editing is disabled while a run is active. Cancel and drain the active run first.
+        </p>
+      ) : null}
+      {deletePending ? (
+        <p className="text-sm text-muted-foreground">
+          Pipeline delete job is running. You will be redirected once deletion is complete.
         </p>
       ) : null}
       {errorMessage ? <p className="text-sm text-destructive-foreground">{errorMessage}</p> : null}
@@ -225,7 +331,7 @@ export function PipelineDetailClient({
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, name: event.target.value }))
                 }
-                disabled={hasActiveRun || saveConfigPending}
+                disabled={hasActiveRun || deletePending || saveConfigPending}
               />
             </Field>
             <Field label="Mode">
@@ -238,7 +344,7 @@ export function PipelineDetailClient({
                     mode: event.target.value as 'crawl_only' | 'crawl_and_ingest',
                   }))
                 }
-                disabled={hasActiveRun || saveConfigPending}
+                disabled={hasActiveRun || deletePending || saveConfigPending}
               >
                 <option value="crawl_and_ingest">Crawl And Ingest</option>
                 <option value="crawl_only">Crawl Only</option>
@@ -248,7 +354,10 @@ export function PipelineDetailClient({
               <Input value={pipeline.source} disabled />
             </Field>
             <div className="mt-4 flex items-center gap-4">
-              <Button onClick={submitConfig} disabled={hasActiveRun || saveConfigPending}>
+              <Button
+                onClick={submitConfig}
+                disabled={hasActiveRun || deletePending || saveConfigPending}
+              >
                 {saveConfigPending ? 'Saving' : 'Save Pipeline Config'}
               </Button>
               <StatusBadge status={pipeline.status} />
@@ -268,7 +377,7 @@ export function PipelineDetailClient({
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, searchSpaceName: event.target.value }))
                 }
-                disabled={hasActiveRun || saveConfigPending}
+                disabled={hasActiveRun || deletePending || saveConfigPending}
               />
             </Field>
             <Field label="Description">
@@ -281,7 +390,7 @@ export function PipelineDetailClient({
                     searchSpaceDescription: event.target.value,
                   }))
                 }
-                disabled={hasActiveRun || saveConfigPending}
+                disabled={hasActiveRun || deletePending || saveConfigPending}
               />
             </Field>
             <Field label="Start URLs (one per line)">
@@ -291,7 +400,7 @@ export function PipelineDetailClient({
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, startUrlsText: event.target.value }))
                 }
-                disabled={hasActiveRun || saveConfigPending}
+                disabled={hasActiveRun || deletePending || saveConfigPending}
               />
             </Field>
             <div className="grid gap-4 md:grid-cols-[minmax(0,220px),1fr]">
@@ -305,7 +414,7 @@ export function PipelineDetailClient({
                       maxItems: Number(event.target.value || 0),
                     }))
                   }
-                  disabled={hasActiveRun || saveConfigPending}
+                  disabled={hasActiveRun || deletePending || saveConfigPending}
                 />
               </Field>
               <CheckboxField
@@ -317,7 +426,9 @@ export function PipelineDetailClient({
                     allowInactiveMarking: event.target.checked,
                   }))
                 }
-                disabled={!canEditInactiveMarking || hasActiveRun || saveConfigPending}
+                disabled={
+                  !canEditInactiveMarking || hasActiveRun || deletePending || saveConfigPending
+                }
               />
             </div>
             <dl className="grid gap-2 text-sm text-muted-foreground">
@@ -338,7 +449,7 @@ export function PipelineDetailClient({
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, runtimeProfileName: event.target.value }))
                 }
-                disabled={hasActiveRun || saveConfigPending}
+                disabled={hasActiveRun || deletePending || saveConfigPending}
               />
             </Field>
             <div className="grid gap-4 md:grid-cols-3">
@@ -354,7 +465,7 @@ export function PipelineDetailClient({
                         : undefined,
                     }))
                   }
-                  disabled={hasActiveRun || saveConfigPending}
+                  disabled={hasActiveRun || deletePending || saveConfigPending}
                 />
               </Field>
               <Field label="Crawler RPM">
@@ -369,7 +480,7 @@ export function PipelineDetailClient({
                         : undefined,
                     }))
                   }
-                  disabled={hasActiveRun || saveConfigPending}
+                  disabled={hasActiveRun || deletePending || saveConfigPending}
                 />
               </Field>
               <Field label="Ingestion Concurrency">
@@ -384,7 +495,12 @@ export function PipelineDetailClient({
                         : undefined,
                     }))
                   }
-                  disabled={draft.mode === 'crawl_only' || hasActiveRun || saveConfigPending}
+                  disabled={
+                    draft.mode === 'crawl_only' ||
+                    hasActiveRun ||
+                    deletePending ||
+                    saveConfigPending
+                  }
                 />
               </Field>
             </div>
@@ -409,7 +525,9 @@ export function PipelineDetailClient({
                   includeMongoOutput: event.target.checked,
                 }))
               }
-              disabled={draft.mode === 'crawl_only' || hasActiveRun || saveConfigPending}
+              disabled={
+                draft.mode === 'crawl_only' || hasActiveRun || deletePending || saveConfigPending
+              }
             />
             <CheckboxField
               label="Downloadable JSON"
@@ -420,7 +538,9 @@ export function PipelineDetailClient({
                   includeDownloadableJson: event.target.checked,
                 }))
               }
-              disabled={draft.mode === 'crawl_only' || hasActiveRun || saveConfigPending}
+              disabled={
+                draft.mode === 'crawl_only' || hasActiveRun || deletePending || saveConfigPending
+              }
             />
           </CardContent>
         </Card>
@@ -443,17 +563,20 @@ export function PipelineDetailClient({
                     ? 'Configured. Enter new URI to rotate.'
                     : 'mongodb+srv://cluster.example.net'
                 }
-                disabled={hasActiveRun || saveSinkPending}
+                disabled={hasActiveRun || deletePending || saveSinkPending}
               />
             </Field>
             <Field label="Database Name">
               <Input
                 value={sinkDbName}
                 onChange={(event) => setSinkDbName(event.target.value)}
-                disabled={hasActiveRun || saveSinkPending}
+                disabled={hasActiveRun || deletePending || saveSinkPending}
               />
             </Field>
-            <Button onClick={submitSink} disabled={hasActiveRun || saveSinkPending}>
+            <Button
+              onClick={submitSink}
+              disabled={hasActiveRun || deletePending || saveSinkPending}
+            >
               {saveSinkPending ? 'Saving' : 'Save Sink'}
             </Button>
           </CardContent>

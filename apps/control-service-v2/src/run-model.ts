@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { z } from 'zod';
 import {
   controlPlanePipelineV2Schema,
@@ -145,12 +146,31 @@ function resolvePipelineMongoUri(pipeline: ControlPlanePipeline): string {
   return uri;
 }
 
+function resolveCrawlerArtifactSink(
+  artifactSink: ControlPlaneArtifactSink,
+  pipelineId: string,
+): ControlPlaneArtifactSink {
+  if (artifactSink.type === 'gcs') {
+    return v2ArtifactSinkSchema.parse({
+      type: 'gcs',
+      bucket: artifactSink.bucket,
+      prefix: joinPathSegments(artifactSink.prefix, 'pipelines', pipelineId, 'artifacts', 'html'),
+    });
+  }
+
+  return v2ArtifactSinkSchema.parse({
+    type: 'local_filesystem',
+    basePath: path.join(artifactSink.basePath, 'pipelines', pipelineId, 'artifacts', 'html'),
+  });
+}
+
 export function buildCrawlerStartRunRequest(
   pipeline: ControlPlanePipeline,
   runId: string,
   artifactSink: ControlPlaneArtifactSink,
 ) {
   const mongodbUri = resolvePipelineMongoUri(pipeline);
+  const scopedArtifactSink = resolveCrawlerArtifactSink(artifactSink, pipeline.pipelineId);
 
   return crawlerStartRunRequestV2Schema.parse({
     contractVersion: 'v2',
@@ -176,7 +196,7 @@ export function buildCrawlerStartRunRequest(
       mongodbUri,
       dbName: pipeline.dbName,
     },
-    artifactSink,
+    artifactSink: scopedArtifactSink,
   });
 }
 

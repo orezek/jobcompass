@@ -410,6 +410,10 @@ test('startPipelineRun dispatches ingestion first then crawler for crawl_and_ing
   const persistedManifest = store.manifests.get(response.runId);
   assert.ok(persistedManifest);
   assert.equal(persistedManifest?.workerCommands.crawler.artifactSink.type, 'gcs');
+  assert.equal(
+    persistedManifest?.workerCommands.crawler.artifactSink.prefix,
+    `runs/pipelines/${controlPlanePipelineV2Fixture.pipelineId}/artifacts/html`,
+  );
 });
 
 test('createPipeline generates linkage IDs and keeps operator dbName', async () => {

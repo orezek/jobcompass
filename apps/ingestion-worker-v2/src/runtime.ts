@@ -109,6 +109,7 @@ type RunState = {
   seenDedupeKeys: Set<string>;
   inFlightDedupeKeys: Set<string>;
   pendingRetryDedupeKeys: Set<string>;
+  transientRetryAttemptsByDedupeKey: Map<string, number>;
   lastHeartbeatAt: string;
   noDetailTimeoutHandle: ReturnType<typeof setTimeout> | null;
   sinkLease: MongoSinkLease | null;
@@ -158,6 +159,9 @@ type StartRunResponse = z.infer<typeof startRunAcceptedResponseV2Schema>;
 const INGESTION_RUN_SUMMARIES_COLLECTION = 'ingestion_run_summaries';
 const NORMALIZED_JOB_ADS_COLLECTION = 'normalized_jobs';
 const NO_DETAIL_EVENTS_TIMEOUT_MS = 60_000;
+const TRANSIENT_PROCESSING_MAX_RETRY_ATTEMPTS = 3;
+const TRANSIENT_PROCESSING_INITIAL_BACKOFF_MS = 500;
+const TRANSIENT_PROCESSING_MAX_BACKOFF_MS = 4_000;
 
 export class ConflictError extends Error {
   public readonly statusCode = 409;
@@ -264,6 +268,21 @@ function isTransientProcessingError(error: unknown): boolean {
   ];
 
   return transientMessagePatterns.some((pattern) => message.includes(pattern));
+}
+
+export function computeTransientProcessingRetryBackoffMs(retryAttempt: number): number {
+  if (!Number.isFinite(retryAttempt) || retryAttempt <= 0) {
+    return TRANSIENT_PROCESSING_INITIAL_BACKOFF_MS;
+  }
+
+  return Math.min(
+    TRANSIENT_PROCESSING_INITIAL_BACKOFF_MS * 2 ** (retryAttempt - 1),
+    TRANSIENT_PROCESSING_MAX_BACKOFF_MS,
+  );
+}
+
+export function shouldRetryTransientProcessingFailure(retryAttempt: number): boolean {
+  return retryAttempt <= TRANSIENT_PROCESSING_MAX_RETRY_ATTEMPTS;
 }
 
 export class IngestionWorkerRuntime {
@@ -403,6 +422,7 @@ export class IngestionWorkerRuntime {
       seenDedupeKeys: new Set<string>(),
       inFlightDedupeKeys: new Set<string>(),
       pendingRetryDedupeKeys: new Set<string>(),
+      transientRetryAttemptsByDedupeKey: new Map<string, number>(),
       lastHeartbeatAt: startedAt,
       noDetailTimeoutHandle: setTimeout(() => {
         void this.expireRunWithoutDetailItems(parsedRequest.runId);
@@ -737,14 +757,10 @@ export class IngestionWorkerRuntime {
         .then((result) => {
           workItem.resolve(result);
         })
-        .catch((error: unknown) => {
+        .catch(async (error: unknown) => {
           this.deps.logger.error({ err: error, runId: run.runId }, 'Queue item processing failed.');
-          run.inFlightDedupeKeys.delete(workItem.item.dedupeKey);
-          run.pendingRetryDedupeKeys.add(workItem.item.dedupeKey);
-          workItem.resolve({
-            disposition: 'nack',
-            reason: 'transient_processing_error',
-          });
+          const result = await this.handleTransientProcessingFailure(run, workItem.item, error);
+          workItem.resolve(result);
         })
         .finally(async () => {
           this.activeWorkers = Math.max(0, this.activeWorkers - 1);
@@ -765,7 +781,7 @@ export class IngestionWorkerRuntime {
         reason: 'startup_rollback',
       });
       run.inFlightDedupeKeys.delete(item.dedupeKey);
-      run.pendingRetryDedupeKeys.delete(item.dedupeKey);
+      this.clearRetryTracking(run, item.dedupeKey);
       run.seenDedupeKeys.add(item.dedupeKey);
       return {
         disposition: 'ack',
@@ -840,7 +856,7 @@ export class IngestionWorkerRuntime {
         },
       });
       run.inFlightDedupeKeys.delete(item.dedupeKey);
-      run.pendingRetryDedupeKeys.delete(item.dedupeKey);
+      this.clearRetryTracking(run, item.dedupeKey);
       run.seenDedupeKeys.add(item.dedupeKey);
       return {
         disposition: 'ack',
@@ -856,7 +872,7 @@ export class IngestionWorkerRuntime {
           reason: 'incomplete_detail_page',
         });
         run.inFlightDedupeKeys.delete(item.dedupeKey);
-        run.pendingRetryDedupeKeys.delete(item.dedupeKey);
+        this.clearRetryTracking(run, item.dedupeKey);
         run.seenDedupeKeys.add(item.dedupeKey);
         return {
           disposition: 'ack',
@@ -865,21 +881,7 @@ export class IngestionWorkerRuntime {
       }
 
       if (isTransientProcessingError(error)) {
-        run.inFlightDedupeKeys.delete(item.dedupeKey);
-        run.pendingRetryDedupeKeys.add(item.dedupeKey);
-        this.deps.logger.warn(
-          {
-            err: error,
-            runId: run.runId,
-            sourceId: item.sourceId,
-            dedupeKey: item.dedupeKey,
-          },
-          'Transient ingestion item failure detected. Requesting Pub/Sub redelivery.',
-        );
-        return {
-          disposition: 'nack',
-          reason: 'transient_processing_error',
-        };
+        return this.handleTransientProcessingFailure(run, item, error);
       }
 
       run.counters.failed += 1;
@@ -892,7 +894,7 @@ export class IngestionWorkerRuntime {
         },
       });
       run.inFlightDedupeKeys.delete(item.dedupeKey);
-      run.pendingRetryDedupeKeys.delete(item.dedupeKey);
+      this.clearRetryTracking(run, item.dedupeKey);
       run.seenDedupeKeys.add(item.dedupeKey);
       return {
         disposition: 'ack',
@@ -1309,6 +1311,80 @@ export class IngestionWorkerRuntime {
         'Failed to publish event to Pub/Sub.',
       );
     }
+  }
+
+  private clearRetryTracking(run: RunState, dedupeKey: string): void {
+    run.pendingRetryDedupeKeys.delete(dedupeKey);
+    run.transientRetryAttemptsByDedupeKey.delete(dedupeKey);
+  }
+
+  private async handleTransientProcessingFailure(
+    run: RunState,
+    item: ItemInput,
+    error: unknown,
+  ): Promise<QueueProcessingResult> {
+    run.inFlightDedupeKeys.delete(item.dedupeKey);
+    const nextRetryAttempt = (run.transientRetryAttemptsByDedupeKey.get(item.dedupeKey) ?? 0) + 1;
+
+    if (shouldRetryTransientProcessingFailure(nextRetryAttempt)) {
+      run.pendingRetryDedupeKeys.add(item.dedupeKey);
+      run.transientRetryAttemptsByDedupeKey.set(item.dedupeKey, nextRetryAttempt);
+      const backoffMs = computeTransientProcessingRetryBackoffMs(nextRetryAttempt);
+
+      this.deps.logger.warn(
+        {
+          err: error,
+          runId: run.runId,
+          sourceId: item.sourceId,
+          dedupeKey: item.dedupeKey,
+          retryAttempt: nextRetryAttempt,
+          maxRetryAttempts: TRANSIENT_PROCESSING_MAX_RETRY_ATTEMPTS,
+          backoffMs,
+        },
+        'Transient ingestion item failure detected. Requesting Pub/Sub redelivery.',
+      );
+
+      await this.sleep(backoffMs);
+      return {
+        disposition: 'nack',
+        reason: 'transient_processing_error',
+      };
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    const jobId = buildJobId(item);
+    run.counters.failed += 1;
+    pushUnique(run.failedJobIds, jobId);
+    pushUnique(run.nonSuccessJobIds, jobId);
+    this.clearRetryTracking(run, item.dedupeKey);
+    run.seenDedupeKeys.add(item.dedupeKey);
+
+    await this.publishIngestionItemEvent('ingestion.item.failed', run, item, {
+      error: {
+        name: error instanceof Error ? error.name : 'IngestionItemError',
+        message: `Transient retry budget exhausted after ${TRANSIENT_PROCESSING_MAX_RETRY_ATTEMPTS} retries. ${message}`,
+      },
+    });
+    this.deps.logger.error(
+      {
+        err: error,
+        runId: run.runId,
+        sourceId: item.sourceId,
+        dedupeKey: item.dedupeKey,
+        maxRetryAttempts: TRANSIENT_PROCESSING_MAX_RETRY_ATTEMPTS,
+      },
+      'Transient ingestion item retry budget exhausted. Marking item as failed.',
+    );
+    return {
+      disposition: 'ack',
+      reason: 'permanent_processing_error',
+    };
+  }
+
+  private sleep(delayMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      setTimeout(resolve, delayMs);
+    });
   }
 
   private getRunSummaryCollectionForRun(
