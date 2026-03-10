@@ -88,6 +88,33 @@ describe('forms', () => {
     });
   });
 
+  it('builds an update payload that can change only operator dbName', () => {
+    const values = pipelineUpdateFormSchema.parse({
+      name: 'Pipeline',
+      mode: 'crawl_and_ingest',
+      searchSpaceName: 'Pipeline Search Space',
+      searchSpaceDescription: '',
+      startUrlsText: 'https://example.com/jobs',
+      maxItems: 20,
+      allowInactiveMarking: true,
+      runtimeProfileName: 'Runtime',
+      crawlerMaxConcurrency: 1,
+      crawlerMaxRequestsPerMinute: 30,
+      ingestionConcurrency: 2,
+      includeMongoOutput: true,
+      includeDownloadableJson: false,
+      operatorMongoUri: '',
+      operatorDbName: 'pl_pipeline_next',
+    });
+
+    expect(buildUpdatePipelinePayload(values)).toMatchObject({
+      operatorSink: {
+        dbName: 'pl_pipeline_next',
+      },
+    });
+    expect(buildUpdatePipelinePayload(values).operatorSink).not.toHaveProperty('mongodbUri');
+  });
+
   it('rejects pipeline names longer than the shared UI limit', () => {
     expect(() =>
       pipelineCreateFormSchema.parse({

@@ -485,6 +485,64 @@ test('createPipeline generates linkage IDs and keeps operator dbName', async () 
   assert.equal(pipeline.operatorSink.mongodbUri, undefined);
 });
 
+test('updatePipeline applies dbName-only operatorSink updates while preserving stored URI', async () => {
+  const store = new InMemoryStore();
+  store.pipelines.set(
+    controlPlanePipelineV2Fixture.pipelineId,
+    withStoredSinkSecret(controlPlanePipelineV2Fixture),
+  );
+
+  const logger = createLogger();
+  const service = new ControlService(
+    createEnv(),
+    store,
+    {
+      async ensureCrawlerReady() {
+        return undefined;
+      },
+      async ensureIngestionReady() {
+        return undefined;
+      },
+      async startCrawlerRun() {
+        throw new Error('not used');
+      },
+      async startIngestionRun() {
+        throw new Error('not used');
+      },
+      async cancelCrawlerRun() {
+        throw new Error('not used');
+      },
+      async cancelIngestionRun() {
+        throw new Error('not used');
+      },
+    },
+    new ControlServiceState({
+      serviceName: 'control-service-v2',
+      serviceVersion: 'test',
+      subscriptionEnabled: true,
+    }),
+    new StreamHub(logger as never),
+    logger as never,
+  );
+
+  const updated = await service.updatePipeline(controlPlanePipelineV2Fixture.pipelineId, {
+    operatorSink: {
+      dbName: 'pl-vyvoj-hw-praha-02',
+    },
+  });
+
+  assert.equal(updated.dbName, 'pl-vyvoj-hw-praha-02');
+  assert.equal(updated.operatorSink.dbName, 'pl-vyvoj-hw-praha-02');
+  assert.equal(updated.operatorSink.hasMongoUri, true);
+  assert.equal(updated.operatorSink.mongodbUri, undefined);
+
+  const stored = await store.getPipeline(controlPlanePipelineV2Fixture.pipelineId);
+  assert.ok(stored);
+  assert.equal(stored.dbName, 'pl-vyvoj-hw-praha-02');
+  assert.equal(stored.operatorSink.dbName, 'pl-vyvoj-hw-praha-02');
+  assert.equal(stored.operatorSink.mongodbUri, 'mongodb://localhost:27017');
+});
+
 test('startPipelineRun rejects stored pipelines with an overlong dbName', async () => {
   const store = new InMemoryStore();
   store.pipelines.set(controlPlanePipelineV2Fixture.pipelineId, {

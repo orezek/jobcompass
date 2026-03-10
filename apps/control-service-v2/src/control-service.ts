@@ -277,8 +277,8 @@ export class ControlService {
     };
     const nextOperatorSink = request.operatorSink
       ? {
-          dbName: request.operatorSink.dbName,
-          mongodbUri: request.operatorSink.mongodbUri,
+          dbName: request.operatorSink.dbName ?? current.operatorSink.dbName,
+          mongodbUri: request.operatorSink.mongodbUri ?? current.operatorSink.mongodbUri,
           hasMongoUri: true,
         }
       : current.operatorSink;

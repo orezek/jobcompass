@@ -137,6 +137,13 @@ export const buildUpdatePipelinePayload = (
   const hasMongoDestination = destinations.some((destination) => destination.type === 'mongodb');
   const operatorMongoUri = values.operatorMongoUri?.trim();
   const operatorDbName = values.operatorDbName?.trim();
+  const operatorSink =
+    operatorMongoUri || operatorDbName
+      ? {
+          ...(operatorMongoUri ? { mongodbUri: operatorMongoUri } : {}),
+          ...(operatorDbName ? { dbName: operatorDbName } : {}),
+        }
+      : undefined;
 
   return updateControlPlanePipelineRequestV2Schema.parse({
     name: values.name,
@@ -157,13 +164,6 @@ export const buildUpdatePipelinePayload = (
     structuredOutput: {
       destinations,
     },
-    ...(operatorMongoUri && operatorDbName
-      ? {
-          operatorSink: {
-            mongodbUri: operatorMongoUri,
-            dbName: operatorDbName,
-          },
-        }
-      : {}),
+    ...(operatorSink ? { operatorSink } : {}),
   });
 };

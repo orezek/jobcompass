@@ -742,6 +742,16 @@ export const v2ControlPlaneOperatorSinkWriteSchema = z
   })
   .strict();
 
+export const v2ControlPlaneOperatorSinkUpdateSchema = z
+  .object({
+    dbName: mongoDbNameSchema.optional(),
+    mongodbUri: nonEmptyStringSchema.optional(),
+  })
+  .strict()
+  .refine((value) => value.dbName !== undefined || value.mongodbUri !== undefined, {
+    message: 'operatorSink update must include dbName and/or mongodbUri.',
+  });
+
 export const v2ControlPlaneStructuredOutputDestinationSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('mongodb'),
@@ -790,7 +800,7 @@ export const updateControlPlanePipelineRequestV2Schema = z
     searchSpace: v2ControlPlaneSearchSpaceInputSchema.optional(),
     runtimeProfile: v2ControlPlaneRuntimeProfileInputSchema.optional(),
     structuredOutput: v2ControlPlaneStructuredOutputSchema.optional(),
-    operatorSink: v2ControlPlaneOperatorSinkWriteSchema.optional(),
+    operatorSink: v2ControlPlaneOperatorSinkUpdateSchema.optional(),
   })
   .strict()
   .refine(
@@ -1425,6 +1435,13 @@ export const updateControlPlanePipelineRequestV2Fixture =
     operatorSink: {
       mongodbUri: 'mongodb://localhost:27017',
       dbName: 'crawl-ops-prague-tech',
+    },
+  });
+
+export const updateControlPlanePipelineOperatorDbNameOnlyRequestV2Fixture =
+  updateControlPlanePipelineRequestV2Schema.parse({
+    operatorSink: {
+      dbName: 'crawl-ops-prague-tech-02',
     },
   });
 
