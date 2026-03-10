@@ -1,6 +1,12 @@
+import { ControlServiceNotReachable } from '@/components/state/control-service-not-reachable';
 import { RunListClient } from '@/components/runs/run-list-client';
 import { listControlPlaneRunsQueryV2Schema } from '@repo/control-plane-contracts/v2';
-import { listPipelines, listRuns } from '@/lib/control-service-client';
+import {
+  buildControlServiceConnectivityDiagnostic,
+  isControlServiceUnavailableError,
+  listPipelines,
+  listRuns,
+} from '@/lib/control-service-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,20 +25,32 @@ export default async function RunsPage({
     cursor: typeof rawSearchParams.cursor === 'string' ? rawSearchParams.cursor : undefined,
   });
 
-  const [runs, pipelines] = await Promise.all([listRuns(query), listPipelines()]);
-  const sortedRuns = runs.items
-    .slice()
-    .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt));
-  const sortedPipelines = pipelines.items
-    .slice()
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  try {
+    const [runs, pipelines] = await Promise.all([listRuns(query), listPipelines()]);
+    const sortedRuns = runs.items
+      .slice()
+      .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt));
+    const sortedPipelines = pipelines.items
+      .slice()
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 
-  return (
-    <RunListClient
-      initialRuns={sortedRuns}
-      filters={query}
-      nextCursor={runs.nextCursor}
-      pipelines={sortedPipelines}
-    />
-  );
+    return (
+      <RunListClient
+        initialRuns={sortedRuns}
+        filters={query}
+        nextCursor={runs.nextCursor}
+        pipelines={sortedPipelines}
+      />
+    );
+  } catch (error) {
+    if (isControlServiceUnavailableError(error)) {
+      return (
+        <ControlServiceNotReachable
+          diagnostic={buildControlServiceConnectivityDiagnostic(error, 'GET /v1/runs')}
+        />
+      );
+    }
+
+    throw error;
+  }
 }

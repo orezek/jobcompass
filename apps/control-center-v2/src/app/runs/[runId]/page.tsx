@@ -1,8 +1,11 @@
 import { notFound } from 'next/navigation';
 import { RunDetailClient } from '@/components/runs/run-detail-client';
+import { ControlServiceNotReachable } from '@/components/state/control-service-not-reachable';
 import {
+  buildControlServiceConnectivityDiagnostic,
   ControlServiceRequestError,
   getRun,
+  isControlServiceUnavailableError,
   listRunEvents,
   listRunJsonArtifacts,
 } from '@/lib/control-service-client';
@@ -46,6 +49,13 @@ export default async function RunDetailPage({
   } catch (error) {
     if (error instanceof ControlServiceRequestError && error.status === 404) {
       notFound();
+    }
+    if (isControlServiceUnavailableError(error)) {
+      return (
+        <ControlServiceNotReachable
+          diagnostic={buildControlServiceConnectivityDiagnostic(error, `GET /v1/runs/${runId}`)}
+        />
+      );
     }
 
     throw error;

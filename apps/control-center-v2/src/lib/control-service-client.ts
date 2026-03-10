@@ -39,12 +39,43 @@ import type {
 export class ControlServiceRequestError extends Error {
   constructor(
     readonly status: number,
+    readonly code: string | undefined,
     message: string,
     readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'ControlServiceRequestError';
   }
+}
+
+export type ControlServiceConnectivityDiagnostic = {
+  occurredAt: string;
+  request: string;
+  message: string;
+  errorName: string;
+  status?: number;
+  code?: string;
+  details?: Record<string, unknown>;
+};
+
+export function isControlServiceUnavailableError(error: unknown): boolean {
+  if (error instanceof ControlServiceRequestError) {
+    return true;
+  }
+
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const lowerMessage = error.message.toLowerCase();
+  return (
+    error.name === 'TypeError' ||
+    lowerMessage.includes('fetch failed') ||
+    lowerMessage.includes('network') ||
+    lowerMessage.includes('econnrefused') ||
+    lowerMessage.includes('enotfound') ||
+    lowerMessage.includes('connection refused')
+  );
 }
 
 const buildUrl = (path: string, query?: URLSearchParams): string => {
@@ -71,14 +102,55 @@ const parseError = async (response: Response): Promise<never> => {
     if (parsed.success) {
       throw new ControlServiceRequestError(
         response.status,
+        parsed.data.error.code,
         parsed.data.error.message,
         parsed.data.error.details,
       );
     }
   }
 
-  throw new ControlServiceRequestError(response.status, response.statusText || 'Request failed.');
+  throw new ControlServiceRequestError(
+    response.status,
+    undefined,
+    response.statusText || 'Request failed.',
+  );
 };
+
+export function buildControlServiceConnectivityDiagnostic(
+  error: unknown,
+  request: string,
+): ControlServiceConnectivityDiagnostic {
+  if (error instanceof ControlServiceRequestError) {
+    return {
+      occurredAt: new Date().toISOString(),
+      request,
+      errorName: error.name,
+      status: error.status,
+      code: error.code,
+      message: error.message,
+      details: error.details,
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      occurredAt: new Date().toISOString(),
+      request,
+      errorName: error.name,
+      message: error.message,
+    };
+  }
+
+  return {
+    occurredAt: new Date().toISOString(),
+    request,
+    errorName: 'UnknownError',
+    message: 'Unknown connectivity error.',
+    details: {
+      rawValue: String(error),
+    },
+  };
+}
 
 async function requestJson<T>(input: {
   path: string;
