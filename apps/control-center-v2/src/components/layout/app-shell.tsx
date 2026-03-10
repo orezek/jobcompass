@@ -28,7 +28,7 @@ function getPageHeader(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/pipelines') {
     return {
       title: 'Pipelines',
-      subtitle: 'Manage crawler definitions and ingestion configurations.',
+      subtitle: 'Define and manage ETL pipelines for extraction, transformation, and loading.',
     };
   }
 

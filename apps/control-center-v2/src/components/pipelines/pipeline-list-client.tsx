@@ -86,8 +86,8 @@ export function PipelineListClient({ pipelines }: { pipelines: ControlPlanePipel
 
       {pipelines.length === 0 ? (
         <EmptyLabTray
-          title="Empty Lab Tray"
-          description="No pipelines are defined yet. Create the first pipeline to start the V2 operator surface."
+          title="Start Your First Data Pipeline"
+          description="Set source, runtime profile, and output sink to begin processing."
         />
       ) : (
         <>
