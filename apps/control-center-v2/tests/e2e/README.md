@@ -5,7 +5,8 @@ This suite validates the `/pipelines/new` form as an internet-facing operator su
 Principles:
 
 - Tests run in headed mode (`headless: false`) for visual debugging.
-- Tests mock `POST /api/pipelines` to validate UI behavior without depending on control-service.
+- Tests run against a real Next.js app instance and validate form behavior in-browser.
+- Tests mock `POST /api/pipelines` to inspect outgoing payloads and confirm contract consistency.
 - Tests explicitly assert no run execution endpoint is called.
 
 Scenario directories:

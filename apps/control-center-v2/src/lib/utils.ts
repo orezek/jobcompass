@@ -53,7 +53,4 @@ export const titleCaseFromToken = (value: string): string =>
     .join(' ');
 
 export const splitTextareaLines = (value: string): string[] =>
-  value
-    .split(/\r?\n/g)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  value.split(/\r?\n/g).filter((line) => line.length > 0);

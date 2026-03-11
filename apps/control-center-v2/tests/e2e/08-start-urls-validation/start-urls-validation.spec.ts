@@ -20,17 +20,19 @@ test('rejects malformed and oversized start URL input', async ({ page }) => {
 
   await submitCreatePipeline(page);
   await expect(
-    page.getByText('Each start URL must be a valid absolute URL.', { exact: true }),
+    page.getByText('Each start URL must be a valid absolute http(s) URL up to 2048 characters.', {
+      exact: true,
+    }),
   ).toBeVisible();
 
   const tooManyUrls = Array.from(
-    { length: 21 },
+    { length: 11 },
     (_, index) => `https://example.com/jobs?page=${index + 1}`,
   ).join('\n');
   await page.getByLabel('Start URLs').fill(tooManyUrls);
 
   await submitCreatePipeline(page);
-  await expect(page.getByText('At most 20 start URLs are allowed.', { exact: true })).toBeVisible();
+  await expect(page.getByText('At most 10 start URLs are allowed.', { exact: true })).toBeVisible();
 
   expect(createApi.createPayloads).toHaveLength(0);
   expect(createApi.getRunStartRequestCount()).toBe(0);

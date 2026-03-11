@@ -11,8 +11,16 @@ import {
   INGESTION_CONCURRENCY_MIN,
   MAX_ITEMS_MAX,
   MAX_ITEMS_MIN,
+  MONGODB_URI_MAX_LENGTH,
   MONGO_DB_NAME_MAX_BYTES,
+  MONGO_DB_NAME_MIN_LENGTH,
+  PIPELINE_NAME_MIN_LENGTH,
   PIPELINE_NAME_MAX_LENGTH,
+  RUNTIME_PROFILE_NAME_MAX_LENGTH,
+  RUNTIME_PROFILE_NAME_MIN_LENGTH,
+  SEARCH_SPACE_DESCRIPTION_MAX_LENGTH,
+  SEARCH_SPACE_NAME_MAX_LENGTH,
+  SEARCH_SPACE_NAME_MIN_LENGTH,
   buildCreatePipelinePayload,
   pipelineCreateFormSchema,
   type PipelineCreateFormData,
@@ -33,11 +41,11 @@ const defaultValues: PipelineCreateFormValues = {
   searchSpaceName: '',
   searchSpaceDescription: '',
   startUrlsText: '',
-  maxItems: 200,
+  maxItems: 20,
   allowInactiveMarking: true,
   runtimeProfileName: '',
-  crawlerMaxConcurrency: 3,
-  crawlerMaxRequestsPerMinute: 60,
+  crawlerMaxConcurrency: 1,
+  crawlerMaxRequestsPerMinute: 10,
   ingestionConcurrency: 4,
   includeMongoOutput: true,
   includeDownloadableJson: false,
@@ -94,13 +102,15 @@ export function PipelineCreateForm() {
           <Field label="Pipeline Name" error={form.formState.errors.name?.message}>
             <Input
               {...form.register('name')}
+              minLength={PIPELINE_NAME_MIN_LENGTH}
               maxLength={PIPELINE_NAME_MAX_LENGTH}
+              pattern="[A-Za-z0-9 ._-]+"
               placeholder="Prague Tech Pipeline"
             />
           </Field>
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Source" error={form.formState.errors.source?.message}>
-              <Input {...form.register('source')} />
+              <Input {...form.register('source')} readOnly className="bg-muted/40" />
             </Field>
             <Field label="Mode" error={form.formState.errors.mode?.message}>
               <select
@@ -122,10 +132,20 @@ export function PipelineCreateForm() {
         </CardHeader>
         <CardContent className="grid gap-4">
           <Field label="Search Space Name" error={form.formState.errors.searchSpaceName?.message}>
-            <Input {...form.register('searchSpaceName')} placeholder="Prague Tech Jobs" />
+            <Input
+              {...form.register('searchSpaceName')}
+              minLength={SEARCH_SPACE_NAME_MIN_LENGTH}
+              maxLength={SEARCH_SPACE_NAME_MAX_LENGTH}
+              pattern="[A-Za-z0-9 ._-]+"
+              placeholder="Prague Tech Jobs"
+            />
           </Field>
           <Field label="Description" error={form.formState.errors.searchSpaceDescription?.message}>
-            <Textarea {...form.register('searchSpaceDescription')} rows={3} />
+            <Textarea
+              {...form.register('searchSpaceDescription')}
+              rows={3}
+              maxLength={SEARCH_SPACE_DESCRIPTION_MAX_LENGTH}
+            />
           </Field>
           <Field label="Start URLs" error={form.formState.errors.startUrlsText?.message}>
             <Textarea
@@ -164,7 +184,13 @@ export function PipelineCreateForm() {
             label="Runtime Profile Name"
             error={form.formState.errors.runtimeProfileName?.message}
           >
-            <Input {...form.register('runtimeProfileName')} placeholder="Prague Tech Runtime" />
+            <Input
+              {...form.register('runtimeProfileName')}
+              minLength={RUNTIME_PROFILE_NAME_MIN_LENGTH}
+              maxLength={RUNTIME_PROFILE_NAME_MAX_LENGTH}
+              pattern="[A-Za-z0-9 ._-]+"
+              placeholder="Prague Tech Runtime"
+            />
           </Field>
           <div className="grid gap-4 md:grid-cols-3">
             <Field
@@ -233,12 +259,14 @@ export function PipelineCreateForm() {
                   autoComplete="off"
                   inputMode="url"
                   pattern="^mongodb(\\+srv)?:\\/\\/.+"
+                  maxLength={MONGODB_URI_MAX_LENGTH}
                   placeholder="mongodb+srv://cluster.example.net"
                 />
               </Field>
               <Field label="Database Name" error={form.formState.errors.operatorDbName?.message}>
                 <Input
                   {...form.register('operatorDbName')}
+                  minLength={MONGO_DB_NAME_MIN_LENGTH}
                   maxLength={MONGO_DB_NAME_MAX_BYTES}
                   pattern="[A-Za-z0-9_-]+"
                   placeholder="pl-prague-tech-01"

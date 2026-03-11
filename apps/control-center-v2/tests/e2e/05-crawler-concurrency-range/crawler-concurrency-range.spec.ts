@@ -13,7 +13,7 @@ test('enforces crawler max concurrency min and max bounds', async ({ page }) => 
 
   const input = page.getByLabel('Crawler Max Concurrency');
   await expect(input).toHaveAttribute('min', '1');
-  await expect(input).toHaveAttribute('max', '20');
+  await expect(input).toHaveAttribute('max', '4');
 
   await fillCreatePipelineForm(page, {
     crawlerMaxConcurrency: '0',
@@ -28,10 +28,10 @@ test('enforces crawler max concurrency min and max bounds', async ({ page }) => 
     page.getByText('Crawler max concurrency must be at least 1.', { exact: true }),
   ).toBeVisible();
 
-  await input.fill('21');
+  await input.fill('5');
   await submitCreatePipeline(page);
   await expect(
-    page.getByText('Crawler max concurrency must be at most 20.', { exact: true }),
+    page.getByText('Crawler max concurrency must be at most 4.', { exact: true }),
   ).toBeVisible();
 
   expect(createApi.createPayloads).toHaveLength(0);

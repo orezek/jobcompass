@@ -12,17 +12,17 @@ import {
 describe('forms', () => {
   it('builds a v2.2 create payload without operator-provided IDs', () => {
     const values = pipelineCreateFormSchema.parse({
-      name: ' Prague Tech ',
+      name: 'Prague Tech',
       source: 'jobs.cz',
       mode: 'crawl_and_ingest',
       searchSpaceName: 'Prague Tech',
-      searchSpaceDescription: '  curated roles  ',
-      startUrlsText: ' https://example.com/one \n\n https://example.com/two ',
+      searchSpaceDescription: 'curated roles',
+      startUrlsText: 'https://example.com/one\nhttps://example.com/two',
       maxItems: '200',
       allowInactiveMarking: true,
       runtimeProfileName: 'Runtime Prague',
       crawlerMaxConcurrency: '3',
-      crawlerMaxRequestsPerMinute: '60',
+      crawlerMaxRequestsPerMinute: '10',
       ingestionConcurrency: '4',
       includeMongoOutput: true,
       includeDownloadableJson: true,
@@ -44,7 +44,7 @@ describe('forms', () => {
       runtimeProfile: {
         name: 'Runtime Prague',
         crawlerMaxConcurrency: 3,
-        crawlerMaxRequestsPerMinute: 60,
+        crawlerMaxRequestsPerMinute: 10,
         ingestionConcurrency: 4,
       },
       structuredOutput: {
@@ -68,7 +68,7 @@ describe('forms', () => {
       allowInactiveMarking: true,
       runtimeProfileName: 'Crawler Runtime',
       crawlerMaxConcurrency: 2,
-      crawlerMaxRequestsPerMinute: 30,
+      crawlerMaxRequestsPerMinute: 10,
       ingestionConcurrency: 9,
       includeMongoOutput: false,
       includeDownloadableJson: true,
@@ -101,7 +101,7 @@ describe('forms', () => {
       allowInactiveMarking: true,
       runtimeProfileName: 'Runtime',
       crawlerMaxConcurrency: 1,
-      crawlerMaxRequestsPerMinute: 30,
+      crawlerMaxRequestsPerMinute: 10,
       ingestionConcurrency: 2,
       includeMongoOutput: true,
       includeDownloadableJson: false,
@@ -130,7 +130,7 @@ describe('forms', () => {
         allowInactiveMarking: false,
         runtimeProfileName: 'Crawler Runtime',
         crawlerMaxConcurrency: 2,
-        crawlerMaxRequestsPerMinute: 30,
+        crawlerMaxRequestsPerMinute: 10,
         ingestionConcurrency: 9,
         includeMongoOutput: true,
         includeDownloadableJson: true,
@@ -153,7 +153,7 @@ describe('forms', () => {
         allowInactiveMarking: false,
         runtimeProfileName: 'Runtime',
         crawlerMaxConcurrency: 2,
-        crawlerMaxRequestsPerMinute: 30,
+        crawlerMaxRequestsPerMinute: 10,
         ingestionConcurrency: 4,
         includeMongoOutput: true,
         includeDownloadableJson: false,
@@ -176,14 +176,14 @@ describe('forms', () => {
         allowInactiveMarking: false,
         runtimeProfileName: 'Runtime',
         crawlerMaxConcurrency: 2,
-        crawlerMaxRequestsPerMinute: 30,
+        crawlerMaxRequestsPerMinute: 10,
         ingestionConcurrency: 4,
         includeMongoOutput: true,
         includeDownloadableJson: false,
         operatorMongoUri: 'mongodb://localhost:27017',
         operatorDbName: 'pl_pipeline_sink_01',
       }),
-    ).toThrow(/valid absolute URL/i);
+    ).toThrow(/valid absolute http\(s\) URL/i);
 
     expect(() =>
       pipelineCreateFormSchema.parse({
@@ -200,7 +200,7 @@ describe('forms', () => {
         allowInactiveMarking: false,
         runtimeProfileName: 'Runtime',
         crawlerMaxConcurrency: 2,
-        crawlerMaxRequestsPerMinute: 30,
+        crawlerMaxRequestsPerMinute: 10,
         ingestionConcurrency: 4,
         includeMongoOutput: true,
         includeDownloadableJson: false,

@@ -28,11 +28,11 @@ const defaultCreateValues: CreatePipelineFormValues = {
   searchSpaceName: 'Prague Tech Jobs',
   searchSpaceDescription: 'Operator validation baseline for safe create flow.',
   startUrlsText: 'https://www.jobs.cz/prace/praha/?q=software-engineer',
-  maxItems: '200',
+  maxItems: '20',
   allowInactiveMarking: true,
   runtimeProfileName: 'Prague Runtime Profile',
-  crawlerMaxConcurrency: '3',
-  crawlerMaxRequestsPerMinute: '60',
+  crawlerMaxConcurrency: '1',
+  crawlerMaxRequestsPerMinute: '10',
   ingestionConcurrency: '4',
   includeMongoOutput: true,
   includeDownloadableJson: false,
@@ -62,7 +62,7 @@ export async function fillCreatePipelineForm(
   };
 
   await page.getByLabel('Pipeline Name').fill(values.name);
-  await page.getByLabel('Source').fill(values.source);
+  await expect(page.getByLabel('Source')).toHaveValue(values.source);
   await page.getByLabel('Mode').selectOption(values.mode);
   await page.getByLabel('Search Space Name').fill(values.searchSpaceName);
   await page.getByLabel('Description').fill(values.searchSpaceDescription);

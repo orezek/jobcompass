@@ -3,9 +3,136 @@ import { z } from 'zod';
 
 const isoDateTimeSchema = z.iso.datetime();
 const nonEmptyStringSchema = z.string().trim().min(1);
+
+const PIPELINE_NAME_MIN_LENGTH = 3;
+const PIPELINE_NAME_MAX_LENGTH = 64;
+const SEARCH_SPACE_NAME_MIN_LENGTH = 3;
+const SEARCH_SPACE_NAME_MAX_LENGTH = 65;
+const RUNTIME_PROFILE_NAME_MIN_LENGTH = 3;
+const RUNTIME_PROFILE_NAME_MAX_LENGTH = 64;
+const SEARCH_SPACE_DESCRIPTION_MAX_LENGTH = 1000;
+const START_URLS_MIN_COUNT = 1;
+const START_URLS_MAX_COUNT = 10;
+const START_URL_MAX_LENGTH = 2048;
+const MAX_ITEMS_MIN = 1;
+const MAX_ITEMS_MAX = 5000;
+const CRAWLER_MAX_CONCURRENCY_MIN = 1;
+const CRAWLER_MAX_CONCURRENCY_MAX = 4;
+const CRAWLER_RPM_MIN = 1;
+const CRAWLER_RPM_MAX = 20;
+const INGESTION_CONCURRENCY_MIN = 1;
+const INGESTION_CONCURRENCY_MAX = 32;
 const MONGO_DB_NAME_MAX_BYTES = 38;
+const MONGO_DB_NAME_MIN_LENGTH = 3;
+const MONGODB_URI_MAX_LENGTH = 2048;
+const pipelineSourceSchema = z.literal('jobs.cz');
+const safeNameCharsetRegex = /^[A-Za-z0-9 ._-]+$/u;
 const mongoDbNameCharsetRegex = /^[A-Za-z0-9_-]+$/u;
-const mongoDbNameSchema = nonEmptyStringSchema
+const mongoUriSchemeRegex = /^mongodb(?:\+srv)?:\/\//iu;
+
+const pipelineNameSchema = z
+  .string()
+  .min(PIPELINE_NAME_MIN_LENGTH, `name must be at least ${PIPELINE_NAME_MIN_LENGTH} characters.`)
+  .max(PIPELINE_NAME_MAX_LENGTH, `name must be at most ${PIPELINE_NAME_MAX_LENGTH} characters.`)
+  .regex(
+    safeNameCharsetRegex,
+    'name may contain only letters, numbers, spaces, dot, underscore, and hyphen.',
+  );
+
+const searchSpaceNameSchema = z
+  .string()
+  .min(
+    SEARCH_SPACE_NAME_MIN_LENGTH,
+    `searchSpace.name must be at least ${SEARCH_SPACE_NAME_MIN_LENGTH} characters.`,
+  )
+  .max(
+    SEARCH_SPACE_NAME_MAX_LENGTH,
+    `searchSpace.name must be at most ${SEARCH_SPACE_NAME_MAX_LENGTH} characters.`,
+  )
+  .regex(
+    safeNameCharsetRegex,
+    'searchSpace.name may contain only letters, numbers, spaces, dot, underscore, and hyphen.',
+  );
+
+const runtimeProfileNameSchema = z
+  .string()
+  .min(
+    RUNTIME_PROFILE_NAME_MIN_LENGTH,
+    `runtimeProfile.name must be at least ${RUNTIME_PROFILE_NAME_MIN_LENGTH} characters.`,
+  )
+  .max(
+    RUNTIME_PROFILE_NAME_MAX_LENGTH,
+    `runtimeProfile.name must be at most ${RUNTIME_PROFILE_NAME_MAX_LENGTH} characters.`,
+  )
+  .regex(
+    safeNameCharsetRegex,
+    'runtimeProfile.name may contain only letters, numbers, spaces, dot, underscore, and hyphen.',
+  );
+
+const searchSpaceDescriptionSchema = z
+  .string()
+  .max(
+    SEARCH_SPACE_DESCRIPTION_MAX_LENGTH,
+    `searchSpace.description must be at most ${SEARCH_SPACE_DESCRIPTION_MAX_LENGTH} characters.`,
+  )
+  .default('');
+
+const absoluteHttpUrlSchema = z
+  .string()
+  .url('startUrls entries must be valid absolute URLs.')
+  .max(
+    START_URL_MAX_LENGTH,
+    `startUrls entries must be at most ${START_URL_MAX_LENGTH} characters.`,
+  )
+  .refine((value) => {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  }, 'startUrls entries must start with http:// or https://.');
+
+const searchSpaceStartUrlsSchema = z
+  .array(absoluteHttpUrlSchema)
+  .min(START_URLS_MIN_COUNT, `startUrls must include at least ${START_URLS_MIN_COUNT} URL.`)
+  .max(START_URLS_MAX_COUNT, `startUrls may include at most ${START_URLS_MAX_COUNT} URLs.`);
+
+const searchSpaceMaxItemsSchema = z
+  .number()
+  .int()
+  .min(MAX_ITEMS_MIN, `maxItems must be at least ${MAX_ITEMS_MIN}.`)
+  .max(MAX_ITEMS_MAX, `maxItems must be at most ${MAX_ITEMS_MAX}.`);
+
+const crawlerMaxConcurrencySchema = z
+  .number()
+  .int()
+  .min(
+    CRAWLER_MAX_CONCURRENCY_MIN,
+    `crawlerMaxConcurrency must be at least ${CRAWLER_MAX_CONCURRENCY_MIN}.`,
+  )
+  .max(
+    CRAWLER_MAX_CONCURRENCY_MAX,
+    `crawlerMaxConcurrency must be at most ${CRAWLER_MAX_CONCURRENCY_MAX}.`,
+  );
+
+const crawlerRpmSchema = z
+  .number()
+  .int()
+  .min(CRAWLER_RPM_MIN, `crawlerMaxRequestsPerMinute must be at least ${CRAWLER_RPM_MIN}.`)
+  .max(CRAWLER_RPM_MAX, `crawlerMaxRequestsPerMinute must be at most ${CRAWLER_RPM_MAX}.`);
+
+const ingestionConcurrencySchema = z
+  .number()
+  .int()
+  .min(
+    INGESTION_CONCURRENCY_MIN,
+    `ingestionConcurrency must be at least ${INGESTION_CONCURRENCY_MIN}.`,
+  )
+  .max(
+    INGESTION_CONCURRENCY_MAX,
+    `ingestionConcurrency must be at most ${INGESTION_CONCURRENCY_MAX}.`,
+  );
+
+const mongoDbNameSchema = z
+  .string()
+  .min(MONGO_DB_NAME_MIN_LENGTH, `dbName must be at least ${MONGO_DB_NAME_MIN_LENGTH} characters.`)
   .regex(
     mongoDbNameCharsetRegex,
     'dbName may only contain ASCII letters, numbers, underscore, and hyphen.',
@@ -14,6 +141,16 @@ const mongoDbNameSchema = nonEmptyStringSchema
     (value) => Buffer.byteLength(value, 'utf8') <= MONGO_DB_NAME_MAX_BYTES,
     `dbName must be at most ${MONGO_DB_NAME_MAX_BYTES} bytes.`,
   );
+
+const mongoDbUriSchema = z
+  .string()
+  .max(MONGODB_URI_MAX_LENGTH, `mongodbUri must be at most ${MONGODB_URI_MAX_LENGTH} characters.`)
+  .url('mongodbUri must be a valid URI.')
+  .refine(
+    (value) => mongoUriSchemeRegex.test(value),
+    'mongodbUri must start with mongodb:// or mongodb+srv://.',
+  );
+
 const optionalStringSchema = z.preprocess((value) => {
   if (typeof value === 'string' && value.trim() === '') {
     return undefined;
@@ -21,6 +158,14 @@ const optionalStringSchema = z.preprocess((value) => {
 
   return value;
 }, z.string().trim().min(1).optional());
+
+const optionalMongoDbUriSchema = z.preprocess((value) => {
+  if (value === '') {
+    return undefined;
+  }
+
+  return value;
+}, mongoDbUriSchema.optional());
 
 export const v2ContractVersionSchema = z.literal('v2');
 export const v2WorkerTypeSchema = z.enum(['crawler', 'ingestion']);
@@ -35,7 +180,7 @@ export const v2RunStatusSchema = z.enum([
 ]);
 
 export const v2PersistenceTargetsSchema = z.object({
-  mongodbUri: nonEmptyStringSchema,
+  mongodbUri: mongoDbUriSchema,
   dbName: mongoDbNameSchema,
 });
 
@@ -50,12 +195,12 @@ export const v2PipelineSnapshotSchema = z.object({
 });
 
 export const crawlerRuntimeSnapshotV2Schema = z.object({
-  crawlerMaxConcurrency: z.number().int().positive().optional(),
-  crawlerMaxRequestsPerMinute: z.number().int().positive().optional(),
+  crawlerMaxConcurrency: crawlerMaxConcurrencySchema.optional(),
+  crawlerMaxRequestsPerMinute: crawlerRpmSchema.optional(),
 });
 
 export const ingestionRuntimeSnapshotV2Schema = z.object({
-  ingestionConcurrency: z.number().int().positive().optional(),
+  ingestionConcurrency: ingestionConcurrencySchema.optional(),
 });
 
 export const v2ArtifactSinkSchema = z.discriminatedUnion('type', [
@@ -123,10 +268,10 @@ export const ingestionCancelRunRequestV2Schema = z.discriminatedUnion('reason', 
 ]);
 
 export const v2CrawlerSearchSpaceSnapshotSchema = z.object({
-  name: nonEmptyStringSchema,
-  description: optionalStringSchema.default(''),
-  startUrls: z.array(z.url()).min(1),
-  maxItems: z.number().int().positive(),
+  name: searchSpaceNameSchema,
+  description: searchSpaceDescriptionSchema,
+  startUrls: searchSpaceStartUrlsSchema,
+  maxItems: searchSpaceMaxItemsSchema,
   allowInactiveMarking: z.boolean(),
 });
 
@@ -476,7 +621,7 @@ export const crawlerStartRunRequestV2Fixture = crawlerStartRunRequestV2Schema.pa
   idempotencyKey: 'idmp-crawler-v2-fixture-001',
   runtimeSnapshot: {
     crawlerMaxConcurrency: 3,
-    crawlerMaxRequestsPerMinute: 60,
+    crawlerMaxRequestsPerMinute: 10,
   },
   inputRef: {
     source: 'jobs.cz',
@@ -697,10 +842,10 @@ export const v2ControlPlanePipelineStatusSchema = z.enum(['active', 'deleted']);
 export const v2ControlPlaneSearchSpaceSchema = z
   .object({
     id: nonEmptyStringSchema,
-    name: nonEmptyStringSchema,
-    description: optionalStringSchema.default(''),
-    startUrls: z.array(z.url()).min(1),
-    maxItems: z.number().int().positive(),
+    name: searchSpaceNameSchema,
+    description: searchSpaceDescriptionSchema,
+    startUrls: searchSpaceStartUrlsSchema,
+    maxItems: searchSpaceMaxItemsSchema,
     allowInactiveMarking: z.boolean(),
   })
   .strict();
@@ -714,10 +859,10 @@ export const v2ControlPlaneSearchSpaceInputSchema = v2ControlPlaneSearchSpaceSch
 export const v2ControlPlaneRuntimeProfileSchema = z
   .object({
     id: nonEmptyStringSchema,
-    name: nonEmptyStringSchema,
-    crawlerMaxConcurrency: z.number().int().positive().optional(),
-    crawlerMaxRequestsPerMinute: z.number().int().positive().optional(),
-    ingestionConcurrency: z.number().int().positive().optional(),
+    name: runtimeProfileNameSchema,
+    crawlerMaxConcurrency: crawlerMaxConcurrencySchema.optional(),
+    crawlerMaxRequestsPerMinute: crawlerRpmSchema.optional(),
+    ingestionConcurrency: ingestionConcurrencySchema.optional(),
   })
   .strict();
 
@@ -730,7 +875,7 @@ export const v2ControlPlaneRuntimeProfileInputSchema = v2ControlPlaneRuntimeProf
 export const v2ControlPlaneOperatorSinkSchema = z
   .object({
     dbName: mongoDbNameSchema,
-    mongodbUri: optionalStringSchema,
+    mongodbUri: optionalMongoDbUriSchema,
     hasMongoUri: z.boolean().default(true),
   })
   .strict();
@@ -738,14 +883,14 @@ export const v2ControlPlaneOperatorSinkSchema = z
 export const v2ControlPlaneOperatorSinkWriteSchema = z
   .object({
     dbName: mongoDbNameSchema,
-    mongodbUri: nonEmptyStringSchema,
+    mongodbUri: mongoDbUriSchema,
   })
   .strict();
 
 export const v2ControlPlaneOperatorSinkUpdateSchema = z
   .object({
     dbName: mongoDbNameSchema.optional(),
-    mongodbUri: nonEmptyStringSchema.optional(),
+    mongodbUri: mongoDbUriSchema.optional(),
   })
   .strict()
   .refine((value) => value.dbName !== undefined || value.mongodbUri !== undefined, {
@@ -769,8 +914,8 @@ export const v2ControlPlaneStructuredOutputSchema = z
 
 export const createControlPlanePipelineRequestV2Schema = z
   .object({
-    name: nonEmptyStringSchema,
-    source: nonEmptyStringSchema,
+    name: pipelineNameSchema,
+    source: pipelineSourceSchema,
     mode: v2PipelineModeSchema,
     searchSpace: v2ControlPlaneSearchSpaceInputSchema,
     runtimeProfile: v2ControlPlaneRuntimeProfileInputSchema,
@@ -791,11 +936,38 @@ export const createControlPlanePipelineRequestV2Schema = z
           'allowInactiveMarking must be false when structured output destinations do not include mongodb.',
       });
     }
+
+    if (value.mode === 'crawl_and_ingest' && value.structuredOutput.destinations.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['structuredOutput', 'destinations'],
+        message: 'crawl_and_ingest pipelines must configure at least one structured output.',
+      });
+    }
+
+    if (
+      value.mode === 'crawl_and_ingest' &&
+      value.runtimeProfile.ingestionConcurrency === undefined
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['runtimeProfile', 'ingestionConcurrency'],
+        message: 'crawl_and_ingest pipelines require runtimeProfile.ingestionConcurrency.',
+      });
+    }
+
+    if (value.mode === 'crawl_only' && value.runtimeProfile.ingestionConcurrency !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['runtimeProfile', 'ingestionConcurrency'],
+        message: 'crawl_only pipelines must omit runtimeProfile.ingestionConcurrency.',
+      });
+    }
   });
 
 export const updateControlPlanePipelineRequestV2Schema = z
   .object({
-    name: nonEmptyStringSchema.optional(),
+    name: pipelineNameSchema.optional(),
     mode: v2PipelineModeSchema.optional(),
     searchSpace: v2ControlPlaneSearchSpaceInputSchema.optional(),
     runtimeProfile: v2ControlPlaneRuntimeProfileInputSchema.optional(),
@@ -836,8 +1008,8 @@ export const updateControlPlanePipelineRequestV2Schema = z
 
 export const controlPlanePipelineV2Schema = z
   .object({
-    name: nonEmptyStringSchema,
-    source: nonEmptyStringSchema,
+    name: pipelineNameSchema,
+    source: pipelineSourceSchema,
     mode: v2PipelineModeSchema,
     searchSpace: v2ControlPlaneSearchSpaceSchema,
     runtimeProfile: v2ControlPlaneRuntimeProfileSchema,
@@ -1397,7 +1569,7 @@ export const createControlPlanePipelineRequestV2Fixture =
     runtimeProfile: {
       name: 'Prague Tech Runtime',
       crawlerMaxConcurrency: 3,
-      crawlerMaxRequestsPerMinute: 60,
+      crawlerMaxRequestsPerMinute: 10,
       ingestionConcurrency: 4,
     },
     structuredOutput: {
@@ -1426,7 +1598,7 @@ export const updateControlPlanePipelineRequestV2Fixture =
     runtimeProfile: {
       name: 'Prague Tech Runtime',
       crawlerMaxConcurrency: 3,
-      crawlerMaxRequestsPerMinute: 60,
+      crawlerMaxRequestsPerMinute: 10,
       ingestionConcurrency: 4,
     },
     structuredOutput: {

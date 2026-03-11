@@ -5,4 +5,4 @@ This test verifies crawler concurrency is constrained to operationally safe valu
 Focus:
 
 - Reject non-positive values.
-- Reject values above the configured anti-abuse ceiling.
+- Reject values above the configured anti-abuse ceiling (`max=4`).

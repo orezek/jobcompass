@@ -5,4 +5,4 @@ This test verifies the start URL textarea enforces URL validity and a bounded UR
 Focus:
 
 - Reject malformed URL lines.
-- Reject oversized URL lists to limit payload abuse.
+- Reject oversized URL lists to limit payload abuse (`max=10 URLs`).

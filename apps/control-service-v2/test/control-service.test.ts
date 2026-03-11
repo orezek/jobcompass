@@ -465,7 +465,7 @@ test('createPipeline generates linkage IDs and keeps operator dbName', async () 
     runtimeProfile: {
       name: 'Vyvoj Runtime',
       crawlerMaxConcurrency: 3,
-      crawlerMaxRequestsPerMinute: 60,
+      crawlerMaxRequestsPerMinute: 10,
       ingestionConcurrency: 4,
     },
     structuredOutput: {
@@ -483,6 +483,101 @@ test('createPipeline generates linkage IDs and keeps operator dbName', async () 
   assert.equal(Buffer.byteLength(pipeline.dbName, 'utf8') <= 38, true);
   assert.equal(pipeline.operatorSink.hasMongoUri, true);
   assert.equal(pipeline.operatorSink.mongodbUri, undefined);
+});
+
+test('createPipeline rejects payloads outside server-side contract limits', async () => {
+  const store = new InMemoryStore();
+  const logger = createLogger();
+  const service = new ControlService(
+    createEnv(),
+    store,
+    {
+      async ensureCrawlerReady() {
+        return undefined;
+      },
+      async ensureIngestionReady() {
+        return undefined;
+      },
+      async startCrawlerRun() {
+        throw new Error('not used');
+      },
+      async startIngestionRun() {
+        throw new Error('not used');
+      },
+      async cancelCrawlerRun() {
+        throw new Error('not used');
+      },
+      async cancelIngestionRun() {
+        throw new Error('not used');
+      },
+    },
+    new ControlServiceState({
+      serviceName: 'control-service-v2',
+      serviceVersion: 'test',
+      subscriptionEnabled: true,
+    }),
+    new StreamHub(logger as never),
+    logger as never,
+  );
+
+  const basePayload = {
+    name: 'Valid Pipeline',
+    source: 'jobs.cz' as const,
+    mode: 'crawl_and_ingest' as const,
+    searchSpace: {
+      name: 'Valid Search Space',
+      description: 'Validation baseline',
+      startUrls: ['https://example.com/jobs'],
+      maxItems: 20,
+      allowInactiveMarking: true,
+    },
+    runtimeProfile: {
+      name: 'Valid Runtime Profile',
+      crawlerMaxConcurrency: 1,
+      crawlerMaxRequestsPerMinute: 10,
+      ingestionConcurrency: 4,
+    },
+    structuredOutput: {
+      destinations: [{ type: 'mongodb' as const }],
+    },
+    operatorSink: {
+      mongodbUri: 'mongodb://localhost:27017',
+      dbName: 'pl_server_contract_01',
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      service.createPipeline({
+        ...basePayload,
+        source: 'not-supported-source',
+      }),
+    /"source"/i,
+  );
+
+  await assert.rejects(
+    () =>
+      service.createPipeline({
+        ...basePayload,
+        runtimeProfile: {
+          ...basePayload.runtimeProfile,
+          crawlerMaxRequestsPerMinute: 21,
+        },
+      }),
+    /crawlerMaxRequestsPerMinute must be at most 20/i,
+  );
+
+  await assert.rejects(
+    () =>
+      service.createPipeline({
+        ...basePayload,
+        operatorSink: {
+          ...basePayload.operatorSink,
+          mongodbUri: 'https://example.com/not-mongo',
+        },
+      }),
+    /mongodbUri must start with mongodb:\/\/ or mongodb\+srv:\/\//i,
+  );
 });
 
 test('updatePipeline applies dbName-only operatorSink updates while preserving stored URI', async () => {

@@ -27,6 +27,13 @@ test('rejects invalid dbName values and accepts a valid 38-byte name', async ({ 
   ).toBeVisible();
 
   const databaseNameInput = page.getByLabel('Database Name');
+  await databaseNameInput.fill('ab');
+  await submitCreatePipeline(page);
+  await expect(
+    page.getByText('MongoDB database name must be at least 3 characters.', { exact: true }),
+  ).toBeVisible();
+
+  await expect(databaseNameInput).toHaveAttribute('minlength', '3');
   await expect(databaseNameInput).toHaveAttribute('maxlength', '38');
   await databaseNameInput.evaluate((node, value) => {
     const input = node as HTMLInputElement;

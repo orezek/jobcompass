@@ -15,10 +15,10 @@ test('creates a pipeline with maximum safe numeric values', async ({ page }) => 
     name: 'Max Bounds Pipeline',
     searchSpaceName: 'Max Bounds Search Space',
     runtimeProfileName: 'Max Bounds Runtime',
-    maxItems: '1000',
-    crawlerMaxConcurrency: '20',
-    crawlerMaxRequestsPerMinute: '600',
-    ingestionConcurrency: '64',
+    maxItems: '5000',
+    crawlerMaxConcurrency: '4',
+    crawlerMaxRequestsPerMinute: '20',
+    ingestionConcurrency: '32',
     operatorDbName: 'pl_max_bounds_01',
   });
 
@@ -34,10 +34,10 @@ test('creates a pipeline with maximum safe numeric values', async ({ page }) => 
     };
   };
 
-  expect(payload.searchSpace.maxItems).toBe(1000);
-  expect(payload.runtimeProfile.crawlerMaxConcurrency).toBe(20);
-  expect(payload.runtimeProfile.crawlerMaxRequestsPerMinute).toBe(600);
-  expect(payload.runtimeProfile.ingestionConcurrency).toBe(64);
+  expect(payload.searchSpace.maxItems).toBe(5000);
+  expect(payload.runtimeProfile.crawlerMaxConcurrency).toBe(4);
+  expect(payload.runtimeProfile.crawlerMaxRequestsPerMinute).toBe(20);
+  expect(payload.runtimeProfile.ingestionConcurrency).toBe(32);
   expect(createApi.getRunStartRequestCount()).toBe(0);
 
   await expect(page).toHaveURL(new RegExp(`/pipelines/${pipelineId}$`));

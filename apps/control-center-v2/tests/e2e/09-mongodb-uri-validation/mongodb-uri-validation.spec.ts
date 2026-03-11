@@ -14,6 +14,7 @@ test('rejects non-mongodb schemes and accepts mongodb+srv URIs', async ({ page }
 
   const mongoUriInput = page.getByLabel('MongoDB URI');
   await expect(mongoUriInput).toHaveAttribute('pattern', '^mongodb(\\\\+srv)?:\\\\/\\\\/.+');
+  await expect(mongoUriInput).toHaveAttribute('maxlength', '2048');
 
   await fillCreatePipelineForm(page, {
     name: 'Mongo URI Validation',

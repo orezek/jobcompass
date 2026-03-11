@@ -13,10 +13,10 @@ test('rejects max items above the configured safe ceiling', async ({ page }) => 
 
   const maxItemsInput = page.getByLabel('Max Items');
   await expect(maxItemsInput).toHaveAttribute('min', '1');
-  await expect(maxItemsInput).toHaveAttribute('max', '1000');
+  await expect(maxItemsInput).toHaveAttribute('max', '5000');
 
   await fillCreatePipelineForm(page, {
-    maxItems: '1001',
+    maxItems: '5001',
     name: 'Unsafe Max Items Pipeline',
     searchSpaceName: 'Unsafe Max Items Space',
     runtimeProfileName: 'Unsafe Max Runtime',
@@ -25,7 +25,7 @@ test('rejects max items above the configured safe ceiling', async ({ page }) => 
 
   await submitCreatePipeline(page);
 
-  await expect(page.getByText('Max items must be at most 1000.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Max items must be at most 5000.', { exact: true })).toBeVisible();
   expect(createApi.createPayloads).toHaveLength(0);
   expect(createApi.getRunStartRequestCount()).toBe(0);
 });
