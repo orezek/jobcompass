@@ -35,9 +35,17 @@ export function assertControlAuth(request: FastifyRequest, env: EnvSchema): void
   }
 }
 
-export function buildAuthHeaders(sharedToken: string): Record<string, string> {
-  return {
+export function buildAuthHeaders(
+  sharedToken: string,
+  options?: { includeJsonContentType?: boolean },
+): Record<string, string> {
+  const headers: Record<string, string> = {
     Authorization: `Bearer ${sharedToken}`,
-    'Content-Type': 'application/json',
   };
+
+  if (options?.includeJsonContentType ?? true) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  return headers;
 }

@@ -134,3 +134,27 @@ test('startCrawlerRun does not retry on non-retryable worker rejection', async (
     globalThis.fetch = originalFetch;
   }
 });
+
+test('cancelCrawlerRun omits JSON content-type when body is absent', async () => {
+  const env = createEnv();
+  const client = new WorkerClient(env);
+  const originalFetch = globalThis.fetch;
+  let requestInit: RequestInit | undefined;
+
+  globalThis.fetch = async (_input, init) => {
+    requestInit = init;
+    return new Response(null, { status: 202 });
+  };
+
+  try {
+    const result = await client.cancelCrawlerRun('run-abc');
+    assert.equal(result, 'accepted');
+
+    const headers = new Headers(requestInit?.headers);
+    assert.equal(headers.get('authorization'), 'Bearer test-token');
+    assert.equal(headers.get('content-type'), null);
+    assert.equal(requestInit?.body, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -94,7 +94,9 @@ export class WorkerClient {
       try {
         const response = await fetch(new URL('/readyz', baseUrl), {
           method: 'GET',
-          headers: buildAuthHeaders(this.env.CONTROL_SHARED_TOKEN),
+          headers: buildAuthHeaders(this.env.CONTROL_SHARED_TOKEN, {
+            includeJsonContentType: false,
+          }),
           signal: AbortSignal.timeout(WORKER_READY_TIMEOUT_MS),
         });
         const body = await this.parseJsonBody(response);
@@ -214,9 +216,12 @@ export class WorkerClient {
     runId: string,
     payload?: unknown,
   ): Promise<'accepted' | 'not_found'> {
+    const includeJsonContentType = payload !== undefined;
     const response = await fetch(new URL(`/v1/runs/${runId}/cancel`, baseUrl), {
       method: 'POST',
-      headers: buildAuthHeaders(this.env.CONTROL_SHARED_TOKEN),
+      headers: buildAuthHeaders(this.env.CONTROL_SHARED_TOKEN, {
+        includeJsonContentType,
+      }),
       ...(payload ? { body: JSON.stringify(payload) } : {}),
       signal: AbortSignal.timeout(WORKER_HTTP_TIMEOUT_MS),
     });
