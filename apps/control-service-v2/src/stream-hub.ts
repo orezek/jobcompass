@@ -8,7 +8,7 @@ import {
   controlServiceSseRunEventAppendedEventV2Schema,
   controlServiceSseRunUpsertedEventV2Schema,
   controlServiceStreamQueryV2Schema,
-} from '@repo/control-plane-contracts';
+} from '@repo/control-plane-contracts/v2';
 import type { ControlPlaneRun, ControlPlaneRunEventIndex } from './run-model.js';
 import type { ControlServiceState } from './service-state.js';
 

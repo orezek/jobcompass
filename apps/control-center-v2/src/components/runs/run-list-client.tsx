@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { Check, Copy } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyLabTray } from '@/components/state/empty-lab-tray';
-import { LiveIndicator } from '@/components/state/live-indicator';
 import { StatusBadge } from '@/components/state/status-badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -17,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type {
   ControlPlanePipeline,
   ControlPlaneRun,
@@ -25,11 +26,32 @@ import type {
 import { upsertRun, useControlStream } from '@/lib/live';
 import { formatDateTime } from '@/lib/utils';
 
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 200;
+
 function runMatchesFilter(run: ControlPlaneRun, filters: Partial<ListControlPlaneRunsQuery>) {
   if (filters.pipelineId && run.pipelineId !== filters.pipelineId) return false;
   if (filters.status && run.status !== filters.status) return false;
   if (filters.source && run.source !== filters.source) return false;
   return true;
+}
+
+function normalizeLimit(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_LIMIT;
+  }
+
+  return Math.min(parsed, MAX_LIMIT);
+}
+
+function formatCompactRunId(runId: string): string {
+  if (!runId.includes('-')) {
+    return runId;
+  }
+
+  const suffix = runId.split('-').at(-1);
+  return suffix ? `...${suffix}` : runId;
 }
 
 export function RunListClient({
@@ -44,14 +66,40 @@ export function RunListClient({
   pipelines: ControlPlanePipeline[];
 }) {
   const router = useRouter();
+  const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [runs, setRuns] = useState(initialRuns);
+  const [copiedRunId, setCopiedRunId] = useState<string | null>(null);
   const [draftFilters, setDraftFilters] = useState({
     pipelineId: filters.pipelineId ?? '',
     status: filters.status ?? '',
     source: filters.source ?? '',
-    limit: String(filters.limit ?? 20),
+    limit: String(filters.limit ?? DEFAULT_LIMIT),
   });
-  const connectionState = useControlStream({
+
+  useEffect(() => {
+    setRuns(initialRuns);
+  }, [initialRuns]);
+
+  useEffect(() => {
+    setDraftFilters({
+      pipelineId: filters.pipelineId ?? '',
+      status: filters.status ?? '',
+      source: filters.source ?? '',
+      limit: String(filters.limit ?? DEFAULT_LIMIT),
+    });
+  }, [filters.limit, filters.pipelineId, filters.source, filters.status]);
+
+  useEffect(
+    () => () => {
+      if (copyFeedbackTimeoutRef.current !== null) {
+        clearTimeout(copyFeedbackTimeoutRef.current);
+      }
+    },
+    [],
+  );
+
+  useControlStream({
+    pipelineId: filters.pipelineId,
     onRunUpserted: (run) => {
       setRuns((current) => {
         if (!runMatchesFilter(run, filters)) {
@@ -72,211 +120,261 @@ export function RunListClient({
     const params = new URLSearchParams();
     if (draftFilters.pipelineId) params.set('pipelineId', draftFilters.pipelineId);
     if (draftFilters.status) params.set('status', draftFilters.status);
-    if (draftFilters.source) params.set('source', draftFilters.source);
-    if (draftFilters.limit) params.set('limit', draftFilters.limit);
+    if (draftFilters.source.trim()) params.set('source', draftFilters.source.trim());
+    params.set('limit', String(normalizeLimit(draftFilters.limit)));
     router.push(params.toString() ? `/runs?${params.toString()}` : '/runs');
   };
 
-  return (
-    <div className="grid gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="font-mono text-xs uppercase tracking-[0.16em] text-muted-foreground">
-            Run Observatory
-          </p>
-        </div>
-        <LiveIndicator state={connectionState} />
-      </div>
+  const copyRunId = async (runId: string) => {
+    try {
+      await navigator.clipboard.writeText(runId);
+      setCopiedRunId(runId);
 
-      <Card>
-        <CardContent className="grid gap-4 p-4 md:flex md:flex-wrap md:items-end *:md:flex-1">
-          <label className="grid gap-2 text-sm">
-            <span className="font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted-foreground">
-              Pipeline
-            </span>
-            <select
-              className="flex h-11 w-full rounded-sm border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              value={draftFilters.pipelineId}
-              onChange={(event) =>
-                setDraftFilters((current) => ({ ...current, pipelineId: event.target.value }))
-              }
-            >
-              <option value="">All pipelines</option>
-              {pipelineOptions.map((pipeline) => (
-                <option key={pipeline.id} value={pipeline.id}>
-                  {pipeline.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-2 text-sm">
-            <span className="font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted-foreground">
-              Status
-            </span>
-            <select
-              className="flex h-11 w-full rounded-sm border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              value={draftFilters.status}
-              onChange={(event) =>
-                setDraftFilters((current) => ({ ...current, status: event.target.value }))
-              }
-            >
-              <option value="">All statuses</option>
-              {['queued', 'running', 'succeeded', 'completed_with_errors', 'failed', 'stopped'].map(
-                (status) => (
+      if (copyFeedbackTimeoutRef.current !== null) {
+        clearTimeout(copyFeedbackTimeoutRef.current);
+      }
+
+      copyFeedbackTimeoutRef.current = setTimeout(() => {
+        setCopiedRunId((current) => (current === runId ? null : current));
+      }, 2000);
+    } catch {
+      setCopiedRunId(null);
+    }
+  };
+
+  return (
+    <TooltipProvider delayDuration={150}>
+      <div className="grid gap-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="font-mono text-xs uppercase tracking-[0.16em] text-muted-foreground">
+              Run Registry
+            </p>
+          </div>
+        </div>
+
+        <Card>
+          <CardContent className="grid gap-4 p-4 md:flex md:flex-wrap md:items-end *:md:flex-1">
+            <label className="grid gap-2 text-sm">
+              <span className="font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted-foreground">
+                Pipeline
+              </span>
+              <select
+                className="flex h-11 w-full rounded-sm border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value={draftFilters.pipelineId}
+                onChange={(event) =>
+                  setDraftFilters((current) => ({ ...current, pipelineId: event.target.value }))
+                }
+              >
+                <option value="">All pipelines</option>
+                {pipelineOptions.map((pipeline) => (
+                  <option key={pipeline.id} value={pipeline.id}>
+                    {pipeline.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-2 text-sm">
+              <span className="font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted-foreground">
+                Status
+              </span>
+              <select
+                className="flex h-11 w-full rounded-sm border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                value={draftFilters.status}
+                onChange={(event) =>
+                  setDraftFilters((current) => ({ ...current, status: event.target.value }))
+                }
+              >
+                <option value="">All statuses</option>
+                {[
+                  'queued',
+                  'running',
+                  'succeeded',
+                  'completed_with_errors',
+                  'failed',
+                  'stopped',
+                ].map((status) => (
                   <option key={status} value={status}>
                     {status}
                   </option>
-                ),
-              )}
-            </select>
-          </label>
-          <label className="grid gap-2 text-sm">
-            <span className="font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted-foreground">
-              Source
-            </span>
-            <Input
-              value={draftFilters.source}
-              onChange={(event) =>
-                setDraftFilters((current) => ({ ...current, source: event.target.value }))
-              }
-            />
-          </label>
-          <div className="grid gap-2 sm:grid-cols-[minmax(0,120px),1fr]">
+                ))}
+              </select>
+            </label>
             <label className="grid gap-2 text-sm">
               <span className="font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted-foreground">
-                Limit
+                Source
               </span>
               <Input
-                type="number"
-                value={draftFilters.limit}
+                placeholder="jobs.cz"
+                value={draftFilters.source}
                 onChange={(event) =>
-                  setDraftFilters((current) => ({ ...current, limit: event.target.value }))
+                  setDraftFilters((current) => ({ ...current, source: event.target.value }))
                 }
               />
             </label>
-            <Button onClick={applyFilters} className="sm:self-end">
-              Apply Filters
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,120px),1fr]">
+              <label className="grid gap-2 text-sm">
+                <span className="font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted-foreground">
+                  Limit
+                </span>
+                <Input
+                  type="number"
+                  min={1}
+                  max={MAX_LIMIT}
+                  value={draftFilters.limit}
+                  onChange={(event) =>
+                    setDraftFilters((current) => ({ ...current, limit: event.target.value }))
+                  }
+                />
+              </label>
+              <Button onClick={applyFilters} className="sm:self-end">
+                Apply Filters
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {runs.length === 0 ? (
+          <EmptyLabTray
+            title="Empty Lab Tray"
+            description="No runs match the current filter set."
+          />
+        ) : (
+          <>
+            <div className="grid gap-3 md:hidden">
+              {runs.map((run) => (
+                <Card key={run.runId}>
+                  <CardContent className="grid gap-3 p-4">
+                    <div>
+                      <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                        {run.runId}
+                      </p>
+                      <h3 className="mt-1 text-lg font-semibold tracking-tightest">
+                        {run.pipelineName}
+                      </h3>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusBadge status={run.status} stopReason={run.stopReason} />
+                      <span className="text-sm text-muted-foreground">{run.source}</span>
+                    </div>
+                    <dl className="grid gap-2 text-sm text-muted-foreground">
+                      <div className="flex justify-between gap-3">
+                        <dt>Requested</dt>
+                        <dd>{formatDateTime(run.requestedAt)}</dd>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <dt>Crawler</dt>
+                        <dd>
+                          <StatusBadge status={run.crawler.status} />
+                        </dd>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <dt>Ingestion</dt>
+                        <dd>
+                          <StatusBadge status={run.ingestion.status} />
+                        </dd>
+                      </div>
+                    </dl>
+                    <Button asChild variant="secondary">
+                      <Link href={`/runs/${run.runId}`}>Open Run</Link>
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+
+            <div className="hidden overflow-hidden rounded-sm border border-border md:block">
+              <div className="w-full overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="whitespace-nowrap">Run</TableHead>
+                      <TableHead className="whitespace-nowrap">Pipeline</TableHead>
+                      <TableHead className="whitespace-nowrap">Status</TableHead>
+                      <TableHead className="whitespace-nowrap">Crawler</TableHead>
+                      <TableHead className="whitespace-nowrap">Ingestion</TableHead>
+                      <TableHead className="whitespace-nowrap">Requested</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">Detail</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {runs.map((run) => (
+                      <TableRow key={run.runId}>
+                        <TableCell className="whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="font-mono text-xs text-muted-foreground">
+                                  {formatCompactRunId(run.runId)}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <span className="font-mono text-xs">{run.runId}</span>
+                              </TooltipContent>
+                            </Tooltip>
+                            <button
+                              type="button"
+                              aria-label={`Copy run id ${run.runId}`}
+                              className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-[var(--theme-text-secondary)] transition-colors hover:text-[var(--theme-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              onClick={() => void copyRunId(run.runId)}
+                            >
+                              {copiedRunId === run.runId ? (
+                                <Check className="h-3.5 w-3.5" />
+                              ) : (
+                                <Copy className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <div className="font-semibold text-foreground">{run.pipelineName}</div>
+                          <div className="text-xs text-muted-foreground">{run.source}</div>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <StatusBadge status={run.status} stopReason={run.stopReason} />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <StatusBadge status={run.crawler.status} />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <StatusBadge status={run.ingestion.status} />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {formatDateTime(run.requestedAt)}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-right">
+                          <Button asChild size="sm" variant="secondary">
+                            <Link href={`/runs/${run.runId}`}>Open</Link>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </>
+        )}
+
+        {nextCursor ? (
+          <div className="flex justify-end">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                const params = new URLSearchParams();
+                if (filters.pipelineId) params.set('pipelineId', filters.pipelineId);
+                if (filters.status) params.set('status', filters.status);
+                if (filters.source) params.set('source', filters.source);
+                if (filters.limit) params.set('limit', String(filters.limit));
+                params.set('cursor', nextCursor);
+                router.push(`/runs?${params.toString()}`);
+              }}
+            >
+              Next Page
             </Button>
           </div>
-        </CardContent>
-      </Card>
-
-      {runs.length === 0 ? (
-        <EmptyLabTray title="Empty Lab Tray" description="No runs match the current filter set." />
-      ) : (
-        <>
-          <div className="grid gap-3 md:hidden">
-            {runs.map((run) => (
-              <Card key={run.runId}>
-                <CardContent className="grid gap-3 p-4">
-                  <div>
-                    <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                      {run.runId}
-                    </p>
-                    <h3 className="mt-1 text-lg font-semibold tracking-tightest">
-                      {run.pipelineName}
-                    </h3>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <StatusBadge status={run.status} />
-                    <span className="text-sm text-muted-foreground">{run.source}</span>
-                  </div>
-                  <dl className="grid gap-2 text-sm text-muted-foreground">
-                    <div className="flex justify-between gap-3">
-                      <dt>Requested</dt>
-                      <dd>{formatDateTime(run.requestedAt)}</dd>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <dt>Crawler</dt>
-                      <dd>
-                        <StatusBadge status={run.crawler.status} />
-                      </dd>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <dt>Ingestion</dt>
-                      <dd>
-                        <StatusBadge status={run.ingestion.status} />
-                      </dd>
-                    </div>
-                  </dl>
-                  <Button asChild variant="secondary">
-                    <Link href={`/runs/${run.runId}`}>Open Run</Link>
-                  </Button>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-          <div className="hidden overflow-hidden rounded-sm border border-border md:block">
-            <div className="w-full overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="whitespace-nowrap">Run</TableHead>
-                    <TableHead className="whitespace-nowrap">Pipeline</TableHead>
-                    <TableHead className="whitespace-nowrap">Status</TableHead>
-                    <TableHead className="whitespace-nowrap">Crawler</TableHead>
-                    <TableHead className="whitespace-nowrap">Ingestion</TableHead>
-                    <TableHead className="whitespace-nowrap">Requested</TableHead>
-                    <TableHead className="whitespace-nowrap text-right">Detail</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {runs.map((run) => (
-                    <TableRow key={run.runId}>
-                      <TableCell className="whitespace-nowrap">
-                        <div className="font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                          {run.runId}
-                        </div>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        <div className="font-semibold text-foreground">{run.pipelineName}</div>
-                        <div className="text-xs text-muted-foreground">{run.source}</div>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        <StatusBadge status={run.status} />
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        <StatusBadge status={run.crawler.status} />
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        <StatusBadge status={run.ingestion.status} />
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {formatDateTime(run.requestedAt)}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-right">
-                        <Button asChild size="sm" variant="secondary">
-                          <Link href={`/runs/${run.runId}`}>Open</Link>
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </div>
-        </>
-      )}
-
-      {nextCursor ? (
-        <div className="flex justify-end">
-          <Button
-            variant="secondary"
-            onClick={() => {
-              const params = new URLSearchParams();
-              if (filters.pipelineId) params.set('pipelineId', filters.pipelineId);
-              if (filters.status) params.set('status', filters.status);
-              if (filters.source) params.set('source', filters.source);
-              if (filters.limit) params.set('limit', String(filters.limit));
-              params.set('cursor', nextCursor);
-              router.push(`/runs?${params.toString()}`);
-            }}
-          >
-            Next Page
-          </Button>
-        </div>
-      ) : null}
-    </div>
+        ) : null}
+      </div>
+    </TooltipProvider>
   );
 }

@@ -43,9 +43,7 @@ export const envSchema = z
     CONTROL_PLANE_DB_NAME: z.string().trim().min(1),
     CRAWLER_WORKER_BASE_URL: z.url(),
     INGESTION_WORKER_BASE_URL: z.url(),
-    CONTROL_PLANE_ARTIFACT_STORAGE_BACKEND: z
-      .enum(['local_filesystem', 'gcs'])
-      .default('local_filesystem'),
+    CONTROL_PLANE_ARTIFACT_STORAGE_BACKEND: z.enum(['local_filesystem', 'gcs']).default('gcs'),
     CONTROL_PLANE_ARTIFACT_STORAGE_LOCAL_BASE_PATH: z
       .string()
       .trim()
@@ -53,6 +51,9 @@ export const envSchema = z
       .default('control-plane-artifacts'),
     CONTROL_PLANE_ARTIFACT_STORAGE_GCS_BUCKET: optionalStringSchema,
     CONTROL_PLANE_ARTIFACT_STORAGE_GCS_PREFIX: z.string().default(''),
+    CONTROL_PLANE_JSON_BUNDLE_MAX_BYTES: z.coerce.number().int().positive().default(104_857_600),
+    CONTROL_PLANE_JSON_BUNDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+    CONTROL_PLANE_SKIP_SINK_PREFLIGHT: toBoolean.default(false),
     GCP_PROJECT_ID: z.string().trim().min(1),
     PUBSUB_EVENTS_TOPIC: z.string().trim().min(1),
     PUBSUB_EVENTS_SUBSCRIPTION: z.string().trim().min(1),

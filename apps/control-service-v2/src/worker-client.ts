@@ -3,7 +3,7 @@ import {
   ingestionCancelRunRequestV2Schema,
   ingestionStartRunRequestV2Schema,
   startRunResponseV2Schema,
-} from '@repo/control-plane-contracts';
+} from '@repo/control-plane-contracts/v2';
 import { z } from 'zod';
 import type { EnvSchema } from './env.js';
 import { buildAuthHeaders } from './auth.js';
@@ -23,12 +23,14 @@ const workerReadyzResponseSchema = z
 export class WorkerClientError extends Error {
   public readonly retryable: boolean;
   public readonly statusCode?: number;
+  public readonly workerCode?: string;
 
   public constructor(
     message: string,
     options?: {
       retryable?: boolean;
       statusCode?: number;
+      workerCode?: string;
       cause?: unknown;
     },
   ) {
@@ -36,6 +38,7 @@ export class WorkerClientError extends Error {
     this.name = 'WorkerClientError';
     this.retryable = options?.retryable ?? false;
     this.statusCode = options?.statusCode;
+    this.workerCode = options?.workerCode;
   }
 }
 
@@ -91,7 +94,9 @@ export class WorkerClient {
       try {
         const response = await fetch(new URL('/readyz', baseUrl), {
           method: 'GET',
-          headers: buildAuthHeaders(this.env.CONTROL_SHARED_TOKEN),
+          headers: buildAuthHeaders(this.env.CONTROL_SHARED_TOKEN, {
+            includeJsonContentType: false,
+          }),
           signal: AbortSignal.timeout(WORKER_READY_TIMEOUT_MS),
         });
         const body = await this.parseJsonBody(response);
@@ -172,6 +177,7 @@ export class WorkerClient {
       throw new WorkerClientError(message, {
         statusCode: response.status,
         retryable: this.isRetryableStatus(response.status),
+        workerCode: parsed.data.ok ? undefined : parsed.data.error.code,
       });
     }
 
@@ -210,9 +216,12 @@ export class WorkerClient {
     runId: string,
     payload?: unknown,
   ): Promise<'accepted' | 'not_found'> {
+    const includeJsonContentType = payload !== undefined;
     const response = await fetch(new URL(`/v1/runs/${runId}/cancel`, baseUrl), {
       method: 'POST',
-      headers: buildAuthHeaders(this.env.CONTROL_SHARED_TOKEN),
+      headers: buildAuthHeaders(this.env.CONTROL_SHARED_TOKEN, {
+        includeJsonContentType,
+      }),
       ...(payload ? { body: JSON.stringify(payload) } : {}),
       signal: AbortSignal.timeout(WORKER_HTTP_TIMEOUT_MS),
     });

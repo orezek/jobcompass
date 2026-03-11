@@ -107,7 +107,7 @@ After creation, Pipeline Detail must expose editable sections for all relevant d
 4. Workers must not own artifact bucket/prefix in worker `.env`.
 5. Pipeline ID is immutable and must namespace all pipeline artifact resources.
 6. Artifact object paths are run-scoped and pipeline-scoped:
-   1. HTML dumps: `pipelines/{pipelineId}/runs/{runId}/artifacts/html/...`
+   1. HTML dumps: `pipelines/{pipelineId}/artifacts/html/runs/{runId}/...`
    2. Downloadable JSON: `pipelines/{pipelineId}/runs/{runId}/outputs/downloadable-json/...`
 7. Control-service resolves run-scoped artifact delivery and passes:
    1. crawler HTML sink via crawler `StartRun.artifactSink`,
@@ -128,7 +128,7 @@ After creation, Pipeline Detail must expose editable sections for all relevant d
 3. `mode` is editable only when there is no active run for the pipeline.
 4. Operator sink `mongodbUri` and `dbName` are editable only when there is no active run for the pipeline.
 5. `mode` and sink changes apply to subsequent runs, never to an already active run.
-6. When run status is active (`queued`, `running`, or `stopping`), pipeline configuration updates are blocked.
+6. When run status is active (`queued` or `running`), pipeline configuration updates are blocked.
 
 ### 3.10 Pipeline Deletion and Cascade Purge
 
@@ -164,7 +164,7 @@ After creation, Pipeline Detail must expose editable sections for all relevant d
    1. `name`
    2. `source`
    3. `mode`
-4. When MongoDB destination is selected, show sink fields:
+4. Always show operator sink fields:
    1. `mongodbUri` input (write-only),
    2. `dbName` input.
 5. Apply client validation for sink inputs:
@@ -208,7 +208,7 @@ After creation, Pipeline Detail must expose editable sections for all relevant d
 
 1. Client no longer sends operator-entered `searchSpaceId` and `runtimeProfileId`.
 2. Control-service (or authoritative backend layer) generates these IDs.
-3. If MongoDB destination is selected, client sends operator sink config with `mongodbUri` and `dbName`.
+3. Client sends operator sink config with `mongodbUri` and `dbName`.
 4. Generated IDs are returned in response payload as normal resource metadata.
 5. `mongodbUri` is write-only and never returned in clear text by read APIs.
 
@@ -226,7 +226,7 @@ After creation, Pipeline Detail must expose editable sections for all relevant d
 ### 5.3 StartRun Worker Payload Routing
 
 1. Control-service resolves operator sink for the pipeline at dispatch time.
-2. Control-service must reject run start when pipeline already has an active run (`queued`, `running`, `stopping`) and return `ACTIVE_RUN_EXISTS`.
+2. Control-service must reject run start when pipeline already has an active run (`queued`, `running`) and return `ACTIVE_RUN_EXISTS`.
 3. Before worker dispatch, control-service performs operator-sink preflight connectivity check.
 4. If sink preflight fails, control-service must fail the run start and not dispatch crawler/ingestion `StartRun`.
 5. Control-service injects run-scoped Mongo sink target into crawler and ingestion `StartRun` payloads.
@@ -295,7 +295,7 @@ After creation, Pipeline Detail must expose editable sections for all relevant d
 
 1. `DELETE /v1/pipelines/:pipelineId`
 2. Preconditions:
-   1. no active runs (`queued`, `running`, `stopping`),
+   1. no active runs (`queued`, `running`),
    2. no unsettled runtime events for pipeline runs.
 3. On precondition failure, return actionable error:
    1. `code: PIPELINE_DELETE_BLOCKED`,
@@ -319,19 +319,19 @@ After creation, Pipeline Detail must expose editable sections for all relevant d
 4. For `crawl_and_ingest`, require valid `ingestion.concurrency` if ingestion execution depends on it.
 5. Reject operator payloads that try to set runtime-profile debug logging flags.
 6. Reject operator payloads that attempt to mutate immutable system-managed fields.
-7. Reject pipeline updates while run status is `queued`, `running`, or `stopping`.
+7. Reject pipeline updates while run status is `queued` or `running`.
 8. Reject post-create updates that attempt to change `source`.
-9. When MongoDB destination is selected, require valid sink `mongodbUri`.
-10. When MongoDB destination is selected, require `dbName` max `38` bytes.
-11. When MongoDB destination is selected, require `dbName` charset: `A-Z`, `a-z`, `0-9`, `_`, `-`.
-12. Reject operator sink updates while run status is `queued`, `running`, or `stopping`.
+9. Require valid sink `mongodbUri`.
+10. Require `dbName` max `38` bytes.
+11. Require `dbName` charset: `A-Z`, `a-z`, `0-9`, `_`, `-`.
+12. Reject operator sink updates while run status is `queued` or `running`.
 13. Reject responses that attempt to expose sink `mongodbUri` in clear text.
 14. Reject any log/error/manifest serialization path that contains clear-text sink `mongodbUri`.
 15. Reject run dispatch when operator-sink connectivity preflight fails.
 16. Reject run dispatch when downloadable JSON artifact sink preflight fails.
 17. Reject worker startup paths that require downloadable JSON bucket/prefix from worker env.
 18. Require actionable error payload for artifact-sink preflight failures (`ARTIFACT_SINK_UNREACHABLE`).
-19. Reject pipeline delete when runs are active (`queued`, `running`, `stopping`).
+19. Reject pipeline delete when runs are active (`queued`, `running`).
 20. Reject pipeline delete when pipeline events are not settled.
 21. Require actionable error payload for blocked deletes (`PIPELINE_DELETE_BLOCKED`).
 22. Reject run start when worker sink-client capacity guardrail is exceeded (`MONGODB_SINK_CAPACITY_EXCEEDED`).
@@ -440,15 +440,15 @@ After creation, Pipeline Detail must expose editable sections for all relevant d
 1. Operator triggers `Start Run` from Control Center.
 2. Control-service loads pipeline config and verifies:
    1. pipeline is not in `deleting` state,
-   2. pipeline has no active run (`queued`, `running`, `stopping`).
+   2. pipeline has no active run (`queued`, `running`).
 3. Control-service validates pipeline mode and editable constraints from section 6.
 4. Control-service resolves sinks for this run:
-   1. operator Mongo sink (if configured),
+   1. operator Mongo sink,
    2. system artifact sink (GCS default),
    3. run-scoped prefixes including immutable `pipelineId` and `runId`.
 5. Control-service runs preflights:
    1. worker availability check,
-   2. operator sink connectivity check (if Mongo output selected),
+   2. operator sink connectivity check,
    3. artifact sink reachability/permissions check.
 6. If any preflight fails, return actionable error and do not dispatch workers.
 7. If mode is `crawl_and_ingest`, dispatch ingestion `StartRun` first.
@@ -467,7 +467,7 @@ After creation, Pipeline Detail must expose editable sections for all relevant d
 
 1. Operator requests `DELETE /v1/pipelines/:pipelineId`.
 2. Control-service checks preconditions:
-   1. no active runs (`queued`, `running`, `stopping`),
+   1. no active runs (`queued`, `running`),
    2. no unsettled runtime events.
 3. If blocked, return `PIPELINE_DELETE_BLOCKED` with blocking details.
 4. If eligible, create delete job and return `202` with `deleteJobId` and `status: deleting`.
@@ -526,7 +526,7 @@ export interface StartRunMongoSinkRouting {
 export interface StartRunArtifactSinkRouting {
   backend: 'gcs';
   bucket: string;
-  prefix: string; // pipelines/{pipelineId}/runs/{runId}/...
+  prefix: string; // pipelines/{pipelineId}/...
 }
 
 export interface StartRunPayload {

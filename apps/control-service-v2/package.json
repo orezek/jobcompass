@@ -19,6 +19,7 @@
     "test": "tsx --test test/**/*.test.ts"
   },
   "dependencies": {
+    "@google-cloud/storage": "catalog:",
     "@google-cloud/pubsub": "catalog:",
     "@repo/control-plane-contracts": "workspace:*",
     "@repo/env-config": "workspace:*",

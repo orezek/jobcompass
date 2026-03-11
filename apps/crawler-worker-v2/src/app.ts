@@ -1,7 +1,9 @@
 import { PubSub } from '@google-cloud/pubsub';
 import Fastify from 'fastify';
-import { MongoClient } from 'mongodb';
-import { crawlerStartRunRequestV2Schema } from '@repo/control-plane-contracts';
+import {
+  crawlerStartRunRequestV2Schema,
+  startRunRejectedResponseV2Schema,
+} from '@repo/control-plane-contracts/v2';
 import { AuthError, assertControlAuth } from './auth.js';
 import { envs } from './env.js';
 import { ConflictError, CrawlerWorkerRuntime, NotFoundError } from './runtime.js';
@@ -31,10 +33,6 @@ async function main(): Promise<void> {
           },
   });
 
-  const mongoClient = new MongoClient(envs.MONGODB_URI);
-  await mongoClient.connect();
-  await mongoClient.db().command({ ping: 1 });
-
   const pubsub = new PubSub({ projectId: envs.GCP_PROJECT_ID });
   const eventsTopic = pubsub.topic(envs.PUBSUB_EVENTS_TOPIC);
 
@@ -42,7 +40,6 @@ async function main(): Promise<void> {
     env: envs,
     logger: app.log,
     eventsTopic,
-    mongoClient,
   });
   await runtime.initialize();
 
@@ -95,12 +92,25 @@ async function main(): Promise<void> {
       return response;
     } catch (error) {
       if (error instanceof ConflictError) {
-        reply.code(error.statusCode);
-        return {
+        const isSinkCapacityError = error.message.startsWith('MONGODB_SINK_CAPACITY_EXCEEDED');
+        const message = isSinkCapacityError
+          ? error.message.replace(/^MONGODB_SINK_CAPACITY_EXCEEDED:\s*/u, '')
+          : error.message;
+        const rejected = startRunRejectedResponseV2Schema.parse({
+          contractVersion: 'v2',
           ok: false,
-          error: error.message,
-          code: 'RUN_ID_CONFLICT',
-        };
+          accepted: false,
+          deduplicated: false,
+          state: 'rejected',
+          workerType: 'crawler',
+          runId: parsed.data.runId,
+          error: {
+            code: isSinkCapacityError ? 'MONGODB_SINK_CAPACITY_EXCEEDED' : 'RUN_ID_CONFLICT',
+            message,
+          },
+        });
+        reply.code(isSinkCapacityError ? 429 : error.statusCode);
+        return rejected;
       }
 
       throw error;
@@ -124,7 +134,7 @@ async function main(): Promise<void> {
   });
 
   app.addHook('onClose', async () => {
-    await mongoClient.close();
+    await runtime.shutdown();
   });
 
   await app.listen({ host: '0.0.0.0', port: envs.PORT });

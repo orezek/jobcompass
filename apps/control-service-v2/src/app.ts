@@ -6,7 +6,7 @@ import { ZodError } from 'zod';
 import {
   controlServiceErrorResponseV2Schema,
   controlServiceStreamQueryV2Schema,
-} from '@repo/control-plane-contracts';
+} from '@repo/control-plane-contracts/v2';
 import { AuthError, assertControlAuth } from './auth.js';
 import { ControlService } from './control-service.js';
 import type { EnvSchema } from './env.js';
@@ -24,11 +24,17 @@ type RouteDeps = {
     | 'listPipelines'
     | 'getPipeline'
     | 'updatePipeline'
+    | 'deletePipeline'
+    | 'getPipelineDeleteStatus'
     | 'startPipelineRun'
     | 'cancelRun'
     | 'listRuns'
     | 'getRun'
     | 'listRunEvents'
+    | 'listRunJsonArtifacts'
+    | 'getRunJsonArtifact'
+    | 'downloadRunJsonArtifact'
+    | 'downloadAllRunJsonArtifacts'
   >;
   state: ControlServiceState;
   streamHub: StreamHub;
@@ -195,6 +201,18 @@ export function registerControlServiceRoutes(
     ),
   );
 
+  app.delete('/v1/pipelines/:pipelineId', async (request, reply) => {
+    const response = await deps.service.deletePipeline(
+      (request.params as { pipelineId: string }).pipelineId,
+    );
+    reply.code(202);
+    return response;
+  });
+
+  app.get('/v1/pipelines/:pipelineId/delete-status', async (request) =>
+    deps.service.getPipelineDeleteStatus((request.params as { pipelineId: string }).pipelineId),
+  );
+
   app.post('/v1/pipelines/:pipelineId/runs', async (request, reply) => {
     const response = await deps.service.startPipelineRun(
       (request.params as { pipelineId: string }).pipelineId,
@@ -218,6 +236,38 @@ export function registerControlServiceRoutes(
   app.get('/v1/runs/:runId/events', async (request) =>
     deps.service.listRunEvents((request.params as { runId: string }).runId, request.query),
   );
+
+  app.get('/v1/runs/:runId/json-artifacts', async (request) =>
+    deps.service.listRunJsonArtifacts((request.params as { runId: string }).runId, request.query),
+  );
+
+  app.get('/v1/runs/:runId/json-artifacts/download-all', async (request, reply) => {
+    const result = await deps.service.downloadAllRunJsonArtifacts(
+      (request.params as { runId: string }).runId,
+    );
+
+    reply.header('Content-Type', result.contentType);
+    reply.header('Content-Disposition', `attachment; filename="${result.fileName}"`);
+    return reply.send(result.stream);
+  });
+
+  app.get('/v1/runs/:runId/json-artifacts/:artifactId', async (request) =>
+    deps.service.getRunJsonArtifact(
+      (request.params as { runId: string; artifactId: string }).runId,
+      (request.params as { runId: string; artifactId: string }).artifactId,
+    ),
+  );
+
+  app.get('/v1/runs/:runId/json-artifacts/:artifactId/download', async (request, reply) => {
+    const result = await deps.service.downloadRunJsonArtifact(
+      (request.params as { runId: string; artifactId: string }).runId,
+      (request.params as { runId: string; artifactId: string }).artifactId,
+    );
+
+    reply.header('Content-Type', result.contentType);
+    reply.header('Content-Disposition', `attachment; filename="${result.fileName}"`);
+    return reply.send(result.buffer);
+  });
 
   app.get('/v1/stream', async (request, reply) => {
     const filters = controlServiceStreamQueryV2Schema.parse(request.query);

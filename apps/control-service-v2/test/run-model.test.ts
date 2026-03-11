@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
   controlPlanePipelineV2Fixture,
   runtimeBrokerEventV2Schema,
-} from '@repo/control-plane-contracts';
+} from '@repo/control-plane-contracts/v2';
 import {
   applyRuntimeEventToRun,
   buildInitialRun,
@@ -13,8 +13,15 @@ import {
 
 test('buildRunManifest keeps ingestion start-run event-driven only', () => {
   const runId = 'run-test-001';
+  const pipelineWithSinkUri = {
+    ...controlPlanePipelineV2Fixture,
+    operatorSink: {
+      ...controlPlanePipelineV2Fixture.operatorSink,
+      mongodbUri: 'mongodb://localhost:27017',
+    },
+  };
   const manifest = buildRunManifest({
-    pipeline: controlPlanePipelineV2Fixture,
+    pipeline: pipelineWithSinkUri,
     runId,
     createdBy: 'control-service-v2',
     artifactSink: {
@@ -26,6 +33,10 @@ test('buildRunManifest keeps ingestion start-run event-driven only', () => {
 
   assert.equal(manifest.workerCommands.crawler.runId, runId);
   assert.equal(manifest.workerCommands.crawler.artifactSink.type, 'gcs');
+  assert.equal(
+    manifest.workerCommands.crawler.artifactSink.prefix,
+    `runs/pipelines/${controlPlanePipelineV2Fixture.pipelineId}/artifacts/html`,
+  );
   assert.equal(manifest.workerCommands.ingestion?.runId, runId);
   assert.deepEqual(manifest.workerCommands.ingestion?.inputRef, {
     crawlRunId: runId,

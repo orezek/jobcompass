@@ -2,7 +2,7 @@ import {
   controlServiceHealthzResponseV2Schema,
   controlServiceHeartbeatResponseV2Schema,
   controlServiceReadyzResponseV2Schema,
-} from '@repo/control-plane-contracts';
+} from '@repo/control-plane-contracts/v2';
 
 type ServiceStateInput = {
   serviceName: string;

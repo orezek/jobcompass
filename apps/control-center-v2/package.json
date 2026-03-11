@@ -21,7 +21,8 @@
     "check-types": "tsc --noEmit",
     "pretest": "pnpm run build:workspace-contracts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test --config playwright.config.ts --headed"
   },
   "dependencies": {
     "@hookform/resolvers": "catalog:",
@@ -29,10 +30,12 @@
     "@radix-ui/react-alert-dialog": "catalog:",
     "@radix-ui/react-dialog": "catalog:",
     "@radix-ui/react-slot": "catalog:",
+    "@radix-ui/react-tooltip": "catalog:",
     "@repo/control-plane-contracts": "workspace:*",
     "@repo/env-config": "workspace:*",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
+    "lucide-react": "catalog:",
     "next": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
@@ -41,6 +44,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@playwright/test": "catalog:",
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@testing-library/jest-dom": "catalog:",

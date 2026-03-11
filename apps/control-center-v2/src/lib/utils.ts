@@ -3,9 +3,13 @@ import { twMerge } from 'tailwind-merge';
 
 export const cn = (...inputs: ClassValue[]): string => twMerge(clsx(inputs));
 
-const dateTimeFormatter = new Intl.DateTimeFormat('en', {
-  dateStyle: 'medium',
-  timeStyle: 'short',
+const dateTimeFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  hour12: true,
 });
 
 export const formatDateTime = (value: string | null): string => {
@@ -13,7 +17,24 @@ export const formatDateTime = (value: string | null): string => {
     return '—';
   }
 
-  return dateTimeFormatter.format(new Date(value));
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '—';
+  }
+
+  const parts = dateTimeFormatter.formatToParts(date);
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const hour = parts.find((part) => part.type === 'hour')?.value;
+  const minute = parts.find((part) => part.type === 'minute')?.value;
+  const dayPeriod = parts.find((part) => part.type === 'dayPeriod')?.value;
+
+  if (!month || !day || !year || !hour || !minute || !dayPeriod) {
+    return dateTimeFormatter.format(date);
+  }
+
+  return `${month} ${day}, ${year}, ${hour}:${minute} ${dayPeriod}`;
 };
 
 export const formatNullableCount = (value: number | null | undefined): string => {
@@ -31,8 +52,20 @@ export const titleCaseFromToken = (value: string): string =>
     .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
     .join(' ');
 
+export const formatRunStatusLabel = (status: string, stopReason?: string | null): string => {
+  const normalizedStatus = status.trim().toLowerCase();
+  const normalizedStopReason = stopReason?.trim().toLowerCase();
+
+  if (
+    normalizedStatus === 'stopped' &&
+    (normalizedStopReason === 'cancelled_by_operator' ||
+      normalizedStopReason === 'canceled_by_operator')
+  ) {
+    return 'Canceled';
+  }
+
+  return titleCaseFromToken(status);
+};
+
 export const splitTextareaLines = (value: string): string[] =>
-  value
-    .split(/\r?\n/g)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  value.split(/\r?\n/g).filter((line) => line.length > 0);

@@ -2,11 +2,16 @@ import 'server-only';
 import {
   controlPlanePipelineV2Schema,
   controlPlaneRunV2Schema,
+  controlServiceDeletePipelineAcceptedResponseV2Schema,
+  controlServiceDeletePipelineStatusResponseV2Schema,
   controlServiceCancelRunAcceptedResponseV2Schema,
   controlServiceErrorResponseV2Schema,
   controlServiceHeartbeatResponseV2Schema,
   controlServiceStartPipelineRunAcceptedResponseV2Schema,
   createControlPlanePipelineRequestV2Schema,
+  getRunJsonArtifactResponseV2Schema,
+  listRunJsonArtifactsQueryV2Schema,
+  listRunJsonArtifactsResponseV2Schema,
   listControlPlanePipelinesResponseV2Schema,
   listControlPlaneRunEventsQueryV2Schema,
   listControlPlaneRunEventsResponseV2Schema,
@@ -24,6 +29,8 @@ import type {
   ListControlPlanePipelinesResponse,
   ListControlPlaneRunEventsQuery,
   ListControlPlaneRunEventsResponse,
+  ListRunJsonArtifactsQuery,
+  ListRunJsonArtifactsResponse,
   ListControlPlaneRunsQuery,
   ListControlPlaneRunsResponse,
   UpdateControlPlanePipelineRequest,
@@ -32,12 +39,43 @@ import type {
 export class ControlServiceRequestError extends Error {
   constructor(
     readonly status: number,
+    readonly code: string | undefined,
     message: string,
     readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'ControlServiceRequestError';
   }
+}
+
+export type ControlServiceConnectivityDiagnostic = {
+  occurredAt: string;
+  request: string;
+  message: string;
+  errorName: string;
+  status?: number;
+  code?: string;
+  details?: Record<string, unknown>;
+};
+
+export function isControlServiceUnavailableError(error: unknown): boolean {
+  if (error instanceof ControlServiceRequestError) {
+    return true;
+  }
+
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const lowerMessage = error.message.toLowerCase();
+  return (
+    error.name === 'TypeError' ||
+    lowerMessage.includes('fetch failed') ||
+    lowerMessage.includes('network') ||
+    lowerMessage.includes('econnrefused') ||
+    lowerMessage.includes('enotfound') ||
+    lowerMessage.includes('connection refused')
+  );
 }
 
 const buildUrl = (path: string, query?: URLSearchParams): string => {
@@ -64,18 +102,59 @@ const parseError = async (response: Response): Promise<never> => {
     if (parsed.success) {
       throw new ControlServiceRequestError(
         response.status,
+        parsed.data.error.code,
         parsed.data.error.message,
         parsed.data.error.details,
       );
     }
   }
 
-  throw new ControlServiceRequestError(response.status, response.statusText || 'Request failed.');
+  throw new ControlServiceRequestError(
+    response.status,
+    undefined,
+    response.statusText || 'Request failed.',
+  );
 };
+
+export function buildControlServiceConnectivityDiagnostic(
+  error: unknown,
+  request: string,
+): ControlServiceConnectivityDiagnostic {
+  if (error instanceof ControlServiceRequestError) {
+    return {
+      occurredAt: new Date().toISOString(),
+      request,
+      errorName: error.name,
+      status: error.status,
+      code: error.code,
+      message: error.message,
+      details: error.details,
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      occurredAt: new Date().toISOString(),
+      request,
+      errorName: error.name,
+      message: error.message,
+    };
+  }
+
+  return {
+    occurredAt: new Date().toISOString(),
+    request,
+    errorName: 'UnknownError',
+    message: 'Unknown connectivity error.',
+    details: {
+      rawValue: String(error),
+    },
+  };
+}
 
 async function requestJson<T>(input: {
   path: string;
-  method?: 'GET' | 'POST' | 'PATCH';
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
   schema: z.ZodType<T>;
   query?: URLSearchParams;
@@ -122,7 +201,7 @@ export const createPipeline = async (
     schema: controlPlanePipelineV2Schema,
   });
 
-export const renamePipeline = async (
+export const updatePipeline = async (
   pipelineId: string,
   payload: UpdateControlPlanePipelineRequest,
 ): Promise<ControlPlanePipeline> =>
@@ -200,6 +279,83 @@ export const listRunEvents = async (
   });
 };
 
+export const listRunJsonArtifacts = async (
+  runId: string,
+  query: Partial<ListRunJsonArtifactsQuery>,
+): Promise<ListRunJsonArtifactsResponse> => {
+  const parsed = listRunJsonArtifactsQueryV2Schema.parse(query);
+  const search = new URLSearchParams();
+  if (parsed.limit) search.set('limit', String(parsed.limit));
+  if (parsed.cursor) search.set('cursor', parsed.cursor);
+  if (parsed.sortBy) search.set('sortBy', parsed.sortBy);
+  if (parsed.sortDir) search.set('sortDir', parsed.sortDir);
+  if (parsed.fileNamePrefix) search.set('fileNamePrefix', parsed.fileNamePrefix);
+
+  return requestJson({
+    path: `/v1/runs/${runId}/json-artifacts`,
+    schema: listRunJsonArtifactsResponseV2Schema,
+    query: search,
+  });
+};
+
+export const getRunJsonArtifact = async (runId: string, artifactId: string) =>
+  requestJson({
+    path: `/v1/runs/${runId}/json-artifacts/${artifactId}`,
+    schema: getRunJsonArtifactResponseV2Schema,
+  });
+
+export const downloadRunJsonArtifact = async (runId: string, artifactId: string) => {
+  const response = await fetch(
+    buildUrl(`/v1/runs/${runId}/json-artifacts/${artifactId}/download`),
+    {
+      method: 'GET',
+      cache: 'no-store',
+      headers: buildHeaders(),
+    },
+  );
+  if (!response.ok) {
+    await parseError(response);
+  }
+  return {
+    fileName: getAttachmentFileName(
+      response.headers.get('content-disposition'),
+      `${artifactId}.json`,
+    ),
+    buffer: Buffer.from(await response.arrayBuffer()),
+  };
+};
+
+export const downloadAllRunJsonArtifacts = async (runId: string) => {
+  const response = await fetch(buildUrl(`/v1/runs/${runId}/json-artifacts/download-all`), {
+    method: 'GET',
+    cache: 'no-store',
+    headers: buildHeaders(),
+  });
+  if (!response.ok) {
+    await parseError(response);
+  }
+  return {
+    fileName: getAttachmentFileName(
+      response.headers.get('content-disposition'),
+      `${runId}-json-artifacts.zip`,
+    ),
+    buffer: Buffer.from(await response.arrayBuffer()),
+  };
+};
+
+export const deletePipeline = async (pipelineId: string) =>
+  requestJson({
+    path: `/v1/pipelines/${pipelineId}`,
+    method: 'DELETE',
+    schema: controlServiceDeletePipelineAcceptedResponseV2Schema,
+  });
+
+export const getPipelineDeleteStatus = async (pipelineId: string) =>
+  requestJson({
+    path: `/v1/pipelines/${pipelineId}/delete-status`,
+    schema: controlServiceDeletePipelineStatusResponseV2Schema,
+  });
+
 export const getHeartbeat = async (): Promise<ControlServiceHeartbeat> =>
   requestJson({
     path: '/heartbeat',
@@ -222,3 +378,11 @@ export const buildControlServiceStreamRequest = (searchParams: URLSearchParams):
     }),
   });
 };
+
+function getAttachmentFileName(contentDisposition: string | null, fallback: string): string {
+  if (!contentDisposition) {
+    return fallback;
+  }
+  const match = /filename="([^"]+)"/u.exec(contentDisposition);
+  return match?.[1] ?? fallback;
+}

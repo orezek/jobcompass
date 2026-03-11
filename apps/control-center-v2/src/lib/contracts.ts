@@ -3,8 +3,13 @@ import {
   controlPlanePipelineV2Schema,
   controlPlaneRunEventIndexV2Schema,
   controlPlaneRunV2Schema,
+  controlServiceDeletePipelineAcceptedResponseV2Schema,
+  controlServiceDeletePipelineStatusResponseV2Schema,
   controlServiceHeartbeatResponseV2Schema,
   createControlPlanePipelineRequestV2Schema,
+  getRunJsonArtifactResponseV2Schema,
+  listRunJsonArtifactsQueryV2Schema,
+  listRunJsonArtifactsResponseV2Schema,
   listControlPlanePipelinesResponseV2Schema,
   listControlPlaneRunEventsQueryV2Schema,
   listControlPlaneRunEventsResponseV2Schema,
@@ -31,4 +36,13 @@ export type ListControlPlanePipelinesResponse = z.infer<
 export type ListControlPlaneRunsResponse = z.infer<typeof listControlPlaneRunsResponseV2Schema>;
 export type ListControlPlaneRunEventsResponse = z.infer<
   typeof listControlPlaneRunEventsResponseV2Schema
+>;
+export type ListRunJsonArtifactsQuery = z.infer<typeof listRunJsonArtifactsQueryV2Schema>;
+export type ListRunJsonArtifactsResponse = z.infer<typeof listRunJsonArtifactsResponseV2Schema>;
+export type GetRunJsonArtifactResponse = z.infer<typeof getRunJsonArtifactResponseV2Schema>;
+export type DeletePipelineAcceptedResponse = z.infer<
+  typeof controlServiceDeletePipelineAcceptedResponseV2Schema
+>;
+export type DeletePipelineStatusResponse = z.infer<
+  typeof controlServiceDeletePipelineStatusResponseV2Schema
 >;

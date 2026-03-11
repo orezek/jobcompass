@@ -5,7 +5,7 @@ import {
   ingestionStartRunRequestV2Fixture,
   startRunAcceptedResponseV2Schema,
   startRunRejectedResponseV2Schema,
-} from '@repo/control-plane-contracts';
+} from '@repo/control-plane-contracts/v2';
 import { WorkerClient, WorkerClientError } from '../src/worker-client.js';
 import type { EnvSchema } from '../src/env.js';
 
@@ -26,6 +26,9 @@ function createEnv(overrides: Partial<EnvSchema> = {}): EnvSchema {
     CONTROL_PLANE_ARTIFACT_STORAGE_LOCAL_BASE_PATH: 'control-plane-artifacts',
     CONTROL_PLANE_ARTIFACT_STORAGE_GCS_BUCKET: undefined,
     CONTROL_PLANE_ARTIFACT_STORAGE_GCS_PREFIX: '',
+    CONTROL_PLANE_JSON_BUNDLE_MAX_BYTES: 104_857_600,
+    CONTROL_PLANE_JSON_BUNDLE_TIMEOUT_MS: 120_000,
+    CONTROL_PLANE_SKIP_SINK_PREFLIGHT: true,
     GCP_PROJECT_ID: 'omnicrawl-dev',
     PUBSUB_EVENTS_TOPIC: 'run-events',
     PUBSUB_EVENTS_SUBSCRIPTION: 'control-service-events',
@@ -127,6 +130,30 @@ test('startCrawlerRun does not retry on non-retryable worker rejection', async (
       },
     );
     assert.equal(attempts, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('cancelCrawlerRun omits JSON content-type when body is absent', async () => {
+  const env = createEnv();
+  const client = new WorkerClient(env);
+  const originalFetch = globalThis.fetch;
+  let requestInit: RequestInit | undefined;
+
+  globalThis.fetch = async (_input, init) => {
+    requestInit = init;
+    return new Response(null, { status: 202 });
+  };
+
+  try {
+    const result = await client.cancelCrawlerRun('run-abc');
+    assert.equal(result, 'accepted');
+
+    const headers = new Headers(requestInit?.headers);
+    assert.equal(headers.get('authorization'), 'Bearer test-token');
+    assert.equal(headers.get('content-type'), null);
+    assert.equal(requestInit?.body, undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }

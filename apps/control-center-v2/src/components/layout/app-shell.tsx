@@ -6,7 +6,13 @@ import { usePathname } from 'next/navigation';
 import { Breadcrumbs } from '@/components/layout/breadcrumbs';
 import { LiveIndicator } from '@/components/state/live-indicator';
 import { Button } from '@/components/ui/button';
-import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
 import type { ControlServiceHeartbeat } from '@/lib/contracts';
 import { cn, formatDateTime } from '@/lib/utils';
 
@@ -14,6 +20,28 @@ const navItems = [
   { href: '/pipelines', label: 'Pipelines', short: 'PI' },
   { href: '/runs', label: 'Runs', short: 'RU' },
 ];
+const sidebarOpenStorageKey = 'control-center-v2.sidebar.open';
+const sidebarOpenCookieKey = 'control-center-v2-sidebar-open';
+
+function writeSidebarOpenPreference(isOpen: boolean): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const serialized = isOpen ? 'true' : 'false';
+
+  try {
+    window.localStorage.setItem(sidebarOpenStorageKey, serialized);
+  } catch {
+    // Ignore storage errors (private mode/quota), keep in-memory behavior.
+  }
+
+  try {
+    window.document.cookie = `${sidebarOpenCookieKey}=${serialized}; path=/; max-age=31536000; samesite=lax`;
+  } catch {
+    // Ignore storage errors (private mode/quota), keep in-memory behavior.
+  }
+}
 
 const heartbeatToState = (
   heartbeat: ControlServiceHeartbeat | null,
@@ -28,14 +56,14 @@ function getPageHeader(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/pipelines') {
     return {
       title: 'Pipelines',
-      subtitle: 'Manage crawler definitions and ingestion configurations.',
+      subtitle: 'Define and manage ETL pipelines for extraction, transformation, and loading.',
     };
   }
 
   if (pathname === '/runs') {
     return {
-      title: 'Execution Runs',
-      subtitle: 'Live cross-pipeline execution feed and history.',
+      title: 'Pipeline Runs',
+      subtitle: 'Live execution status and historical results across all pipelines.',
     };
   }
 
@@ -92,14 +120,24 @@ function NavContent({ pathname, compact = false }: { pathname: string; compact?:
 export function AppShell({
   children,
   heartbeat,
+  initialSidebarOpen = true,
 }: {
   children: React.ReactNode;
   heartbeat: ControlServiceHeartbeat | null;
+  initialSidebarOpen?: boolean;
 }) {
   const pathname = usePathname();
   const state = heartbeatToState(heartbeat);
   const pageHeader = getPageHeader(pathname);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(initialSidebarOpen);
+
+  const toggleSidebar = () => {
+    setIsSidebarOpen((current) => {
+      const next = !current;
+      writeSidebarOpenPreference(next);
+      return next;
+    });
+  };
 
   return (
     <div className="min-h-dvh bg-background text-foreground">
@@ -118,8 +156,8 @@ export function AppShell({
         </aside>
         <div className="flex min-h-dvh min-w-0 flex-1 flex-col">
           <header className="border-b border-border bg-background/95 backdrop-blur">
-            <div className="flex items-start justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
-              <div className="flex min-w-0 items-start gap-3">
+            <div className="flex w-full flex-nowrap items-start justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
+              <div className="flex min-w-0 flex-1 items-start gap-3 overflow-hidden">
                 <div className="lg:hidden">
                   <Sheet>
                     <SheetTrigger asChild>
@@ -128,6 +166,10 @@ export function AppShell({
                       </Button>
                     </SheetTrigger>
                     <SheetContent side="left">
+                      <SheetTitle className="sr-only">Navigation menu</SheetTitle>
+                      <SheetDescription className="sr-only">
+                        Navigate between pipelines and runs.
+                      </SheetDescription>
                       <NavContent pathname={pathname} compact />
                     </SheetContent>
                   </Sheet>
@@ -137,7 +179,7 @@ export function AppShell({
                     variant="ghost"
                     size="sm"
                     className="h-8 w-8 px-0 py-0 flex items-center justify-center text-muted-foreground hover:text-foreground"
-                    onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                    onClick={toggleSidebar}
                     aria-label="Toggle navigation"
                   >
                     <svg
@@ -162,13 +204,15 @@ export function AppShell({
                     <h1 className="text-xl font-semibold tracking-tightest sm:text-2xl">
                       {pageHeader.title}
                     </h1>
-                    <p className="text-sm text-muted-foreground">{pageHeader.subtitle}</p>
+                    <p className="mt-1 w-full text-sm text-[var(--theme-text-secondary)]">
+                      {pageHeader.subtitle}
+                    </p>
                   </div>
                 </div>
               </div>
-              <div className="flex shrink-0 flex-col items-end gap-2">
+              <div className="ml-auto flex shrink-0 self-start flex-col items-end gap-1 text-right">
                 <LiveIndicator state={state} />
-                <div className="font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted-foreground">
+                <div className="hidden font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted-foreground sm:block">
                   {heartbeat ? formatDateTime(heartbeat.now) : 'Heartbeat unavailable'}
                 </div>
               </div>
