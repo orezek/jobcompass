@@ -1,70 +1,73 @@
-# OmniCrawl
+# Source Ingestion Platform
 
-OmniCrawl is a robust, modular, and extensible crawling and ingestion pipeline system. Originally designed as a "walking skeleton" for job scraping (formerly JobCompass), the system has evolved into a generalized data harvesting engine.
+Source Ingestion Platform is a modular ETL system for crawling, extracting, and normalizing
+structured data from multiple web sources.
 
-OmniCrawl leverages modern web crawling capabilities paired with LLM-powered extraction (using LangSmith and Gemini) to seamlessly parse, clean, and structure data from diverse, unstructured sources (e.g., jobs.cz, startupjobs.cz, bazos.cz, and more).
+The platform currently runs a control-plane-driven V2 architecture with dedicated crawler and
+ingestion workers. The design goal is stable operations now, with planned expansion to additional
+sources, provider options, and tenant-aware orchestration in upcoming minor versions.
 
-## 🚀 Current State & Version
+## Current Snapshot
 
-**Current Version:** `v2.0.0`
+Current release: `v2.3.0`
 
-The system currently runs on the **V2 Architecture**, which separates the control plane, operational dashboards, and targeted workers into discrete, deployable services managed within a Turborepo monorepo.
+Active V2 services:
 
-### The V2 Application Suite
+- `control-service-v2`: Pipeline/run orchestration, state management, worker dispatch, cancellation,
+  artifact indexing, and projection APIs.
+- `control-center-v2`: Operator UI for pipelines, runs, telemetry, cancellation, and JSON artifact
+  access/download.
+- `crawler-worker-v2`: Source crawling runtime (Crawlee + Playwright) and crawler event emission.
+- `ingestion-worker-v2`: Event-driven ingestion and structured output extraction pipeline.
 
-- **`control-service-v2`**: The backend brain of the system. Manages pipelines, triggers crawling/ingestion runs, stores state in MongoDB, and orchestrates workers via Pub/Sub and HTTP.
-- **`control-center-v2`**: A Next.js-based modern operator dashboard. Provides real-time visibility into run statuses, artifacts, and ingestion success rates.
-- **`crawler-worker-v2`**: A dedicated Actor/Worker that executes specific crawler manifests (using Crawlee/Playwright) to extract raw data and HTML from targeted sites.
-- **`ingestion-worker-v2`**: A dedicated data-processing worker that takes raw scraped data, runs it through an LLM pipeline (for cleaning and structured entity extraction), and produces finalized, standardized JSON artifacts.
+## Roadmap (Next Minor Versions)
 
-_(Note: Legacy V1 applications such as `jobs-crawler-actor`, `jobs-ingestion-service`, `omni-crawl-chat`, and `ops-control-plane` are deprecated and have been intentionally excluded from active workflows in favor of the V2 suite)._
+Planned route before and into v3:
 
-## 📚 Documentation & Specs
+1. `v2.4`: Pipeline scheduling with CRON support for automatic runs.
+2. `v2.5`: User spaces and authentication, with ownership of pipelines/runs per authenticated user.
+3. `v2.6`: Source-aware crawling and ingestion model profiles (per-source crawler behavior and
+   extraction model selection while keeping the two-worker architecture).
+4. `v2.7`: Proxy/runtime options including Apify proxy support.
+5. `v2.8`: Multi-provider LLM support (provider adapters and model routing policies).
+6. `v3.0`: Consolidated tenant-aware control plane and scheduling/auth/model routing as first-class
+   platform capabilities.
 
-OmniCrawl places a heavy emphasis on spec-driven development. Comprehensive design and architecture documentation can be found in the [`docs/specs`](./docs/specs) directory.
+## Documentation
 
-For a complete history of changes, see the [`CHANGELOG.md`](./CHANGELOG.md).
+Primary references:
 
-For documentation on the underlying Monorepo architecture, tooling (Turborepo, pnpm, ESLint, TypeScript), and development workflows (GitFlow), see [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+- [CHANGELOG.md](./CHANGELOG.md)
+- [ARCHITECTURE.md](./ARCHITECTURE.md)
+- [docs/README.md](./docs/README.md)
+- [docs/specs/v2-1-delivered-and-v3-scope.md](./docs/specs/v2-1-delivered-and-v3-scope.md)
+- [docs/specs/configuration-model-v2-2.md](./docs/specs/configuration-model-v2-2.md)
 
-## 🛣 Roadmap & V3 Ideas
+## Getting Started
 
-While V2 solidifies the distributed worker architecture, the following capabilities are targeted for **V3**:
+Prerequisites:
 
-- **Execution Sessions & Shared Worker Pools:** Moving away from isolated node processes per run to persistent worker pools that can dynamically allocate resources for large-scale scrapes.
-- **Provider & Model-Independent Ingestion:** Decoupling the ingestion parser from specific LLM providers (e.g., currently leveraging Gemini) via adapter-based interfaces, allowing seamless switching to OpenAI, Anthropic, or local open-source models.
-- **Deeper Persistence Decoupling:** Further abstracting database dependencies to allow plugging in different structured output destinations without changing core persistence schemas.
-- **Authentication & Operator Identity:** Introducing formal login, RBAC (Role-Based Access Control), and operator identity for the `control-center-v2` dashboard.
+1. Node.js (repo uses `.node-version`, currently Node 24+).
+2. pnpm via Corepack.
 
-## ⚙️ Getting Started
-
-### Prerequisites
-
-1. **Node.js**: Install [fnm](https://github.com/Schniz/fnm) (Fast Node Manager).
+Install:
 
 ```bash
 fnm use
-```
-
-2. **pnpm**:
-
-```bash
 corepack enable
 pnpm install
 ```
 
-### Common Commands
+Common workspace commands:
 
-| Command            | Description                                           |
-| ------------------ | ----------------------------------------------------- |
-| `pnpm dev`         | Starts the development server for all apps.           |
-| `pnpm build`       | Builds all apps and packages using Turbo caching.     |
-| `pnpm lint`        | Runs ESLint across the entire monorepo.               |
-| `pnpm format`      | Formats all files using Prettier.                     |
-| `pnpm check-types` | Runs TypeScript type checking without emitting files. |
+| Command            | Description                                       |
+| ------------------ | ------------------------------------------------- |
+| `pnpm dev`         | Start development tasks across workspaces.        |
+| `pnpm build`       | Build all workspaces via Turborepo.               |
+| `pnpm lint`        | Run ESLint across configured workspaces.          |
+| `pnpm format`      | Run Prettier across supported file types.         |
+| `pnpm check-types` | Run TypeScript checks without emitting artifacts. |
 
-## 📄 License
+## License
 
-**The MIT License (MIT)**
-
-Copyright (c) 2026 Oldrich Rezek
+MIT

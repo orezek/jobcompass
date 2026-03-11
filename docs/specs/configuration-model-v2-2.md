@@ -1,13 +1,14 @@
 # Configuration Model v2.2
 
-Status: Draft  
+Status: Delivered (baseline for v2.3 snapshot)  
 Owner: Platform  
-Date: 2026-03-09  
+Date: 2026-03-11  
 Target Release: v2.2
 
 ## 1) Purpose
 
-Define a focused v2.2 scope for pipeline configuration UX and contract behavior, based on decisions captured in section 3.5 of `v2-1-delivered-and-v3-scope.md`.
+Define the v2.2 configuration model that is now implemented and carried forward as part of the
+v2.3 platform snapshot, based on decisions captured in `v2-1-delivered-and-v3-scope.md`.
 
 ## 2) Scope
 

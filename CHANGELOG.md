@@ -8,6 +8,16 @@ The format is based on Keep a Changelog principles and uses Semantic Versioning.
 
 ### Added
 
+- _No changes yet._
+
+### Changed
+
+- _No changes yet._
+
+## [2.3.0] - 2026-03-11
+
+### Added
+
 - Added v2.1 ingestion cancel reason contract for worker endpoint `POST /v1/runs/:runId/cancel`:
   - `startup_rollback`
   - `operator_request`
@@ -46,6 +56,9 @@ The format is based on Keep a Changelog principles and uses Semantic Versioning.
 - Updated control-center pipeline forms/details for v2.2 editable model (no operator-entered IDs,
   runtime debug flag removed, sink configuration fields added, and dbName validation aligned to
   MongoDB 38-byte limit).
+- Renamed repository remote target to `orezek/source-ingestion-platform`.
+- Bumped root release metadata to `v2.3.0`.
+- Aligned root docs/specs with the current v2.3 snapshot and staged v2.x roadmap toward v3.
 
 ## [1.1.0] - 2026-03-05
 
