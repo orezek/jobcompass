@@ -42,7 +42,6 @@ export default async function RunDetailPage({
       <RunDetailClient
         initialRun={run}
         initialEvents={sortedEvents}
-        nextCursor={events.nextCursor}
         initialJsonArtifacts={jsonArtifacts.items}
       />
     );

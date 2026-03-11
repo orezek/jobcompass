@@ -96,12 +96,10 @@ function StatusLabeledBadge({
 export function RunDetailClient({
   initialRun,
   initialEvents,
-  nextCursor,
   initialJsonArtifacts,
 }: {
   initialRun: ControlPlaneRun;
   initialEvents: ControlPlaneRunEventIndex[];
-  nextCursor: string | null;
   initialJsonArtifacts: JsonArtifactListItem[];
 }) {
   const router = useRouter();
@@ -253,7 +251,10 @@ export function RunDetailClient({
             />
           ) : (
             <>
-              <div className="max-h-[400px] overflow-y-auto pr-2">
+              <div
+                className="h-[320px] overflow-y-auto overscroll-contain pr-2 md:h-[400px]"
+                style={{ WebkitOverflowScrolling: 'touch' }}
+              >
                 <div className="grid gap-2">
                   {jsonArtifacts.map((artifact) => (
                     <button
@@ -295,7 +296,9 @@ export function RunDetailClient({
                   <div className="font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted-foreground">
                     {selectedArtifact.fileName}
                   </div>
-                  <pre>{JSON.stringify(selectedArtifact.payload, null, 2)}</pre>
+                  <pre className="max-h-[320px] overflow-auto md:max-h-[400px]">
+                    {JSON.stringify(selectedArtifact.payload, null, 2)}
+                  </pre>
                 </div>
               ) : null}
             </>
@@ -317,7 +320,10 @@ export function RunDetailClient({
               description="No indexed events are available for this run yet."
             />
           ) : (
-            <div className="max-h-[400px] overflow-y-auto pr-2">
+            <div
+              className="h-[320px] overflow-y-auto overscroll-contain pr-2 md:h-[400px]"
+              style={{ WebkitOverflowScrolling: 'touch' }}
+            >
               <Accordion type="multiple" className="w-full">
                 {events.map((event) => (
                   <AccordionItem key={event.eventId} value={event.eventId}>
@@ -338,7 +344,9 @@ export function RunDetailClient({
                           <Row label="Projection" value={event.projectionStatus} />
                           <Row label="Source ID" value={event.sourceId ?? '—'} />
                         </dl>
-                        <pre>{JSON.stringify(event.payload, null, 2)}</pre>
+                        <pre className="max-h-[320px] overflow-auto md:max-h-[400px]">
+                          {JSON.stringify(event.payload, null, 2)}
+                        </pre>
                       </div>
                     </AccordionContent>
                   </AccordionItem>
@@ -353,13 +361,6 @@ export function RunDetailClient({
         <Button asChild variant="secondary">
           <Link href="/runs">Back To Runs</Link>
         </Button>
-        {nextCursor ? (
-          <Button asChild variant="secondary">
-            <Link href={`/runs/${run.runId}?cursor=${encodeURIComponent(nextCursor)}`}>
-              Load Older Events
-            </Link>
-          </Button>
-        ) : null}
       </div>
     </div>
   );
