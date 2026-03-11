@@ -254,7 +254,7 @@ export function RunListClient({
                       </h3>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <StatusBadge status={run.status} />
+                      <StatusBadge status={run.status} stopReason={run.stopReason} />
                       <span className="text-sm text-muted-foreground">{run.source}</span>
                     </div>
                     <dl className="grid gap-2 text-sm text-muted-foreground">
@@ -331,7 +331,7 @@ export function RunListClient({
                           <div className="text-xs text-muted-foreground">{run.source}</div>
                         </TableCell>
                         <TableCell className="whitespace-nowrap">
-                          <StatusBadge status={run.status} />
+                          <StatusBadge status={run.status} stopReason={run.stopReason} />
                         </TableCell>
                         <TableCell className="whitespace-nowrap">
                           <StatusBadge status={run.crawler.status} />

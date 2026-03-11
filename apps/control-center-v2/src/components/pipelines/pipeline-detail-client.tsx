@@ -514,7 +514,7 @@ export function PipelineDetailClient({
                         {run.runId}
                       </p>
                       <div className="mt-1 flex flex-wrap items-center gap-2">
-                        <StatusBadge status={run.status} />
+                        <StatusBadge status={run.status} stopReason={run.stopReason} />
                         <span className="text-sm text-muted-foreground">
                           Requested {formatDateTime(run.requestedAt)}
                         </span>

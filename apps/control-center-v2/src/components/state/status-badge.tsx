@@ -1,7 +1,13 @@
 import { Badge } from '@/components/ui/badge';
-import { titleCaseFromToken } from '@/lib/utils';
+import { formatRunStatusLabel, titleCaseFromToken } from '@/lib/utils';
 
-export function StatusBadge({ status }: { status: string | null }) {
+export function StatusBadge({
+  status,
+  stopReason,
+}: {
+  status: string | null;
+  stopReason?: string | null;
+}) {
   if (!status) {
     return <Badge variant="neutral">Disabled</Badge>;
   }
@@ -19,8 +25,8 @@ export function StatusBadge({ status }: { status: string | null }) {
   }
 
   if (status === 'failed' || status === 'stopped') {
-    return <Badge variant="danger">{titleCaseFromToken(status)}</Badge>;
+    return <Badge variant="danger">{formatRunStatusLabel(status, stopReason)}</Badge>;
   }
 
-  return <Badge variant="neutral">{titleCaseFromToken(status)}</Badge>;
+  return <Badge variant="neutral">{formatRunStatusLabel(status, stopReason)}</Badge>;
 }

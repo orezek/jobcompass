@@ -26,7 +26,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { EmptyLabTray } from '@/components/state/empty-lab-tray';
 import type { ControlPlaneRun, ControlPlaneRunEventIndex } from '@/lib/contracts';
 import { appendRunEvent, useControlStream } from '@/lib/live';
-import { formatDateTime, formatNullableCount } from '@/lib/utils';
+import { formatDateTime, formatNullableCount, formatRunStatusLabel } from '@/lib/utils';
 
 type JsonArtifactListItem = {
   artifactId: string;
@@ -74,11 +74,21 @@ function resolveBadgeVariant(
   return 'neutral';
 }
 
-function StatusLabeledBadge({ label, status }: { label: string; status: string | null }) {
+function StatusLabeledBadge({
+  label,
+  status,
+  stopReason,
+}: {
+  label: string;
+  status: string | null;
+  stopReason?: string | null;
+}) {
+  const statusLabel = status ? formatRunStatusLabel(status, stopReason) : 'disabled';
+
   return (
     <Badge variant={resolveBadgeVariant(status)}>
       <span className="font-mono text-[0.62rem] tracking-[0.18em]">{label}:</span>
-      <span className="ml-1">{status ?? 'disabled'}</span>
+      <span className="ml-1">{statusLabel}</span>
     </Badge>
   );
 }
@@ -202,7 +212,7 @@ export function RunDetailClient({
         </CardHeader>
         <CardContent className="grid gap-4 text-sm text-muted-foreground">
           <div className="flex flex-wrap items-center gap-2">
-            <StatusLabeledBadge label="RUN" status={run.status} />
+            <StatusLabeledBadge label="RUN" status={run.status} stopReason={run.stopReason} />
             <StatusLabeledBadge label="CRAWLER" status={run.crawler.status} />
             <StatusLabeledBadge label="INGESTION" status={run.ingestion.status} />
           </div>

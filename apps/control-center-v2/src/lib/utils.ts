@@ -52,5 +52,20 @@ export const titleCaseFromToken = (value: string): string =>
     .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
     .join(' ');
 
+export const formatRunStatusLabel = (status: string, stopReason?: string | null): string => {
+  const normalizedStatus = status.trim().toLowerCase();
+  const normalizedStopReason = stopReason?.trim().toLowerCase();
+
+  if (
+    normalizedStatus === 'stopped' &&
+    (normalizedStopReason === 'cancelled_by_operator' ||
+      normalizedStopReason === 'canceled_by_operator')
+  ) {
+    return 'Canceled';
+  }
+
+  return titleCaseFromToken(status);
+};
+
 export const splitTextareaLines = (value: string): string[] =>
   value.split(/\r?\n/g).filter((line) => line.length > 0);
