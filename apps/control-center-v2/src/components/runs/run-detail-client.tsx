@@ -257,23 +257,27 @@ export function RunDetailClient({
               >
                 <div className="grid gap-2">
                   {jsonArtifacts.map((artifact) => (
-                    <button
+                    <div
                       key={artifact.artifactId}
-                      type="button"
-                      className="flex w-full min-w-0 items-center justify-between gap-3 rounded-sm border border-border px-3 py-2 text-left hover:bg-card"
-                      onClick={() => void openArtifact(artifact.artifactId)}
+                      className="flex w-full min-w-0 items-center gap-3 rounded-sm border border-border px-3 py-2"
                     >
-                      <div className="flex min-w-0 flex-col gap-1">
-                        <span
-                          className="truncate font-mono text-sm text-foreground"
-                          title={artifact.fileName}
-                        >
-                          {artifact.fileName}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {formatDateTime(artifact.createdAt)} · {artifact.sizeBytes} bytes
-                        </span>
-                      </div>
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 rounded-sm text-left hover:bg-card"
+                        onClick={() => void openArtifact(artifact.artifactId)}
+                      >
+                        <div className="flex min-w-0 flex-col gap-1">
+                          <span
+                            className="truncate font-mono text-sm text-foreground"
+                            title={artifact.fileName}
+                          >
+                            {artifact.fileName}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {formatDateTime(artifact.createdAt)} · {artifact.sizeBytes} bytes
+                          </span>
+                        </div>
+                      </button>
                       <div className="flex shrink-0 items-center gap-2">
                         {loadingArtifactId === artifact.artifactId ? (
                           <span className="text-xs text-muted-foreground">Loading</span>
@@ -281,13 +285,12 @@ export function RunDetailClient({
                         <Button asChild variant="secondary" size="sm">
                           <a
                             href={`/api/runs/${run.runId}/json-artifacts/${artifact.artifactId}/download`}
-                            onClick={(event) => event.stopPropagation()}
                           >
                             Download
                           </a>
                         </Button>
                       </div>
-                    </button>
+                    </div>
                   ))}
                 </div>
               </div>
