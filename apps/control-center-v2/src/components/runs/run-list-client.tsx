@@ -148,7 +148,7 @@ export function RunListClient({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="font-mono text-xs uppercase tracking-[0.16em] text-muted-foreground">
-              Run Observatory
+              Run Registry
             </p>
           </div>
         </div>

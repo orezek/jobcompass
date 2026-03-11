@@ -62,8 +62,8 @@ function getPageHeader(pathname: string): { title: string; subtitle: string } {
 
   if (pathname === '/runs') {
     return {
-      title: 'Execution Runs',
-      subtitle: 'Live cross-pipeline execution feed and history.',
+      title: 'Pipeline Runs',
+      subtitle: 'Live execution status and historical results across all pipelines.',
     };
   }
 
