@@ -156,7 +156,7 @@ export function RunDetailClient({
   };
 
   return (
-    <div className="grid gap-4">
+    <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="font-mono text-xs uppercase tracking-[0.16em] text-muted-foreground">
@@ -243,37 +243,39 @@ export function RunDetailClient({
             />
           ) : (
             <>
-              <div className="grid gap-2">
-                {jsonArtifacts.map((artifact) => (
-                  <button
-                    key={artifact.artifactId}
-                    type="button"
-                    className="flex items-center justify-between gap-3 rounded-sm border border-border px-3 py-3 text-left hover:bg-card"
-                    onClick={() => void openArtifact(artifact.artifactId)}
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate font-medium text-foreground">
-                        {artifact.fileName}
+              <div className="max-h-[400px] overflow-y-auto pr-2">
+                <div className="grid gap-2">
+                  {jsonArtifacts.map((artifact) => (
+                    <button
+                      key={artifact.artifactId}
+                      type="button"
+                      className="flex items-center justify-between gap-3 rounded-sm border border-border px-3 py-2 text-left hover:bg-card"
+                      onClick={() => void openArtifact(artifact.artifactId)}
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate font-medium text-foreground">
+                          {artifact.fileName}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {formatDateTime(artifact.createdAt)} · {artifact.sizeBytes} bytes
+                        </div>
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        {formatDateTime(artifact.createdAt)} · {artifact.sizeBytes} bytes
+                      <div className="flex items-center gap-2">
+                        {loadingArtifactId === artifact.artifactId ? (
+                          <span className="text-xs text-muted-foreground">Loading</span>
+                        ) : null}
+                        <Button asChild variant="secondary" size="sm">
+                          <a
+                            href={`/api/runs/${run.runId}/json-artifacts/${artifact.artifactId}/download`}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            Download
+                          </a>
+                        </Button>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {loadingArtifactId === artifact.artifactId ? (
-                        <span className="text-xs text-muted-foreground">Loading</span>
-                      ) : null}
-                      <Button asChild variant="secondary" size="sm">
-                        <a
-                          href={`/api/runs/${run.runId}/json-artifacts/${artifact.artifactId}/download`}
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          Download
-                        </a>
-                      </Button>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  ))}
+                </div>
               </div>
               {selectedArtifact ? (
                 <div className="grid gap-2 rounded-sm border border-border p-3">
@@ -302,37 +304,39 @@ export function RunDetailClient({
               description="No indexed events are available for this run yet."
             />
           ) : (
-            <Accordion type="multiple" className="w-full">
-              {events.map((event) => (
-                <AccordionItem key={event.eventId} value={event.eventId}>
-                  <AccordionTrigger>
-                    <div className="grid gap-1 text-left">
-                      <span className="font-mono text-[0.72rem] uppercase tracking-[0.14em] text-muted-foreground">
-                        {event.eventType}
-                      </span>
-                      <span className="text-sm text-foreground">
-                        {formatDateTime(event.occurredAt)}
-                      </span>
-                    </div>
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    <div className="grid gap-3">
-                      <dl className="grid gap-2 text-sm text-muted-foreground">
-                        <Row label="Producer" value={event.producer} />
-                        <Row label="Projection" value={event.projectionStatus} />
-                        <Row label="Source ID" value={event.sourceId ?? '—'} />
-                      </dl>
-                      <pre>{JSON.stringify(event.payload, null, 2)}</pre>
-                    </div>
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
+            <div className="max-h-[400px] overflow-y-auto pr-2">
+              <Accordion type="multiple" className="w-full">
+                {events.map((event) => (
+                  <AccordionItem key={event.eventId} value={event.eventId}>
+                    <AccordionTrigger className="py-2">
+                      <div className="grid gap-1 text-left">
+                        <span className="font-mono text-[0.72rem] uppercase tracking-[0.14em] text-muted-foreground">
+                          {event.eventType}
+                        </span>
+                        <span className="text-sm text-foreground">
+                          {formatDateTime(event.occurredAt)}
+                        </span>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="pb-2">
+                      <div className="grid gap-2">
+                        <dl className="grid gap-1.5 text-sm text-muted-foreground">
+                          <Row label="Producer" value={event.producer} />
+                          <Row label="Projection" value={event.projectionStatus} />
+                          <Row label="Source ID" value={event.sourceId ?? '—'} />
+                        </dl>
+                        <pre>{JSON.stringify(event.payload, null, 2)}</pre>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            </div>
           )}
         </CardContent>
       </Card>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--theme-structure)] bg-[var(--theme-canvas)] p-4">
         <Button asChild variant="secondary">
           <Link href="/runs">Back To Runs</Link>
         </Button>
