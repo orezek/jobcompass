@@ -11,16 +11,6 @@ import {
   INGESTION_CONCURRENCY_MIN,
   MAX_ITEMS_MAX,
   MAX_ITEMS_MIN,
-  MONGODB_URI_MAX_LENGTH,
-  MONGO_DB_NAME_MAX_BYTES,
-  MONGO_DB_NAME_MIN_LENGTH,
-  PIPELINE_NAME_MIN_LENGTH,
-  PIPELINE_NAME_MAX_LENGTH,
-  RUNTIME_PROFILE_NAME_MAX_LENGTH,
-  RUNTIME_PROFILE_NAME_MIN_LENGTH,
-  SEARCH_SPACE_DESCRIPTION_MAX_LENGTH,
-  SEARCH_SPACE_NAME_MAX_LENGTH,
-  SEARCH_SPACE_NAME_MIN_LENGTH,
   buildCreatePipelinePayload,
   pipelineCreateFormSchema,
   type PipelineCreateFormData,
@@ -33,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
 
 const defaultValues: PipelineCreateFormValues = {
   name: '',
@@ -59,6 +50,8 @@ export function PipelineCreateForm() {
   const form = useForm<PipelineCreateFormValues, undefined, PipelineCreateFormData>({
     resolver: zodResolver(pipelineCreateFormSchema),
     defaultValues,
+    mode: 'onTouched',
+    reValidateMode: 'onChange',
   });
 
   const mode = form.watch('mode');
@@ -90,7 +83,7 @@ export function PipelineCreateForm() {
   });
 
   return (
-    <form className="grid gap-4" onSubmit={submit} noValidate>
+    <form className="grid gap-6" onSubmit={submit} noValidate>
       <Card>
         <CardHeader>
           <CardTitle>Create Pipeline</CardTitle>
@@ -98,17 +91,11 @@ export function PipelineCreateForm() {
             Freeze the pipeline-owned execution snapshot in one flow.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4">
+        <CardContent className="grid gap-6">
           <Field label="Pipeline Name" error={form.formState.errors.name?.message}>
-            <Input
-              {...form.register('name')}
-              minLength={PIPELINE_NAME_MIN_LENGTH}
-              maxLength={PIPELINE_NAME_MAX_LENGTH}
-              pattern="[A-Za-z0-9 ._-]+"
-              placeholder="Prague Tech Pipeline"
-            />
+            <Input {...form.register('name')} placeholder="Prague Tech Pipeline" />
           </Field>
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-6 md:grid-cols-2">
             <Field label="Source" error={form.formState.errors.source?.message}>
               <Input {...form.register('source')} readOnly className="bg-muted/40" />
             </Field>
@@ -130,22 +117,12 @@ export function PipelineCreateForm() {
           <CardTitle>Search Space</CardTitle>
           <CardDescription>Pipeline-owned crawl scope.</CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4">
+        <CardContent className="grid gap-6">
           <Field label="Search Space Name" error={form.formState.errors.searchSpaceName?.message}>
-            <Input
-              {...form.register('searchSpaceName')}
-              minLength={SEARCH_SPACE_NAME_MIN_LENGTH}
-              maxLength={SEARCH_SPACE_NAME_MAX_LENGTH}
-              pattern="[A-Za-z0-9 ._-]+"
-              placeholder="Prague Tech Jobs"
-            />
+            <Input {...form.register('searchSpaceName')} placeholder="Prague Tech Jobs" />
           </Field>
           <Field label="Description" error={form.formState.errors.searchSpaceDescription?.message}>
-            <Textarea
-              {...form.register('searchSpaceDescription')}
-              rows={3}
-              maxLength={SEARCH_SPACE_DESCRIPTION_MAX_LENGTH}
-            />
+            <Textarea {...form.register('searchSpaceDescription')} rows={3} />
           </Field>
           <Field label="Start URLs" error={form.formState.errors.startUrlsText?.message}>
             <Textarea
@@ -156,7 +133,7 @@ export function PipelineCreateForm() {
               }
             />
           </Field>
-          <div className="grid gap-4 md:grid-cols-[minmax(0,240px),1fr] md:items-end">
+          <div className="grid grid-cols-1 gap-6 items-start md:grid-cols-2">
             <Field label="Max Items" error={form.formState.errors.maxItems?.message}>
               <Input
                 type="number"
@@ -165,11 +142,13 @@ export function PipelineCreateForm() {
                 {...form.register('maxItems', { valueAsNumber: true })}
               />
             </Field>
-            <CheckboxField
-              label="Allow inactive marking"
-              disabled={!canEditInactiveMarking}
-              {...form.register('allowInactiveMarking')}
-            />
+            <div className="md:pt-[2.25rem]">
+              <CheckboxField
+                label="Allow inactive marking"
+                disabled={!canEditInactiveMarking}
+                {...form.register('allowInactiveMarking')}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -179,23 +158,18 @@ export function PipelineCreateForm() {
           <CardTitle>Runtime Profile</CardTitle>
           <CardDescription>Snapshot the crawler and ingestion operating profile.</CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4">
+        <CardContent className="grid gap-6">
           <Field
             label="Runtime Profile Name"
             error={form.formState.errors.runtimeProfileName?.message}
           >
-            <Input
-              {...form.register('runtimeProfileName')}
-              minLength={RUNTIME_PROFILE_NAME_MIN_LENGTH}
-              maxLength={RUNTIME_PROFILE_NAME_MAX_LENGTH}
-              pattern="[A-Za-z0-9 ._-]+"
-              placeholder="Prague Tech Runtime"
-            />
+            <Input {...form.register('runtimeProfileName')} placeholder="Prague Tech Runtime" />
           </Field>
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-6 items-start md:grid-cols-3">
             <Field
               label="Crawler Max Concurrency"
               error={form.formState.errors.crawlerMaxConcurrency?.message}
+              labelClassName="overflow-hidden text-ellipsis whitespace-nowrap"
             >
               <Input
                 type="number"
@@ -207,6 +181,7 @@ export function PipelineCreateForm() {
             <Field
               label="Crawler RPM"
               error={form.formState.errors.crawlerMaxRequestsPerMinute?.message}
+              labelClassName="overflow-hidden text-ellipsis whitespace-nowrap"
             >
               <Input
                 type="number"
@@ -218,6 +193,7 @@ export function PipelineCreateForm() {
             <Field
               label="Ingestion Concurrency"
               error={form.formState.errors.ingestionConcurrency?.message}
+              labelClassName="overflow-hidden text-ellipsis whitespace-nowrap"
             >
               <Input
                 type="number"
@@ -239,7 +215,7 @@ export function PipelineCreateForm() {
             when MongoDB output is selected.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3">
+        <CardContent className="grid gap-6">
           <CheckboxField
             label="MongoDB"
             disabled={mode === 'crawl_only'}
@@ -252,32 +228,26 @@ export function PipelineCreateForm() {
           />
 
           {includeMongoOutput ? (
-            <div className="mt-1 grid gap-4 rounded-sm border border-border bg-card/40 p-4">
+            <div className="mt-1 grid gap-6 rounded-sm border border-border bg-card/40 p-4">
               <Field label="MongoDB URI" error={form.formState.errors.operatorMongoUri?.message}>
                 <Input
                   {...form.register('operatorMongoUri')}
                   autoComplete="off"
                   inputMode="url"
-                  pattern="^mongodb(\\+srv)?:\\/\\/.+"
-                  maxLength={MONGODB_URI_MAX_LENGTH}
                   placeholder="mongodb+srv://cluster.example.net"
                 />
               </Field>
               <Field label="Database Name" error={form.formState.errors.operatorDbName?.message}>
-                <Input
-                  {...form.register('operatorDbName')}
-                  minLength={MONGO_DB_NAME_MIN_LENGTH}
-                  maxLength={MONGO_DB_NAME_MAX_BYTES}
-                  pattern="[A-Za-z0-9_-]+"
-                  placeholder="pl-prague-tech-01"
-                />
+                <Input {...form.register('operatorDbName')} placeholder="pl-prague-tech-01" />
               </Field>
             </div>
           ) : null}
         </CardContent>
       </Card>
 
-      {errorMessage ? <p className="text-sm text-destructive-foreground">{errorMessage}</p> : null}
+      {errorMessage ? (
+        <p className="text-xs font-medium text-red-500 leading-relaxed">{errorMessage}</p>
+      ) : null}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
         <Button type="submit" disabled={form.formState.isSubmitting}>
@@ -291,19 +261,28 @@ export function PipelineCreateForm() {
 function Field({
   label,
   error,
+  labelClassName,
   children,
 }: {
   label: string;
   error?: string;
+  labelClassName?: string;
   children: React.ReactNode;
 }) {
   return (
-    <label className="grid gap-2 text-sm text-foreground">
-      <span className="font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted-foreground">
+    <label className="flex min-w-0 flex-col space-y-1 text-sm text-foreground">
+      <span
+        className={cn(
+          'flex h-8 items-end font-mono text-[0.68rem] uppercase leading-tight tracking-[0.14em] text-muted-foreground',
+          labelClassName,
+        )}
+      >
         {label}
       </span>
       {children}
-      {error ? <span className="text-xs text-destructive-foreground">{error}</span> : null}
+      <span className="min-h-[1rem] whitespace-pre-wrap break-words text-xs font-medium leading-tight text-red-500">
+        {error ?? '\u00a0'}
+      </span>
     </label>
   );
 }
@@ -313,8 +292,8 @@ function CheckboxField({
   ...props
 }: React.InputHTMLAttributes<HTMLInputElement> & { label: string }) {
   return (
-    <label className="flex items-center gap-3 rounded-sm border border-border px-3 py-3 text-sm text-foreground">
-      <input className="h-4 w-4 accent-primary" type="checkbox" {...props} />
+    <label className="flex h-11 items-center gap-3 rounded-sm border border-border px-3 text-sm text-foreground">
+      <input className="h-4 w-4 shrink-0 accent-primary" type="checkbox" {...props} />
       <span className="font-mono text-[0.72rem] uppercase tracking-[0.14em] text-muted-foreground">
         {label}
       </span>
