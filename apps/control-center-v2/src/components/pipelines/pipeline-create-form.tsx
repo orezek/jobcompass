@@ -221,14 +221,9 @@ export function PipelineCreateForm() {
             disabled={mode === 'crawl_only'}
             {...form.register('includeMongoOutput')}
           />
-          <CheckboxField
-            label="Downloadable JSON"
-            disabled={mode === 'crawl_only'}
-            {...form.register('includeDownloadableJson')}
-          />
 
           {includeMongoOutput ? (
-            <div className="mt-1 grid gap-6 rounded-sm border border-border bg-card/40 p-4">
+            <div className="ml-6 grid gap-4 rounded-sm border border-border/80 bg-card/40 p-4">
               <Field label="MongoDB URI" error={form.formState.errors.operatorMongoUri?.message}>
                 <Input
                   {...form.register('operatorMongoUri')}
@@ -242,6 +237,12 @@ export function PipelineCreateForm() {
               </Field>
             </div>
           ) : null}
+
+          <CheckboxField
+            label="Downloadable JSON"
+            disabled={mode === 'crawl_only'}
+            {...form.register('includeDownloadableJson')}
+          />
         </CardContent>
       </Card>
 
